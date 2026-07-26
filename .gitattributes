@@ -1,0 +1,28 @@
+# Normalize all text files to LF in the repository and in the working tree.
+# Settled at project start so line endings never churn through history.
+* text=auto eol=lf
+
+# --- Must keep CRLF (Windows batch files break otherwise) ---------------------
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# --- Must keep LF (shell scripts / build wrappers) ----------------------------
+*.sh      text eol=lf
+gradlew   text eol=lf
+mvnw      text eol=lf
+
+# --- Binary: never normalize, never diff as text ------------------------------
+# .xlsx matters here — SBOMscope produces Excel exports and will have fixtures.
+*.xlsx  binary
+*.xls   binary
+*.jar   binary
+*.zip   binary
+*.gz    binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
