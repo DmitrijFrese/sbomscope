@@ -1,0 +1,115 @@
+{
+  "_comment": [
+    "One advisory describing four parallel release branches of a single package.",
+    "",
+    "The advisory is real: GHSA-48r7-hpm6-gfxm, aliased to CVE-2026-54268, copied from the",
+    "npm OSV database (all.zip, 2026-07). Its four affected entries all name @angular/common",
+    "and carry SEMVER ranges with no versions[] enumeration, so choosing between them needs",
+    "version ordering rather than string equality.",
+    "",
+    "The 19.x branch ends in last_affected with no fixed event at all: there is no fix on that",
+    "line. Reading the entries in order returned 22.0.1 to a user on 19.2.17, which is the",
+    "defect this fixture exists to prevent.",
+    "",
+    "The scanner report around them is written by hand; reproducing it would mean depending on",
+    "a vulnerable Angular release purely to exercise branch selection."
+  ],
+  "results": [
+    {
+      "source": {
+        "path": "C:/dev/workspaces/sbomscope/backend/target/angular.cdx.json",
+        "type": "sbom"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "@angular/common",
+            "version": "19.2.17",
+            "ecosystem": "npm"
+          },
+          "groups": [
+            {
+              "ids": [
+                "GHSA-48r7-hpm6-gfxm"
+              ],
+              "aliases": [
+                "CVE-2026-54268",
+                "GHSA-48r7-hpm6-gfxm"
+              ],
+              "max_severity": "7.5"
+            }
+          ],
+          "vulnerabilities": [
+            {
+              "id": "GHSA-48r7-hpm6-gfxm",
+              "summary": "Angular common vulnerable to sensitive information disclosure",
+              "aliases": [
+                "CVE-2026-54268"
+              ],
+              "published": "2026-07-15T18:30:00Z",
+              "database_specific": {
+                "severity": "HIGH"
+              },
+              "severity": [
+                {
+                  "type": "CVSS_V3",
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+                }
+              ],
+              "affected": [
+                {
+                  "package": { "ecosystem": "npm", "name": "@angular/common" },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        { "introduced": "22.0.0-next.0" },
+                        { "fixed": "22.0.1" }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "package": { "ecosystem": "npm", "name": "@angular/common" },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        { "introduced": "21.0.0-next.0" },
+                        { "fixed": "21.2.17" }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "package": { "ecosystem": "npm", "name": "@angular/common" },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        { "introduced": "20.0.0-next.0" },
+                        { "fixed": "20.3.25" }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "package": { "ecosystem": "npm", "name": "@angular/common" },
+                  "ranges": [
+                    {
+                      "type": "SEMVER",
+                      "events": [
+                        { "introduced": "0" },
+                        { "last_affected": "19.2.25" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

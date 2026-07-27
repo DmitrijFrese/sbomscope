@@ -1,0 +1,128 @@
+{
+  "_comment": [
+    "A group holding two advisories that alias one another and disagree about severity.",
+    "",
+    "Both records are real, copied from the Maven OSV database (all.zip, 2026-07):",
+    "GHSA-3p77-wg4c-qm24 and GHSA-g8ph-74m6-8m7r both alias CVE-2024-23689, both affect",
+    "com.clickhouse:clickhouse-client, and they carry different CVSS vectors (C:H/I:H/A:H",
+    "against C:L/I:L/A:L) and different GitHub ratings (HIGH against MODERATE).",
+    "",
+    "The wrapper around them is written by hand: reproducing this from the real scanner",
+    "would mean depending on a vulnerable ClickHouse driver purely to exercise a case that",
+    "affects 11 of 6,860 Maven advisories. The advisory records themselves are unedited,",
+    "and the group is shaped exactly as osv-scanner v2.4.0 emits one.",
+    "",
+    "max_severity is the higher of the two, which is what the scanner reports and what",
+    "makes the mismatch visible: the number belongs to one record, the vector to the other."
+  ],
+  "results": [
+    {
+      "source": {
+        "path": "C:/dev/workspaces/sbomscope/backend/target/aliased.cdx.json",
+        "type": "sbom"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "com.clickhouse:clickhouse-client",
+            "version": "0.4.5",
+            "ecosystem": "Maven"
+          },
+          "groups": [
+            {
+              "ids": [
+                "GHSA-g8ph-74m6-8m7r",
+                "GHSA-3p77-wg4c-qm24"
+              ],
+              "aliases": [
+                "CVE-2024-23689",
+                "GHSA-3p77-wg4c-qm24",
+                "GHSA-g8ph-74m6-8m7r"
+              ],
+              "max_severity": "8.8"
+            }
+          ],
+          "vulnerabilities": [
+            {
+              "id": "GHSA-g8ph-74m6-8m7r",
+              "summary": "ClickHouse vulnerable to client certificate password exposure in client exception",
+              "aliases": [
+                "CVE-2024-23689"
+              ],
+              "published": "2023-05-12T20:18:51Z",
+              "database_specific": {
+                "severity": "MODERATE"
+              },
+              "severity": [
+                {
+                  "type": "CVSS_V3",
+                  "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:L/I:L/A:L"
+                }
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Maven",
+                    "name": "com.clickhouse:clickhouse-client"
+                  },
+                  "ranges": [
+                    {
+                      "type": "ECOSYSTEM",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.4.6"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "GHSA-3p77-wg4c-qm24",
+              "summary": "Duplicate Advisory: Exposure of sensitive information in ClickHouse",
+              "aliases": [
+                "CVE-2024-23689",
+                "GHSA-g8ph-74m6-8m7r"
+              ],
+              "published": "2024-01-19T21:30:36Z",
+              "database_specific": {
+                "severity": "HIGH"
+              },
+              "severity": [
+                {
+                  "type": "CVSS_V3",
+                  "score": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                }
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "Maven",
+                    "name": "com.clickhouse:clickhouse-client"
+                  },
+                  "ranges": [
+                    {
+                      "type": "ECOSYSTEM",
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.4.6"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

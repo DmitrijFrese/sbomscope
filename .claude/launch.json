@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sbomscope",
+      "runtimeExecutable": "java",
+      "runtimeArgs": ["-jar", "backend/target/sbomscope.jar"],
+      "port": 8080
+    }
+  ]
+}

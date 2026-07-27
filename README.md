@@ -6,9 +6,10 @@ Upload a CycloneDX SBOM, find out which of your dependencies have known
 vulnerabilities, whether your code actually uses them, what upgrade would fix them —
 and get all of it into a spreadsheet your security team can actually read.
 
-> **Status: pre-implementation.** The specification is complete and agreed; no code has
-> been written yet. See [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for
-> the roadmap.
+> **Status: working, in active development.** Upload, offline vulnerability scanning,
+> the findings view and the Excel export all work today. Dependency tree, workspace
+> usage detection and upgrade-path analysis are not built yet. See
+> [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for exactly what is done.
 
 ---
 
@@ -53,16 +54,19 @@ SBOMscope orchestrates proven open-source engines rather than reimplementing
 vulnerability matching from scratch. Every component below was chosen specifically
 because it can run fully offline against locally-cached data.
 
-| Concern | Engine / source |
-|---|---|
-| CVE matching (npm + Maven) | [OSV-Scanner](https://google.github.io/osv-scanner/) in `--offline` mode — a single static binary, no installer or admin rights. Its local database already blends OSV and GitHub Advisories. |
-| Canonical CVE metadata + links | [NVD](https://nvd.nist.gov/) JSON data feed, mirrored locally |
-| Actively-exploited flag | [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) |
-| Exploitation probability | [EPSS](https://www.first.org/epss/) (FIRST.org) |
-| Upgrade path analysis | [OSV-Scanner Guided Remediation](https://google.github.io/osv-scanner/experimental/guided-remediation/) |
-| Dependency tree | The SBOM's own CycloneDX `dependencies` graph |
-| Workspace usage detection | Built in-house |
-| Excel export | Built in-house (Apache POI) |
+| Concern | Engine / source | Status |
+|---|---|---|
+| CVE matching (npm + Maven) | [OSV-Scanner](https://google.github.io/osv-scanner/) in `--offline` mode — a single portable binary, no installer or admin rights. Its database already blends OSV and GitHub Advisories, and supplies a numeric CVSS score and the GHSA→CVE mapping. | working |
+| Excel export | Built in-house (Apache POI) | working |
+| Actively-exploited flag | [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | planned |
+| Exploitation probability | [EPSS](https://www.first.org/epss/) (FIRST.org) | planned |
+| Dependency tree | The SBOM's own CycloneDX `dependencies` graph | planned |
+| Workspace usage detection | Built in-house | planned |
+| Upgrade path analysis | [OSV-Scanner Guided Remediation](https://google.github.io/osv-scanner/experimental/guided-remediation/) | planned |
+
+CVE cells link to [NVD](https://nvd.nist.gov/), but the NVD **API** is deliberately not
+used — it contributes to none of the columns shown, and the link is derivable from the
+CVE identifier alone.
 
 ### Caching and freshness
 
@@ -97,11 +101,95 @@ in Excel after export, rather than having the tool maintain an annotation store.
 
 ## Tech stack
 
-- **Backend** — Spring Boot (Java). Runs locally; required because workspace scanning
-  needs filesystem access.
-- **Frontend** — React, served in the browser.
-- **Storage** — backend-local embedded database / files. No external database to
-  install.
+- **Backend** — Spring Boot 4 on Java 21 (LTS). Runs locally; a local process is
+  required because workspace scanning needs filesystem access.
+- **Frontend** — React with Vite.
+- **Build** — one Maven multi-module build produces a single runnable jar containing
+  both frontend and backend. In development the Vite dev server proxies API calls to
+  the backend, so hot reload still works.
+- **Storage** — embedded H2 database. No external database to install.
+- **Schema migrations** — Flyway, with versioned SQL migrations. Your local database
+  holds real data (uploaded SBOMs, vulnerability caches), so it migrates cleanly when
+  you upgrade SBOMscope rather than being rebuilt from scratch.
+
+## Getting started
+
+Requirements: **Java 21 or newer**, **Maven 3.9+**, and **Node 22.12+** with npm on your
+PATH.
+The build uses the Node already installed on the machine rather than downloading its
+own copy.
+
+Build everything into a single runnable jar:
+
+```bash
+mvn clean package
+```
+
+Run it:
+
+```bash
+java -jar backend/target/sbomscope.jar
+```
+
+Then open <http://localhost:8080>.
+
+Your data lives in `~/.sbomscope/` — the H2 database, uploaded SBOM documents, and the
+vulnerability database. Nothing is written into the project directory.
+
+SBOMscope works immediately as an SBOM inventory. Vulnerability scanning is off until
+you turn it on.
+
+### Enabling vulnerability scanning
+
+SBOMscope never downloads the scanner for you — you place it, and point the application
+at it.
+
+1. Download the build for your platform from the
+   [OSV-Scanner releases page](https://github.com/google/osv-scanner/releases/latest);
+   for example `osv-scanner_windows_amd64.exe`, around 55 MB. It is a single portable
+   executable: no installer, nothing to extract, no admin rights.
+2. Verify it against the published `SHA256SUMS` before running it. It is an executable
+   arriving from the internet, and this is a supply-chain tool.
+3. Put it anywhere, then open **Settings → Vulnerability scanning**, set the path, tick
+   **Use OSV-Scanner**, and press **Test scanner** to confirm it responds.
+4. Download the offline database for the ecosystems you need — Maven is around 10 MB,
+   npm around 200 MB, each with its own button and a progress bar.
+
+Then press **Scan for vulnerabilities** on any uploaded SBOM. Everything from that point
+runs offline.
+
+On a machine with no internet access, copy the database directory across from a machine
+that has it; the layout is all osv-scanner needs.
+
+### Working on the frontend
+
+For hot reload, start the backend as above and run the Vite dev server alongside it:
+
+```bash
+npm --prefix frontend run dev
+```
+
+The UI is then served from <http://localhost:5173>, with `/api` proxied to the backend.
+
+### Troubleshooting
+
+**Maven fails with `PKIX path building failed`.** Security software on your machine is
+intercepting HTTPS and re-signing certificates with a root certificate that Java's own
+truststore does not know about. Browsers and `curl` keep working because they use the
+operating system's certificate store. Point Java at that same store — on Windows:
+
+```bash
+setx MAVEN_OPTS "-Djavax.net.ssl.trustStoreType=Windows-ROOT"
+```
+
+This grants no new trust; it reuses the certificates your system already accepts.
+
+The same applies to the running application when it downloads the vulnerability
+database, so start it with:
+
+```bash
+java -Djavax.net.ssl.trustStoreType=Windows-ROOT -jar backend/target/sbomscope.jar
+```
 
 ## Scope
 
@@ -117,6 +205,8 @@ future version. Version 1 does simpler import/symbol-level usage detection.
 
 ## Documentation
 
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — data model, key flows, and the
+  osv-scanner integration contract.
 - [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — phased build plan,
   working action list, and the decision log explaining why the architecture is the way
   it is.

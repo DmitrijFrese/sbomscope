@@ -1,0 +1,24 @@
+# Tests run against an in-memory database so they never touch the developer's real
+# ~/.sbomscope data, and each run starts from a schema built by the same Flyway
+# migrations that production uses — which means the migrations are tested too.
+
+# The database was isolated; the file store was not. SbomFileStore defaults to
+# ${user.home}/.sbomscope, so uploads in tests wrote into the developer's real data
+# directory — harmless while it was only stray files, and destructive as soon as
+# StoredDocumentSweeper existed: it starts with every Spring context, finds an empty
+# in-memory sbom table, and concludes that every document in there is an orphan.
+# Running the test suite therefore deleted real uploaded SBOMs. Point it somewhere
+# disposable instead, under target/ so `mvn clean` clears it.
+sbomscope:
+  data-directory: ${project.build.directory:target}/sbomscope-test-data
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:sbomscope-test;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration

@@ -1,0 +1,91 @@
+/*
+ * Design tokens. Every colour used by the application resolves through these
+ * variables, so adding a theme means adding one [data-theme] block here rather
+ * than touching component styles.
+ */
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --sidebar-width: 280px;
+  /* Collapsed the sidebar becomes a rail rather than disappearing, so there is always
+     something to click to bring it back. */
+  --sidebar-rail-width: 40px;
+  --topmenu-height: 52px;
+
+  --transition: 120ms ease-in-out;
+}
+
+/* ---------------------------------------------------------------- light --- */
+:root,
+:root[data-theme='light'] {
+  --bg-canvas: #f6f7f9;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-subtle: #eef0f3;
+  --bg-hover: #e7eaee;
+  --bg-active: #dde1e7;
+
+  --border: #d8dce2;
+  --border-strong: #b9c0ca;
+
+  --text-primary: #16191d;
+  --text-secondary: #5a626d;
+  --text-muted: #858d99;
+  --text-inverse: #ffffff;
+
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-subtle: #e5edff;
+
+  --severity-critical: #b3143c;
+  --severity-high: #c2410c;
+  --severity-medium: #a16207;
+  --severity-low: #4d7c0f;
+  --severity-none: #64748b;
+
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-md: 0 4px 12px rgb(16 24 40 / 10%);
+}
+
+/* ----------------------------------------------------------------- dark --- */
+:root[data-theme='dark'] {
+  --bg-canvas: #0e1116;
+  --bg-surface: #151a21;
+  --bg-raised: #1c222b;
+  --bg-subtle: #1a1f27;
+  --bg-hover: #232a34;
+  --bg-active: #2c3440;
+
+  --border: #2b323c;
+  --border-strong: #3d4653;
+
+  --text-primary: #e7eaef;
+  --text-secondary: #a5aebc;
+  --text-muted: #737d8c;
+  --text-inverse: #0e1116;
+
+  --accent: #5b8def;
+  --accent-hover: #7aa3f5;
+  --accent-subtle: #1b2740;
+
+  --severity-critical: #f87171;
+  --severity-high: #fb923c;
+  --severity-medium: #facc15;
+  --severity-low: #a3e635;
+  --severity-none: #94a3b8;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 50%);
+}

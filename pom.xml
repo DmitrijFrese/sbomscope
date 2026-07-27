@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>dev.sbomscope</groupId>
+  <artifactId>sbomscope-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>SBOMscope</name>
+  <description>Local-first SBOM analysis for restricted environments.</description>
+
+  <modules>
+    <module>frontend</module>
+    <module>backend</module>
+  </modules>
+
+  <properties>
+    <!-- Java 21, not the newest LTS. SBOMscope's target is a locked-down machine whose
+         JDK someone else approved, and 21 is the LTS that is actually installed there;
+         requiring 25 makes the build fail on the environment the product is for. Nothing
+         in the codebase uses a language or library feature newer than 21, and Spring Boot 4
+         is compiled to Java 17 bytecode, so this costs nothing. -->
+    <java.version>21</java.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <spring-boot.version>4.1.0</spring-boot.version>
+
+    <!-- 3.15.0 rather than the version Maven Central advertises as "release", which is
+         currently a 4.x beta. -->
+    <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+    <exec-maven-plugin.version>3.6.3</exec-maven-plugin.version>
+
+    <poi.version>5.5.1</poi.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Imported rather than inherited: the parent slot is used by this project,
+           and importing keeps Spring Boot's dependency versions authoritative. -->
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+
+      <dependency>
+        <groupId>dev.sbomscope</groupId>
+        <artifactId>sbomscope-frontend</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${maven-compiler-plugin.version}</version>
+        <configuration>
+          <!-- Retains method parameter names in the bytecode. Spring needs them to
+               bind @PathVariable / @RequestParam without an explicit name; without
+               this every such handler fails at runtime with a 400.
+
+               spring-boot-starter-parent sets this for you, but this project imports
+               the Spring Boot BOM instead of inheriting from that parent, so its
+               compiler configuration does not come along and has to be declared here. -->
+          <parameters>true</parameters>
+        </configuration>
+      </plugin>
+    </plugins>
+
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <version>${spring-boot.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>${exec-maven-plugin.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+
+</project>

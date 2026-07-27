@@ -6,18 +6,38 @@ Guidance for AI coding agents working in this repository.
 
 SBOMscope is a local-first SBOM analysis tool: upload a CycloneDX SBOM, get known
 vulnerabilities, whether the code actually uses the vulnerable libraries, upgrade
-paths, and an Excel export. See [README.md](README.md) for the full picture and
-[docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for what to build next.
+paths, and an Excel export.
+
+Start here, in this order:
+
+| Document | What it holds |
+|---|---|
+| [README.md](README.md) | What the product is, and how to build and run it |
+| **This file** | Constraints you must not break, conventions, and the working loop |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, key flows, and the osv-scanner contract |
+| [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) | What is built, what is next, and the decision log explaining why |
+
+The decision log is the important one. Several designs in this codebase look
+unnecessarily careful until you read why they are that way; it also records reversals,
+so a rejected idea does not get re-proposed.
 
 ## Tech stack
 
-- **Backend**: Spring Boot (Java) — the local server process. Build tool not yet
-  chosen (see open questions in the implementation plan).
-- **Frontend**: React, browser-based.
-- **Storage**: backend-local embedded DB / files. No external database.
-- **Excel export**: Apache POI.
-- **Vulnerability engines**: OSV-Scanner invoked as an external binary; NVD, CISA KEV
-  and EPSS consumed as locally-cached feeds.
+- **Backend**: Spring Boot 4.1.x on Java 21 (LTS) — the local server process. 21 is a
+  floor, not a ceiling: it builds and runs on newer JDKs, but nothing may rely on a
+  feature above 21, or the build breaks on the restricted machines this is aimed at.
+- **Frontend**: React + Vite, packaged into the backend jar and served from it.
+- **Build**: Maven multi-module (parent + `frontend` + `backend`), one command
+  producing a single runnable jar. Node 22.12+ and npm are expected on the PATH —
+  the build does not install its own copy. The minimum is declared in
+  `frontend/package.json` under `engines`.
+- **Storage**: embedded H2. No external database.
+- **Schema migrations**: Flyway, versioned SQL under
+  `src/main/resources/db/migration`.
+- **Excel export**: Apache POI (`poi-ooxml`, version pinned in the parent POM).
+- **Vulnerability data**: OSV, via the osv-scanner binary invoked as an external
+  process, reading a locally-downloaded OSV database. CISA KEV and EPSS are planned;
+  the NVD API is deliberately not used (constraint 4).
 
 ## Hard constraints
 
@@ -29,12 +49,15 @@ raising it with the maintainer first.
    explicit, user-triggered cache refreshes.
 2. **Never refresh vulnerability data automatically.** No background jobs, no
    refresh-on-startup, no refresh-on-upload. The user asks; only then do we fetch.
-3. **Never commit secrets.** The NVD API key is read from an environment variable or a
-   git-ignored local config file. Only templates/placeholders are committed.
-4. **One authenticated NVD channel, rate-limited.** Do not add parallel or unkeyed
-   request channels to increase throughput — NVD's terms permit blocking access for
-   apparent circumvention of rate limits. Stay meaningfully under 50 requests / 30
-   seconds.
+3. **Never commit secrets.** Any credential is read from an environment variable or a
+   git-ignored local config file, never from the database and never from a committed
+   file. Only templates and placeholders are committed. There are no secrets today —
+   keep it that way unless a feature genuinely requires one.
+4. **Vulnerability data comes from OSV, via osv-scanner.** The NVD API is deliberately
+   not used: it contributes to no column SBOMscope displays. CVE cells link to
+   nvd.nist.gov, which needs no API. Do not reintroduce it without a concrete need, and
+   note that redistributing NVD data carries attribution obligations that linking does
+   not.
 5. **No new heavyweight external engines** without checking they can run in a
    locked-down environment: no admin rights, no installer, no mandatory outbound
    network calls. A single static binary is the bar to beat.
@@ -43,6 +66,22 @@ raising it with the maintainer first.
    This is deliberate — it keeps an annotation-persistence layer out of the product.
 7. **Target ecosystems are Maven and npm.** Don't generalize prematurely to other
    package ecosystems.
+8. **Schema changes go through Flyway migrations.** Never enable Hibernate auto-DDL
+   (`ddl-auto` stays `validate` or `none`). The local database holds user data that has
+   to survive an application upgrade, so schema evolution must be explicit, reviewable
+   and repeatable — not inferred from entity mappings at startup.
+
+   **Until the repository is public, the baseline may be rewritten instead of extended.**
+   The only installations are the maintainer's, so a migration that would immediately be
+   undone by the next one is better folded into `V1__baseline.sql` than shipped — a reader
+   should meet one description of the current schema, not a history to reconstruct. The
+   cost is that existing databases must be deleted, which is stated in the migration itself.
+   **Once the repository is public this stops**: migrations become strictly additive, because
+   from then on somebody else's data is on the other end of them.
+9. **Keep the dependency tree lean.** SBOMscope's own SBOM is a credibility statement,
+   and every transitive dependency is a vulnerability someone has to triage. Justify new
+   dependencies; prefer the standard library or a few lines of our own code over a
+   library that solves a problem we only partly have.
 
 ## Working agreement
 
@@ -59,6 +98,10 @@ raising it with the maintainer first.
   decisions that were reversed and why.
 - **Verify before claiming.** If tests fail or a step was skipped, say so plainly with
   the output. Don't report work as done that hasn't been checked.
+- **Never commit. The maintainer commits.** Leave finished work in the working tree and
+  say what changed; the maintainer runs their own checks first and writes the commit
+  themselves. Staging with `git add` is fine. Anything that rewrites history or touches a
+  remote is not.
 
 ## Conventions
 
@@ -72,5 +115,153 @@ raising it with the maintainer first.
 
 ## Repository layout
 
-Not yet scaffolded. This section should be filled in as part of the first
-implementation phase.
+```
+pom.xml                 parent: module list, dependency and plugin versions, -parameters
+frontend/               React + Vite UI
+  vite.config.ts        build output goes to target/classes/META-INF/resources,
+                        and /api is proxied to :8080 during development
+  src/
+    api/client.ts       fetch wrapper, response types, query/export URL building
+    components/         shell pieces, settings panel, purl display helpers
+    pages/              one component per route
+    sboms/              SbomProvider: uploaded SBOMs and the current selection
+    theme/              ThemeProvider: light/dark/system resolution
+    styles/             tokens.css holds every colour; app.css holds layout
+backend/                Spring Boot application, produces the runnable jar
+  src/main/java/dev/sbomscope/
+    api/                REST controllers and the exception handler
+    config/             web and infrastructure configuration
+    export/             Excel writing and public registry links
+    sbom/               CycloneDX parsing, storage, uploaded-document store
+    scanner/            osv-scanner integration, OSV database, findings
+    settings/           user-editable settings
+  src/main/resources/
+    application.yml     committed config
+    db/migration/       Flyway migrations, V<n>__<description>.sql
+  src/test/resources/sboms/   real fixtures (see Testing below)
+docs/ARCHITECTURE.md    data model, flows, external tool contract
+docs/IMPLEMENTATION-PLAN.md  roadmap, risks, decision log
+```
+
+## Working loop
+
+```bash
+mvn clean package
+```
+
+builds both modules, runs the frontend typecheck and all backend tests, and produces
+`backend/target/sbomscope.jar`.
+
+```bash
+java -Djavax.net.ssl.trustStoreType=Windows-ROOT -jar backend/target/sbomscope.jar
+```
+
+runs it on <http://localhost:8080>. The truststore flag is needed on Windows machines
+whose security software inspects HTTPS — without it the OSV database download fails with
+a PKIX error. See the README troubleshooting section.
+
+Things that will bite otherwise:
+
+- **Stop the running application before rebuilding.** Windows holds a lock on the jar and
+  `mvn clean` fails with *"Failed to delete … sbomscope.jar"*. The same applies to any
+  shell whose working directory is inside `target/` — including one left there by an earlier
+  command, since the working directory persists between them.
+- **Scratch files belong in `backend/target/`**, which is git-ignored and wiped by
+  `clean` — not in a system temp directory.
+- **`mvn test` without `clean` runs against stale resources.** Deleting a migration removes it
+  from `src/` but not from `target/classes`, so Flyway keeps applying the old one and fails
+  with errors that describe a schema nobody wrote. Use `clean` after touching anything under
+  `src/main/resources`.
+- **`MAVEN_OPTS` is not set in a fresh shell** despite the `setx` in the README, and PowerShell
+  splits `-Djavax.net.ssl.trustStoreType=Windows-ROOT` at the first dot unless it is quoted.
+  Both surface as a PKIX or "unknown lifecycle phase" failure that has nothing to do with the
+  build.
+- **Never rewrite source files with a PowerShell regex pass.** PowerShell 5.1 reads as ANSI, so
+  a round-trip mangles every non-ASCII character and adds a BOM. Edit the file properly.
+
+## Testing
+
+Tests run against **real fixtures produced by the real tools**, not hand-written samples,
+so they exercise the quirks those tools actually emit. All live in
+`backend/src/test/resources/sboms/`:
+
+| Fixture | Produced by |
+|---|---|
+| `maven-sbomscope.cdx.json` | `mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom` — CycloneDX 1.6, 61 components |
+| `npm-frontend.cdx.json` | `npm --prefix frontend sbom --sbom-format cyclonedx` — CycloneDX 1.5, 29 components |
+| `osv-report-maven.json` | osv-scanner v2.4.0 scanning the Maven fixture |
+
+They are SBOMscope's own dependency trees, so regenerating them keeps the tests honest as
+the project changes. Integration tests use an in-memory H2 built by the same Flyway
+migrations as production, so the migrations are covered too.
+
+**Tests must be isolated from `~/.sbomscope` in full, not just the database.** The in-memory
+datasource only covers half of it: uploads also write documents through `SbomFileStore`,
+which defaults to the user's real data directory. That leaked stray files for a while and
+then became destructive, because `StoredDocumentSweeper` starts with every Spring context,
+sees an empty `sbom` table and deletes every document it finds — so running the suite erased
+real uploads. `sbomscope.data-directory` is overridden in `src/test/resources/application.yml`
+for that reason; if a test needs local storage, point it there too.
+
+Verify UI work in the browser rather than assuming: check the console for errors and read
+the rendered DOM. Note that synthetic clicks from automation tooling do not always
+register with React — dispatching a real DOM `click()` is more reliable.
+
+**Hard-refresh after rebuilding, or you will verify the previous build.** The jar serves the
+bundle as static content and the browser caches `index.html`; a plain reload can render the
+old UI while reporting success. A cache-busting query string is enough.
+
+**Measure layout claims rather than eyeballing them.** `getBoundingClientRect` on the blocks
+above the table answers "did this actually save space" in a way that survives disagreement —
+the severity summary went through two designs before the numbers showed which one was right.
+
+## Gotchas worth knowing
+
+- **Spring Boot 4 splits autoconfiguration into per-integration modules.** Adding a
+  library alone is not enough to activate it. `flyway-core` on its own put Flyway on
+  the classpath while silently never running a single migration — the application
+  started perfectly and the schema was simply never created. Use the matching
+  `spring-boot-starter-*` (or `spring-boot-<integration>`) module, and verify the
+  integration actually ran by checking the startup log rather than assuming.
+  Packages moved too: MockMvc's `@AutoConfigureMockMvc` now lives in
+  `spring-boot-webmvc-test` under `org.springframework.boot.webmvc.test.autoconfigure`.
+  When an import goes missing, find the class in the local Maven repository
+  (`jar tf` over `~/.m2`) rather than guessing at the new coordinates.
+
+- **Spring Boot 4 uses Jackson 3.** Core classes moved from
+  `com.fasterxml.jackson.databind` to `tools.jackson.databind`, and `JacksonException`
+  is now an unchecked `RuntimeException` — so `readValue` declares no checked exception
+  and catching `IOException` around it is a compile error. Annotations are the
+  exception to the rename: `@JsonProperty` and friends stay at
+  `com.fasterxml.jackson.annotation`.
+
+- **`-parameters` is set explicitly in the parent POM — leave it there.** This project
+  imports the Spring Boot BOM rather than inheriting `spring-boot-starter-parent`, so it
+  gets dependency versions but none of that parent's build configuration. Without the
+  flag, Spring cannot bind `@PathVariable`/`@RequestParam` without an explicit name and
+  those endpoints return 400 at runtime, while parameter-free endpoints keep working —
+  which reads like a routing bug rather than a compiler setting.
+
+- **Do not let `@ExceptionHandler(Exception.class)` swallow `ResponseStatusException`.**
+  A catch-all advice without a more specific handler turns every deliberate 404 into a
+  500. `ApiExceptionHandler` declares handlers for that, `HttpMessageNotReadableException`
+  (malformed JSON is a 400, not a 500) and `IllegalStateException` (409). Keep them.
+
+- **osv-scanner exits 1 when it finds vulnerabilities.** Only 0 and 1 are success.
+  Its errors also appear on the *last* line of stderr, after progress output — and it
+  picks its parser from the **filename**, which is why uploads are stored as
+  `<uuid>.cdx.json`. All three are covered in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+- **`npm` is `npm.cmd` on Windows.** The frontend build invokes npm from the PATH via
+  `exec-maven-plugin`, with OS profiles in `frontend/pom.xml` selecting the right
+  executable name. `frontend-maven-plugin` was removed because it has no system-Node mode
+  — it always installs its own ~105 MB copy and hardcodes that path.
+
+- **Severity `NONE` and `CLEAN` are different things.** `NONE` is a vulnerability with no
+  CVSS score; `CLEAN` is a component with no vulnerability. Never collapse them — see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+- **The view and the export share one query path** (`FindingQuery` → SQL). If you add
+  sorting or filtering, add it there rather than in a second implementation, or an
+  exported spreadsheet will stop matching the screen it came from.

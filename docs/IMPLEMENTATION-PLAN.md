@@ -6,7 +6,7 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-07-26 · Status: **Phase 0 not started**
+Last updated: 2026-07-28 · Status: **Phases 0–2, 4–5 complete — Phase 3, 6, 7, 8 remain**
 
 ---
 
@@ -14,12 +14,12 @@ Last updated: 2026-07-26 · Status: **Phase 0 not started**
 
 | Phase | Goal | Status |
 |---|---|---|
-| 0 | Project scaffolding runs end to end | Not started |
-| 1 | Upload an SBOM and see its components | Not started |
-| 2 | Offline vulnerability matching works | Not started |
+| 0 | Project scaffolding runs end to end | **Done** |
+| 1 | Upload an SBOM and see its components | **Done** |
+| 2 | Offline vulnerability matching works | **Done** |
 | 3 | Findings enriched with NVD / KEV / EPSS | Not started |
-| 4 | Vulnerability table complete | Not started |
-| 5 | Excel export | Not started |
+| 4 | Vulnerability table complete | **Done** |
+| 5 | Excel export | **Done** |
 | 6 | Dependency tree | Not started |
 | 7 | Workspace usage detection | Not started |
 | 8 | Upgrade path analysis | Not started |
@@ -32,90 +32,211 @@ Last updated: 2026-07-26 · Status: **Phase 0 not started**
 Goal: `run` the project and get a React page served by Spring Boot, with storage wired
 up and nothing else.
 
-- [ ] Decide build tool (Maven vs Gradle) — see open questions
-- [ ] Spring Boot backend skeleton with health endpoint
-- [ ] React frontend skeleton, built and served by the backend as static assets
-- [ ] Choose and wire embedded storage (H2 vs SQLite) — see open questions
-- [ ] Local config pattern: `application.yml` committed, `application-local.yml`
-      git-ignored, NVD API key read from env var or local config
-- [ ] `.gitignore` covering secrets, build outputs, IDE files, local data
-- [ ] Document the actual repo layout in `AGENTS.md`
-- [ ] Document how to build and run in `README.md`
+- [x] Verify the toolchain (Java 21 LTS, Maven 3.9) builds and runs
+- [x] Maven multi-module skeleton: parent + `frontend` + `backend`
+- [x] Spring Boot backend skeleton with a status endpoint
+- [x] React (Vite) frontend skeleton, built into the backend jar and served from it
+- [x] SPA fallback, so client-side routes survive a browser refresh
+- [x] Vite dev proxy for `/api`, so hot reload works during development
+- [x] Embedded H2 datasource
+- [x] Flyway wired up with the initial baseline migration
+- [x] Light/dark theming with a Settings → UI theme switcher
+- [x] `.gitignore` covering secrets, build outputs, IDE files, local data
+- [x] Document the actual repo layout in `AGENTS.md`
+- [x] Document how to build and run in `README.md`, including a troubleshooting note
+      for TLS-inspecting security software
+- [x] Local config pattern — no longer needed for a credential, since the NVD API was
+      dropped and nothing else requires one. Revisit if a feature ever introduces a secret
+- [x] Commit `package-lock.json` and switch the frontend build to `npm ci` for
+      reproducible dependency resolution (28 packages total)
+- [x] Review the artifact's own dependency weight — dropping Spring Data JPA for plain
+      JDBC took the jar from 53 MB to 26 MB. Apache POI then added ~18 MB (`poi-ooxml-lite`
+      5.7 MB, `poi` 2.9 MB, and `commons-math3` 2.1 MB pulled in transitively), leaving it
+      at 44 MB. POI earns that: a real .xlsx with working hyperlinks is the feature, and
+      hand-rolling OOXML would be far worse
+- [x] Erase local data from Settings, behind a typed confirmation, choosing independently
+      between uploaded SBOMs, the vulnerability cache, settings and the OSV archives
+- [ ] Trim POI's transitive weight if it becomes a problem — `commons-math3` is pulled in
+      for chart support we never use, and may be excludable
 
-**Done when**: a single documented command starts the app and serves a page in the
-browser.
+**Done when**: a single documented command starts the app and serves a themed page in
+the browser, backed by a migrated H2 schema.
 
 ## Phase 1 — SBOM ingestion
 
 Goal: upload a CycloneDX JSON file, persist it, browse its components.
 
-- [ ] CycloneDX JSON parsing (consider the official `cyclonedx-core-java` library
-      rather than hand-rolling)
-- [ ] Validate/reject non-CycloneDX and unsupported-version uploads with a clear error
-- [ ] Data model: SBOM record (filename, upload date, optional workspace path) +
-      components (purl, group/name, version, direct vs transitive) + the dependency
-      graph edges
-- [ ] Determine direct vs transitive from the SBOM's `dependencies` graph relative to
-      the root component
-- [ ] Upload endpoint + persistence
-- [ ] Left sidebar: list uploaded SBOMs with filename, date, metadata
-- [ ] Select an SBOM → see its component list
-- [ ] Delete an uploaded SBOM
+- [x] CycloneDX JSON parsing — hand-written Jackson mapping rather than
+      `cyclonedx-core-java`, which would add seven runtime dependencies including XML
+      support for a document we only read two sections of, in JSON only
+- [x] Validate/reject non-CycloneDX uploads with a clear, user-facing error
+- [x] Data model: SBOM record (filename, upload date, optional workspace path) +
+      components (purl, group/name, version, direct vs transitive) + dependency edges
+- [x] Determine scope from the `dependencies` graph — application, direct or transitive,
+      relative to the application rather than to the root alone (see decision log)
+- [x] Upload endpoint + persistence, in a single transaction
+- [x] Left sidebar: list uploaded SBOMs with filename, date, metadata
+- [x] Select an SBOM → see its component list
+- [x] Delete an uploaded SBOM
+- [x] Drag-and-drop upload. Replaced the native file input, whose own "Choose file" label the
+      browser sizes and refuses to ellipsize — inside the 280px sidebar it was cut off
+- [x] Progress while a scan runs: indeterminate, with the component count and elapsed time.
+      Deliberately not a percentage — osv-scanner reports once, at the end
+- [ ] Component list is currently unpaginated; revisit in Phase 4 alongside the findings
+      table, where the thousands-of-rows requirement actually bites
 
 **Done when**: a Maven-generated and an npm-generated SBOM both upload cleanly, persist
-across a restart, and list their components.
+across a restart, and list their components. — **Met.**
 
-**Test fixtures**: generate real SBOMs from a small Maven project and a small npm
-project and commit them as test resources.
+**Test fixtures**: real SBOMs, generated by the actual tools rather than hand-written —
+`maven-sbomscope.cdx.json` (CycloneDX Maven plugin, spec 1.6, 61 components) and
+`npm-frontend.cdx.json` (`npm sbom`, spec 1.5, 29 components). Both are SBOMscope's own
+dependency trees, so the fixtures stay honest as the project evolves.
 
 ## Phase 2 — Offline vulnerability matching
 
 Goal: know which components have known vulnerabilities, with no internet access.
 
-- [ ] Decide how OSV-Scanner is obtained and located — bundled, or user-supplied path
-      in config (see open questions)
-- [ ] Local OSV database management: where the per-ecosystem zips live, how the path is
-      configured, how the user refreshes them
-- [ ] Invoke OSV-Scanner in `--offline` mode against an uploaded SBOM; parse its output
-- [ ] Component-level vulnerability cache keyed by purl, shared across SBOMs
-- [ ] Cache entries carry `lastRefreshed`; staleness threshold configurable, default 7
-      days
-- [ ] Force-refresh: per component and globally
-- [ ] Surface "data may be outdated" state to the API
-- [ ] Handle the no-database-present case with an actionable error, not a crash
+- [x] Decide how OSV-Scanner is obtained and located — user-supplied path, never
+      downloaded by us (R3)
+- [x] Scanning is a toggle. Switched off, SBOMscope is a working SBOM inventory rather
+      than a broken installation
+- [x] Settings persisted in the database and editable from the UI (`app_setting`, V3)
+- [x] Validate the configured binary: path checks plus a `--version` round trip that
+      confirms it really is osv-scanner
+- [x] Local OSV database management: per-ecosystem download on explicit user action,
+      into the `{dir}/osv-scanner/{ecosystem}/all.zip` layout the scanner expects.
+      Downloaded individually — npm's archive is ~200 MB against Maven's ~10 MB
+- [x] Handle the no-database-present case with an actionable error, not a crash
+- [x] Downloads run asynchronously with polled progress. A 200 MB transfer held inside
+      the HTTP request would tell the user nothing until it finished and be
+      indistinguishable from a hang. Written to `all.zip.partial` and atomically moved
+      into place, so a refresh never leaves the scanner pointed at a truncated archive
+- [x] Settings shows the exact source URL and the absolute on-disk path per ecosystem,
+      so nothing is downloaded opaquely and the files can be found, copied or deleted
+- [x] Settings links to the OSV-Scanner releases page, names the platform builds and
+      notes the published checksums — SBOMscope points at the binary, never fetches it
+- [x] Downloads are gated on scanning being switched on, with an explicit override for
+      staging onto an offline machine. The gate stands, now that the built-in matcher is
+      decided against — "scanning off" means no matching engine at all, so the database
+      genuinely has no reader.
+- [x] Invoke OSV-Scanner in `--offline` mode — **verified against the real binary
+      (v2.4.0)**. `scan --lockfile <sbom> --offline --format json` reads a CycloneDX
+      document directly, loads the local archive, and exits 1 when it finds something,
+      which the runner correctly treats as success rather than failure
+- [x] Parse the scanner's JSON report into findings, keyed on `groups[].ids` so aliased
+      GHSA/CVE pairs collapse to one finding rather than two rows for one problem
+- [x] Select the fix on the component's **own** version branch. An advisory lists fixes
+      across several coordinates and branches; taking the first would hand the user a
+      version that does not exist for their library
+- [x] Component-level vulnerability cache keyed by purl, shared across SBOMs — verified:
+      a second, never-scanned SBOM inherits findings for libraries already scanned
+- [x] A scan row is written for **every** component, not just vulnerable ones, so
+      "checked, clean" is distinguishable from "never checked"
+- [x] Staleness: `stale-after-days`, default 7. Never-scanned counts as stale
+- [x] Surface staleness, scan coverage and whether scanning is switched off to the API
+- [x] Trigger a scan from the vulnerability view and show the findings, with severity
+      banded by score and the CVSS revision shown alongside it
+- [x] Store the uploaded document so a re-scan uses the original rather than one
+      reconstructed from our own parse. **The `.cdx.json` suffix is load-bearing** —
+      osv-scanner picks its parser by filename and rejects `<uuid>.json` outright
+- [x] Collapse findings that describe the same (component, advisory) pair. Resolving a
+      reported package to a purl is many-to-one, so a scan could produce a list that
+      violates the database's own uniqueness rule and failed the entire import
+- [ ] Force-refresh of a single component's data, independent of its SBOM (whole-SBOM
+      re-scan works today)
 
 **Done when**: uploading an SBOM on a machine with no internet produces a list of
 findings, and the same library across two SBOMs is only looked up once.
 
-## Phase 3 — Enrichment
+## Phase 3 — Exploitation signals
 
-Goal: each finding carries severity, exploitation signals, and canonical links.
+Goal: findings carry the signals that decide priority, not just existence.
 
-- [ ] NVD feed client: single authenticated channel, internal rate limiter safely under
-      50 req/30s, API key from env/local config
-- [ ] Handle NVD 403/throttling with backoff and a clear user-facing message
-- [ ] Local NVD metadata cache (CVSS score + rating, description, published date)
-- [ ] CISA KEV catalog ingest → boolean actively-exploited flag per CVE
-- [ ] EPSS ingest → probability score per CVE
-- [ ] Cache refresh flow for all three feeds, user-triggered only, showing per-feed last
-      refresh time
-- [ ] Reconcile conflicting severity between sources — define precedence and make it
-      visible
+Severity already arrives with the finding: osv-scanner supplies a numeric CVSS score,
+and OSV carries the GHSA→CVE alias. **The NVD API is not used** (see decision log), so
+this phase is only the two feeds NVD never provided anyway.
 
-**Done when**: findings show CVSS, EPSS, and KEV status, and the whole enrichment set
-can be refreshed on demand from a connected machine and then used offline.
+- [x] Handle findings with no CVE — 3% of the Maven set are GHSA-only, as are `MAL-*`
+      malicious-package entries. The advisory ID is shown and linked to osv.dev instead
+- [x] Show which CVSS revision produced a score, so a v3 7.5 is not silently compared
+      with a v4 7.5
+- [x] Attribute the CVSS vector honestly when a group's aliased advisories disagree about
+      severity — the score is the group maximum, the rest of the row is one advisory, and
+      the two must not be presented as one statement (see decision log)
+- [ ] CISA KEV catalog ingest → actively-exploited flag per CVE
+- [ ] EPSS ingest (FIRST.org) → exploitation probability per CVE
+- [ ] Refresh flow for both feeds, user-triggered only, showing per-feed last refresh
+
+**Done when**: findings show KEV status and EPSS alongside severity, refreshable on
+demand from a connected machine and usable offline afterwards.
 
 ## Phase 4 — Vulnerability view
 
 Goal: the main table, complete and usable.
 
-- [ ] Table with all 9 columns, shown by default (no expandable detail row)
-- [ ] CVE cells link to NVD; component cells link to Maven Central / npmjs.com
-- [ ] Sorting and filtering (at minimum by severity, KEV, direct/transitive)
-- [ ] Handle SBOMs with thousands of components without freezing the browser
-      (virtualized rows or pagination)
-- [ ] Top menu with icon+text, collapsible to icons only
-- [ ] Empty/loading/stale-data states
+- [x] Findings table with the columns available today — Component, Version, Advisory,
+      Severity, Fixed in, Published. EPSS and Known Exploited arrive with Phase 3,
+      Recommended upgrade with Phase 8, Workspace usage with Phase 7
+- [x] CVE cells link to NVD; advisory cells link to osv.dev when there is no CVE
+- [x] Sort by component or severity, ascending or descending, from the column headers
+- [x] Severity band filter: Critical / High / Medium / Low / **Unscored** / **No
+      vulnerabilities**. The last two are deliberately separate — Unscored is a real
+      vulnerability whose advisory carries no CVSS score, "No vulnerabilities" is a
+      component with nothing known against it. Merging them would let "we don't know how
+      bad this is" read as "this is fine"
+- [x] One integrated table rather than separate findings and inventory views. A row is a
+      component plus one vulnerability, so a component with three advisories yields three
+      self-contained rows and a clean component yields one with the advisory cells empty.
+      Built on a LEFT JOIN from component to finding
+- [x] Default filter is vulnerabilities only, so the view opens on what needs attention;
+      ticking "No vulnerabilities" brings the whole inventory into the same table
+- [x] Text filter across component, advisory ID and CVE
+- [x] Pagination at 20 / 50 / 100 / 200 rows, so a large SBOM cannot freeze the browser
+- [x] Sorting, filtering and paging all execute in SQL, so the view and the export cannot
+      diverge from one another
+- [x] Empty, loading, never-scanned and stale states
+- [x] Component names are links in the view as well as the export. The URL is built by
+      the backend and sent with the row, so the two cannot drift apart
+- [x] The scan action sits in the page header rather than on its own row, and is gated on
+      real readiness — scanner enabled, binary still on disk, and an OSV archive present for
+      the ecosystems *this* SBOM actually contains — with the obstacle named next to the
+      disabled button and linked to Settings
+- [x] One export control instead of two: a split button whose primary action exports the
+      view, with both scopes and their row counts in a click-opened menu
+- [x] Rows-per-page moved below the table, beside numbered pagination that windows around
+      the current page with a constant width
+- [x] Top-menu collapse removed — three nav items never justified an icons-only mode
+- [x] SBOM sidebar collapses to a rail, so the table can have the width
+- [x] Sort, direction, severity bands, page size, text filter and sidebar state persist
+      across navigation and reload; the page number deliberately does not
+- [x] Advisory and CVE are separate columns, matching the export, so an advisory with no
+      CVE shows an empty cell rather than an OSV id under a heading that says CVE
+- [x] Every value SBOMscope holds is reachable from the table: GHSA rating, CVSS version,
+      CVSS vector, Summary and Package URL joined the existing columns
+- [x] Compact / Details toggle and the Columns picker, together behind one view-options menu
+      on the actions side of the toolbar. Component, Version, OSV ID and Severity are locked —
+      a row without them cannot be acted on
+- [x] Columns are ordered so each value sits with its source: GHSA rating against the OSV
+      ID it belongs to, the score leading the CVSS values that produced it
+- [x] The severity cell shows the CVSS band derived from its own score. It previously
+      showed the GHSA rating, which is a different scale from a different source — GitHub
+      calls 6.5 MODERATE where CVSS calls it Medium — so the number appeared to be labelled
+      by a word that was not describing it
+- [x] Glossary page: the vocabulary, and a per-column table naming each column's source
+- [x] Transient row numbers, numbered across the whole result rather than per page. Not a
+      column: absent from the picker, from Details and from the export, where Excel supplies
+      its own numbering
+- [x] Per-band counts on the severity chips themselves — unfiltered, so they describe the
+      SBOM rather than the view, and equal to the rows selecting that band produces. One SQL
+      band expression serves both the filter and the counts, so a chip's number and what
+      clicking it shows cannot disagree; covered by `SeverityBandTest` at every threshold
+
+- [x] Critical, high and medium counts on every SBOM card in the sidebar, so a list of
+      uploads can be triaged without opening each one. An SBOM the scanner has never
+      reached says so instead of showing zeros
+- [x] Advisory publication dates are the UTC date, with no time. The local zone moved the
+      date across midnight, so an advisory read a day later than the record it links to
 
 **Done when**: a real project's SBOM renders a sortable, filterable findings table with
 working links.
@@ -124,14 +245,32 @@ working links.
 
 Goal: the differentiator. A spreadsheet people actually want.
 
-- [ ] Apache POI export of the current findings table
-- [ ] CVE cells as real hyperlinks to NVD
-- [ ] Component cells as real hyperlinks to Maven Central / npmjs.com (correct URL
-      construction per ecosystem from the purl)
-- [ ] Header row formatting, frozen header, sensible column widths, autofilter
-- [ ] Include export metadata (SBOM filename, export date, data freshness per feed)
-- [ ] Export respects current filters/sort, or explicitly exports everything — decide
-      and document
+- [x] Apache POI export of the findings table
+- [x] CVE cells as real hyperlinks to NVD; advisory cells to osv.dev. Deliberately
+      different destinations — two columns pointing at the same page wastes one, and the
+      OSV record carries affected ranges NVD does not
+- [x] Component cells as real hyperlinks to Maven Central / npmjs.com, built per
+      ecosystem from the purl, with npm scopes decoded from `%40scope`
+- [x] Severity written as a **number**, not text — as text, "10.0" sorts below "6.5" in
+      Excel, which is exactly what makes an exported vulnerability list untrustworthy
+- [x] Header row formatting, frozen header, column widths, autofilter
+- [x] Provenance on its own sheet (SBOM, spec version, components, findings, last
+      scanned, exported, data source) — kept off the findings sheet so it cannot break
+      sorting and filtering
+- [x] Two export scopes, each labelled with its row count: **Export view** reproduces the
+      current page, filter and sort exactly; **Export all** keeps the sort but drops
+      filter and paging. Counts are shown so nobody sends a filtered subset believing it
+      is the whole picture
+- [x] Both scopes carry the viewer's sort criterion through to the workbook
+- [x] The workbook's columns, order and labels match the table exactly, including the
+      Summary and CVSS vector the screen has no room for
+- [x] Provenance records what was *selected* — scope, sort, severity bands, text filter and
+      columns — so a filtered export can account for its own size instead of looking
+      identical to a complete one
+- [x] Filenames carry the time to the second. A date alone collided as soon as you exported
+      twice in one day, which is the normal case when narrowing a filter
+- [x] Settings choose whether a workbook carries every column or only those on screen,
+      defaulting to every column
 
 **Done when**: the exported file opens cleanly in Excel with working links and needs no
 manual cleanup.
@@ -227,27 +366,69 @@ will produce both false positives and false negatives. Needs a deliberate strate
 possibly reading package names from the artifact itself, or a heuristic with a visible
 confidence signal.
 
-### R3 — OSV-Scanner distribution in restricted environments
+### R3 — OSV-Scanner distribution in restricted environments — **resolved**
 
-**Phase 2.** "Single static binary" is only an advantage if the user can actually get it
-onto the machine. Downloading an unsigned binary may itself be blocked. Decide whether
-we bundle it, or document obtaining it, and what happens when it's absent.
+**Phase 2.** Resolved 2026-07-27. OSV-Scanner v2.4.0 ships as a bare, portable single
+executable (~55 MB per platform; Windows `.exe`, Linux and macOS binaries), with
+published `SHA256SUMS` and SLSA provenance. No installer, no admin rights, no runtime
+dependencies, and nothing to extract.
+
+SBOMscope never downloads it. The user places the binary and points SBOMscope at it from
+Settings. Scanning is a toggle: turned off, the application is a working SBOM inventory
+and vulnerability columns report "not analysed" rather than failing. Bundling was
+rejected — three platforms would add roughly 160 MB to a 26 MB artifact, and a
+supply-chain tool shipping someone else's opaque executable is the wrong default.
+
+Pin a known-good version: v2.4.0 fixed a panic in the offline matcher when checking
+version ranges, and added CycloneDX 1.7 support.
 
 ---
 
 ## Open questions
 
-- [ ] **Build tool** — Maven or Gradle for the backend?
-- [ ] **Embedded storage** — H2 or SQLite? (H2 is the natural JVM fit; note
-      Dependency-Track users have reported H2 corruption over time, though at a very
-      different scale of use.)
-- [ ] **OSV-Scanner acquisition** — bundle the binary, or require the user to supply a
-      path? (See R3.)
+- **Built-in matching as a second engine — decided against, 2026-07-27.** SBOMscope
+  relies on osv-scanner. The idea was to read the OSV `all.zip` files directly in Java
+  and match purls and versions ourselves, removing the external binary; it is recorded
+  here only so it is not re-proposed.
+
+  Facts that would matter if it is ever reconsidered: the archives are the public OSV.dev
+  export in OSV schema 1.7.3 (6,860 standalone advisory documents for Maven, no index or
+  scanner-specific metadata), and records carry explicit `versions[]` enumerations
+  alongside `ranges[].events[]`, so much of the matching would be string equality rather
+  than version-range arithmetic. That was the main argument against it, and it is weaker
+  than it first appeared — but correctness risk in a security tool is not the place to
+  spend effort while a maintained engine does the job.
 - [ ] **Upgrade path approach** — resolve R1.
 - [ ] **Dependency view rendering** — collapsible tree, or a graph visualization?
 - [ ] **License** — not yet chosen.
 - [ ] **Multi-module Maven projects** — one SBOM per module or an aggregate? Affects the
       dependency graph root and workspace mapping.
+
+---
+
+## Optional enhancements
+
+Things worth having that nothing currently needs. Kept here rather than in a phase so the
+roadmap stays a list of commitments; each moves up only when a concrete need appears.
+
+- **NVD as a second opinion.** NVD's own CVSS scoring and canonical descriptions, alongside
+  OSV's. Deliberately not used today: tracing every column to its source showed it
+  contributes to none of them (see the 2026-07-27 decision). Note that redistributing NVD
+  data carries attribution obligations that merely linking does not.
+- **Log to a file, and show where.** SBOMscope currently logs to the console only —
+  `application.yml` sets levels but no `logging.file.name`, so there is no log file to point
+  at. Doing this properly means choosing a location (`~/.sbomscope/logs` alongside the rest
+  of the local data), a rotation policy and a size cap, *then* surfacing it. Note the second
+  half is not a link: a browser cannot open a native folder from an `http://` page, so
+  Settings would show a copyable path the way it already does for the OSV archives.
+
+  Worth doing when something needs diagnosing after the fact — a scan that failed overnight,
+  or a dropped finding noticed days later. Not before.
+- **Surface scanner results that could not be matched.** A finding the scanner reports but
+  which cannot be tied back to a stored component is discarded with only a log warning. That
+  is how a real advisory against `@angular/common` went unnoticed. The count belongs in the
+  UI, since a silently dropped finding is the failure mode this project guards against
+  everywhere else.
 
 ---
 
@@ -302,3 +483,447 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
 - 2026-07-26 — **Documentation split**: `README.md` (public-facing product
   documentation), `AGENTS.md` (agent conventions and constraints), and this file
   (roadmap, risks, decisions). All documentation is written for a general audience.
+- 2026-07-27 — **Java 25 LTS**. Java 24 was considered and rejected: it is a non-LTS
+  release that stopped receiving updates around September 2025. Shipping a security
+  tool on an unpatched JDK undermines the product and fails enterprise approval, which
+  is precisely the environment SBOMscope targets. Java 25 is the current LTS with
+  first-class Spring Boot 4 support. **Lowered to 21 on 2026-07-28 — see below.**
+- 2026-07-28 — **Java 21, lowering the baseline from 25.** The reasoning for 25 was that
+  a security tool must not ship on an unpatched JDK, and that argument is untouched: 21
+  is an LTS in active support, so it satisfies the same requirement. What the earlier
+  decision missed is that the requirement was only half the question.
+
+  SBOMscope's target is a locked-down machine, and the JDK on such a machine is chosen by
+  somebody other than its user. Java 21 is the release that is actually approved and
+  installed in those environments; 25 is months of procurement away. A build requirement
+  the target environment cannot satisfy is not a security posture, it is a product that
+  does not run there — and the whole premise of this project is that it runs where the
+  alternatives cannot.
+
+  **21 is a floor, not a ceiling.** `maven.compiler.release` pins the bytecode, so
+  building on a newer JDK still produces an artifact that runs on 21, and the developer
+  machine is free to be ahead. The cost is that nothing may use a language or library
+  feature above 21 — worth checking when a new API looks convenient, because
+  `--release 21` catches it at compile time rather than as a runtime failure on someone
+  else's machine.
+
+  Verified rather than assumed: Spring Boot 4.1's own classes are Java 17 bytecode, so the
+  framework never needed 25, and the codebase's newest feature is `SequencedCollection`
+  (`getFirst()`), which is 21. The build was run end to end on a real JDK 21.
+- 2026-07-27 — **Maven multi-module build** (parent + `frontend` + `backend`). The
+  frontend is built during the Maven build and packaged into the backend jar under
+  `META-INF/resources`, which Spring Boot serves automatically. One command produces
+  one runnable artifact. Development keeps hot reload by running the Vite dev server
+  with `/api` proxied to the backend. Maven chosen over Gradle for its dominance in the
+  Spring ecosystem and simpler multi-module declarations.
+- 2026-07-27 — **Storage: embedded H2**. SQLite was considered and rejected on
+  environment grounds: its standard JDBC driver extracts native binaries to a temp
+  directory at runtime, which restricted machines (noexec temp directories, aggressive
+  endpoint protection) can block. H2 is pure Java with no such failure mode.
+- 2026-07-27 — **Schema migrations: Flyway**, versioned SQL under `db/migration`.
+  Hibernate auto-DDL is deliberately not used. The local database holds real user data
+  — uploaded SBOMs and vulnerability caches — that must survive an application upgrade,
+  so schema evolution has to be explicit and reviewable rather than inferred from
+  entity mappings at startup.
+- 2026-07-27 — **Lean dependency tree as a standing principle**. A generated
+  full-stack scaffold was evaluated and rejected. Two reasons: SBOMscope is a
+  dependency-vulnerability tool, so its own SBOM is a credibility statement and every
+  transitive dependency becomes a finding somebody has to triage; and the product is
+  overwhelmingly bespoke analysis logic rather than entity CRUD, so generated
+  scaffolding would cover a small fraction of the work while constraining the rest.
+  Recorded as constraint 9 in `AGENTS.md`.
+- 2026-07-27 — **Flyway is wired through `spring-boot-starter-flyway`, not
+  `flyway-core`.** Spring Boot 4 splits autoconfiguration into per-integration
+  modules, so `flyway-core` alone placed Flyway on the classpath without ever
+  activating it: the application started cleanly, reported healthy, and silently
+  applied no migrations at all. Caught by checking the startup log rather than
+  trusting a green build. Recorded as a gotcha in `AGENTS.md` because the same trap
+  applies to every other integration added from here on.
+- 2026-07-27 — **Persistence: Spring JDBC, not Spring Data JPA.** Flyway owns the
+  schema so entity-driven DDL adds nothing, and the findings views are reporting-shaped
+  reads where explicit SQL beats lazy loading and its N+1 risk. Taken while no entities
+  existed, so it cost nothing then and would have been expensive later. It halved the
+  artifact: 53 MB to 26 MB.
+- 2026-07-27 — **CycloneDX parsed with Jackson directly**, not `cyclonedx-core-java`.
+  The reference library brings seven runtime dependencies including XML support, while
+  SBOMscope reads two sections of one format; the fields it needs have been stable since
+  spec 1.2, and ignoring unknown properties covers version differences. Phase 1 therefore
+  added no new dependency at all. Revisit if writing SBOMs or schema validation is ever
+  needed — that is the point where the library starts earning its weight.
+- 2026-07-28 — **One integrated table, and "unscored" is not "clean".** A brief
+  two-tab design (findings vs. all components, with different table shapes) was replaced
+  by a single table built on a LEFT JOIN from component to finding: one row per
+  component/vulnerability pair, plus one row per component with nothing against it.
+
+  The proposal that "Unscored" should also cover components without vulnerabilities was
+  rejected. Unscored means a real vulnerability whose advisory carries no CVSS score, so
+  merging the two would let "we don't know how bad this is" render identically to "this
+  is fine" — the same conflation the schema already avoids by writing a scan row for
+  every component. Clean components got their own band instead, off by default.
+- 2026-07-27 — **The NVD API is not used.** Tracing every column to its source showed it
+  contributes to none of them: osv-scanner already supplies a numeric CVSS score
+  (`max_severity`), OSV `aliases` resolve GHSA→CVE for 97% of Maven advisories, EPSS
+  comes from FIRST.org and the exploited flag from CISA — neither is NVD. Linking to
+  nvd.nist.gov needs no API, since the URL derives from the CVE ID.
+
+  This removes the API key, the rate-limiter design, an offline NVD mirror, and the
+  "reconcile conflicting severity between sources" problem, which only existed because
+  there were two sources. Superseded the earlier decisions to blend NVD into matching and
+  to use a single rate-limited authenticated channel.
+
+  Kept as a possible later enhancement, not a gap: NVD's own CVSS scoring and canonical
+  descriptions would be an authoritative second opinion. Add only if a concrete need
+  appears — and note that redistributing NVD data carries attribution obligations that
+  merely linking does not.
+- 2026-07-27 — **Database downloads are gated on scanning being enabled**, with an
+  explicit "Download anyway" override. With scanning off nothing in the application can
+  read the archives, so offering a 200 MB download would be a dead end. The override
+  exists because staging data for an air-gapped machine is legitimate — though weakly so,
+  since the source URL is public and shown in the UI, and the offline machine must have
+  the scanner configured anyway. The gate is therefore a usability judgement, not a
+  technical constraint, and must be reconsidered if the built-in matcher is built.
+- 2026-07-27 — **The build uses the machine's Node, not a downloaded one.**
+  `frontend-maven-plugin` was replaced with `exec-maven-plugin` invoking npm from the
+  PATH, because the former has no system-Node mode — it always installs its own copy
+  into the module directory (~105 MB) and hardcodes that path. The trade is
+  reproducibility for a smaller, faster build that matches how the target environment is
+  provisioned; `engines` in `package.json` pins the minimum so an unsupported Node fails
+  with a clear message from npm. This also removed a build plugin, per constraint 9.
+- 2026-07-28 — **Tests get their own data directory.** The test configuration isolated the
+  database and said so in a comment — but only the database. `SbomFileStore` still resolved
+  to `${user.home}/.sbomscope`, so uploads in tests wrote into the developer's real data
+  directory. Harmless while it was only stray files, and destructive the moment
+  `StoredDocumentSweeper` existed: it runs on every Spring context, finds an empty in-memory
+  `sbom` table, and correctly concludes that every document in that directory is an orphan.
+  **Running `mvn test` deleted real uploaded SBOMs.**
+
+  Caught during verification, when a scan failed against documents that had been there
+  minutes earlier. Tests now point at `target/sbomscope-test-data`, which `mvn clean` clears.
+  The general lesson is in the comment: isolating the database is not the same as isolating
+  the storage, and a component that deletes files makes the difference matter.
+- 2026-07-28 — **`OsvScannerException` gets its own handler.** Every scanner problem the user
+  can act on — scanning switched off, no binary configured, a missing database, an uploaded
+  document no longer on disk — carries a message written to tell them what to do. All of them
+  were being swallowed by the catch-all advice and reported as "Something went wrong. Check
+  the application log for details.", which is the exact trap the `ResponseStatusException`
+  handler already exists to avoid. Mapped to 409, since each describes a state that prevents
+  the request rather than a malformed one.
+- 2026-07-28 — **The fix version is chosen by branch, not by file order.** An advisory
+  describes several parallel release lines, and only one says anything about the version in
+  use. `fixedVersionFor` matched on package name and then took the first `fixed` event it
+  found, which was right for the Jackson case that motivated it — several *coordinates*, one
+  branch each — and wrong as soon as one package has several branches.
+
+  Found while investigating a live report. `GHSA-48r7-hpm6-gfxm` lists four ranges for
+  `@angular/common`: fixes on 22.x, 21.x and 20.x, and a 19.x line ending in `last_affected`
+  with no fix at all. A user on 19.2.17 was told to upgrade to **22.0.1** — three majors away,
+  on a branch their advisory never mentions. A confident, wrong upgrade target is worse than
+  none.
+
+  The branch is now selected first: by an advisory's explicit `versions[]` where one exists
+  (string equality, ~90% of the Maven set), otherwise by comparing the version against each
+  range. Where the selected branch offers only `last_affected`, null is the honest answer —
+  there is no fix on that line. Where no branch can be placed, null again rather than a guess.
+
+  This needed a version comparator, which the CVSS decision above deliberately refused to
+  write. The difference is that version ordering is well defined and testable, whereas CVSS
+  scoring would have been reimplementing arithmetic the scanner had already done. `VersionOrder`
+  is scoped to dotted releases with pre-release suffixes — what OSV's `SEMVER` ranges are made
+  of — and Maven's richer qualifier rules are covered by preferring `versions[]`.
+- 2026-07-28 — **A component is indexed under every name a scanner might use for it.** The
+  report carries no purl, so ecosystem/name/version is the only link back to a stored
+  component, and a miss silently discards the finding. Scoped npm packages broke it:
+  `npm sbom` emits `name: "@angular/common"` with no group, while other generators split it
+  into `group: "@angular"` and `name: "common"` — which `coordinates()` renders as
+  `@angular:common`, with Maven's separator, against the scanner's `@angular/common`.
+  Registering both spellings is cheaper and more robust than trying to infer which generator
+  produced the document. Collisions are harmless, since the forms only coincide when they
+  denote the same package.
+- 2026-07-28 — **Repeated dependency edges are collapsed at parse time.** Generators list the
+  same ref twice, or repeat a target within one `dependsOn`. Both describe one relationship,
+  and stored as written they violate `component_dependency`'s primary key and fail the entire
+  import — reported live as an SBOM that simply would not load. Deduplicated in the parser
+  rather than ignored at the database, because the duplication is meaningless rather than a
+  conflict to resolve. Self-edges are dropped for the same reason, and because they would turn
+  the scope walk into a loop.
+- 2026-07-28 — **Dependency scope is three-valued, and the boolean it replaced was wrong
+  rather than coarse.** `is_direct` could only express "depended on by the root". In an
+  aggregate Maven BOM the root is the parent pom, so its direct dependencies are the
+  project's own modules: every genuinely declared dependency was reported as **transitive**,
+  and the only rows reported as **direct** were two artifacts the user cannot upgrade because
+  they wrote them. Confirmed against the real fixture before changing anything.
+
+  `ScopeClassifier` establishes the application — root plus sibling modules — and then treats
+  what that set depends on, minus itself, as `DIRECT`. For npm and single-module Maven the
+  application is just the root, so the rule reproduces the old behaviour where it was already
+  correct. In the Maven fixture the backend module declares seven dependencies and the seventh
+  is `sbomscope-frontend`; excluding a sibling module from "things you can upgrade" is exactly
+  what the boolean could not do.
+
+  **Module detection is a heuristic and is deliberately strict.** CycloneDX marks a reactor
+  module no differently from a third-party artifact, so it is inferred from group *and* exact
+  version together. Either alone is too loose: an organisation routinely consumes its own
+  published libraries under the same group prefix, and those are real upgradable dependencies.
+  A blank root group disables detection, which is what keeps npm safe. `ScopeClassifierTest`
+  pins the refusals — same version different group, same group different version, and
+  `com.acmex` not matching `com.acme`.
+- 2026-07-28 — **V1–V4 squashed into one baseline.** V4 had already added a column the scope
+  change would have removed, so a reader would have met `is_direct BOOLEAN` in one migration
+  and had to reconstruct the history to learn it no longer exists. Squashing also avoided
+  committing a migration whose job was to delete the user's data — an artifact that would have
+  outlived its usefulness by years.
+
+  The trade is a one-time break: databases created by the old migrations fail to start, and the
+  fix is to delete `~/.sbomscope/db/sbomscope.mv.db` with the application stopped. Settings live
+  in that database, so the scanner path has to be re-entered. Acceptable now because the only
+  installations are the maintainer's; recorded as constraint 8 in `AGENTS.md` so it stops being
+  acceptable the moment that changes.
+- 2026-07-28 — **Orphaned stored documents are swept at startup.** Documents and rows live in
+  two places no transaction spans, so they drift — a crash mid-import, or a schema reset, which
+  empties tables and cannot reach the disk. The sweep is deliberately one-directional: a row
+  whose document is missing is left alone, because that is a real SBOM whose re-scan fails with
+  a message saying so, and deleting the user's inventory to tidy up after ourselves would be a
+  far worse trade. Filenames it cannot account for are also left alone; the directory is the
+  user's.
+- 2026-07-28 — **Purge deletes rows, never the database file — and never the migration
+  history.** H2 holds an exclusive lock on `sbomscope.mv.db` while the application runs (the
+  same lock that blocks a rebuild), so removing the file from inside the running process is
+  not possible. Emptying the tables achieves the same result and leaves a working schema.
+
+  The consequence is worth stating because it is the obvious wrong assumption: **purge cannot
+  rescue an installation that will not start.** A migration the application refuses to boot on
+  has to be dealt with while it is stopped, by deleting the database file. `flyway_schema_history`
+  is deliberately left alone — clearing it from a running process would leave a populated schema
+  that Flyway believes is empty, which is worse than the problem it would be solving. The panel
+  says so, and a test pins it.
+
+  Four independent targets rather than one button, because they differ by orders of magnitude
+  in what they cost to undo: re-uploading an SBOM is a drag and drop, while replacing the npm
+  archive is a 200 MB download that the restricted environments SBOMscope targets may not be
+  able to perform at all. Erasing SBOMs deliberately keeps the purl-keyed vulnerability cache,
+  so a re-upload gets its findings back without re-running the scanner — clearing that is a
+  separate intention. An unrecognised target fails the whole request rather than being skipped:
+  deleting something other than what was asked for is the one outcome a purge must never produce.
+- 2026-07-28 — **Export columns are a setting, defaulting to all of them.** "Export view"
+  reproduces the screen's *rows* — that was always about filter, sort and paging. Whether it
+  also reproduces the screen's *columns* is genuinely ambiguous, so it became a Settings
+  choice rather than a decision taken on the user's behalf. The default is every column: a
+  spreadsheet has no width pressure, it is usually read by someone who never saw the view it
+  came from, and a recipient cannot recover a column dropped before they received it.
+
+  The browser always sends the columns it is showing and the backend decides whether they
+  narrow the workbook, so the rule lives in one place instead of both ends holding an
+  opinion. Unknown or empty column ids fall back to every column: a malformed request should
+  produce a complete spreadsheet, never a blank one, because silently omitting findings is
+  the worse failure.
+- 2026-07-28 — **The provenance sheet records what was selected, not just what was scanned.**
+  A workbook holding 40 of 600 findings was indistinguishable from a complete one. It now
+  carries scope, sort, severity bands, text filter and columns — the receiving-end
+  counterpart to the row counts on the export buttons.
+- 2026-07-28 — **Export filenames carry the time to the second.** A date alone collided the
+  second time you exported in a day, which is exactly what happens while narrowing a filter,
+  leaving the browser to disambiguate with "(1)" and "(2)". Colons are illegal in Windows
+  filenames, so the time is written without them and still sorts chronologically.
+- 2026-07-28 — **One SQL expression decides a finding's band.** The severity filter built a
+  chain of OR'd range predicates while the new summary counts needed the same thresholds
+  again; two statements of the same boundaries would drift, and the failure — the number
+  beside "High" describing different rows than ticking High — would be silent. Both now read
+  a single ordered `CASE`, which also made the filter clause shorter.
+
+  It closed a real gap in passing. LOW required `severity_score > 0`, so a finding scored
+  exactly **0.0** matched neither LOW nor NONE (which requires no score at all): the row
+  existed but no filter selection could display it. The `CASE` ends in `ELSE 'LOW'`, so no
+  scored finding can fall outside every band. `SeverityBandTest` pins the thresholds from
+  either side, since a comparison flipped between `>=` and `>` only shows at the edge.
+- 2026-07-28 — **The severity summary is unfiltered, and includes Low and Unscored.** It
+  describes the SBOM, not the current view — the row count under the table already answers
+  "what am I looking at". Low and Unscored are shown despite rarely being acted on first,
+  because without them the counts would not sum to the total printed beside them, and an
+  unexplained discrepancy in a security summary costs more than a quiet extra number. Empty
+  bands are dimmed rather than hidden, keeping "none found" distinct from "not measured".
+  Read-only: filtering stays with the severity chips, so two controls cannot disagree about
+  what is selected.
+
+  **Merged into the severity chips the same day, after two attempts.** As stacked cards the
+  summary was the largest block above the table — 101px of 288px, leaving the table 380px of
+  a 720px window. Measured, not guessed.
+
+  The first attempt moved it into the page header as a horizontal strip and folded the
+  headline count and scan date into the header's meta line. That returned 114px but still
+  looked wrong, and the reason was the real problem: **the chips and the counts described the
+  same six bands, so the screen said everything twice.** Any placement of a second control
+  for one taxonomy was going to look like clutter.
+
+  Each chip now carries its own count. One control instead of two, no block above the table
+  at all, and the numbers became clickable. **135px returned in total: 288px down to 153px,
+  with the table going from 380px to 515px.**
+
+  Two consequences worth knowing:
+
+  - **A chip's count is "how many rows selecting this produces"**, counted from the same LEFT
+    JOIN the view is built on. That is what makes `CLEAN` countable — it counts components
+    with nothing against them where the others count vulnerabilities. Different units, but the
+    same question for a filter. `countsByBand` changed from counting findings to counting
+    rows for this reason, and `SeverityBandTest` now checks every band, not just the vulnerable
+    ones, because a number printed on a control that did not match what clicking it produced
+    would be worse than no number.
+  - **The count does not move with the filter.** It describes the SBOM, so the chips stay
+    comparable however the view is narrowed. Unpressed chips were lightened from 0.45 to 0.62
+    opacity so a switched-off band's number stays readable.
+
+  The wider chips then pushed the controls row onto a second line, which would have given back
+  the space just saved. `.toolbar__search` now flexes (`1 1 180px`, capped at 320px) and shrinks
+  first — it reads perfectly well at half width, and a filter box is not worth a band of vertical
+  space. At 1024px the row still wraps, since the chips alone are 518px; nothing overflows and it
+  remains ahead of the original layout.
+- 2026-07-28 — **GHSA rating and CVSS severity are separate columns, because they are
+  separate claims.** `severity_rating` comes from the advisory's `database_specific.severity`
+  — GitHub's own LOW/MODERATE/HIGH/CRITICAL scale — and is not derived from the CVSS score
+  beside it. The table had been rendering it as that score's label, so a finding read
+  "6.5 MODERATE" where CVSS's own word for 6.5 is "Medium". MODERATE is not a CVSS term at
+  all. The severity cell now shows the band derived from its own number, and the GHSA rating
+  has its own column, placed next to the OSV ID it belongs to.
+
+  Columns are ordered by source generally: everything except the CVE identifier describes
+  the OSV/GHSA record, including the published date, which is when the *advisory* appeared
+  rather than when NVD published the CVE.
+- 2026-07-28 — **Compact / Details, with a locked core.** All 13 columns are reachable, but
+  showing them by default makes the table unreadable, so Compact is a configurable subset and
+  Details is everything. Component, Version, OSV ID and Severity cannot be switched off —
+  a row missing any of them cannot be acted on. The picker lives on the table toolbar rather
+  than in Settings: it is wanted at the moment you are looking at the table, and the effect
+  is visible as you tick. Stored sets are repaired on load — unknown ids dropped, locked ones
+  forced back in, canonical order restored — rather than trusted, since a preference outlives
+  the code that wrote it.
+
+  **Revised the same day**: both controls started out inline in the toolbar, which put "how it
+  looks" between "which rows" and the export button — three unrelated jobs reading as one
+  strip. They now share a single view-options menu next to Export, so the row divides on what
+  the controls are *for*: filtering to the left, things you do to the result to the right.
+  Density moving behind a click is the cost; the toolbar no longer looking like a pile of
+  unrelated widgets is the gain.
+- 2026-07-28 — **Advisory links come from `AdvisoryLinks`.** The exporter built osv.dev and
+  NVD URLs inline while the API sent its own `referenceUrl`, so the table and the spreadsheet
+  had two implementations of the same decision. Both now call one helper, for the same reason
+  `RegistryLinks` already existed. `FindingRow.referenceUrl` went with it: with OSV ID and CVE
+  ID as separate columns, a single "authoritative link" no longer describes anything.
+- 2026-07-28 — **A glossary, because the vocabulary is unavoidable.** CVSS, GHSA, purl and
+  CycloneDX scopes are what the data is, and are opaque to anyone not already working in
+  supply-chain security — who is exactly who receives the exported spreadsheet. The
+  per-column table is the substantive half: it names each column's source, which is where the
+  distinctions this project keeps making (GHSA rating vs CVSS band, advisory date vs CVE date,
+  unscored vs clean, why a vector can be missing) are written down for the reader rather than
+  only for the maintainer.
+- 2026-07-28 — **Scan availability is checked, not assumed.** The scan button was disabled
+  only on the settings toggle, so with scanning switched on but the binary moved or the OSV
+  archive never downloaded, it stayed enabled and failed on click. `ScanService.readiness`
+  now reports a reason code the UI renders beside the button. Checked **per SBOM**, because
+  the archives needed depend on the document's ecosystems — telling someone with a
+  Maven-only SBOM to fetch npm's 200 MB archive would be wrong as well as annoying.
+  Filesystem checks only: confirming the binary really is osv-scanner means running it, which
+  belongs behind the deliberate "Test scanner" action, not on every poll of the view.
+
+  Rendered as text next to the control rather than a `title` tooltip, which is invisible on
+  touch, to keyboard users, and to anyone who does not think to hover over something that
+  looks broken.
+- 2026-07-28 — **View preferences persist; the page number does not.** Sort, severity bands,
+  page size, text filter and the sidebar's collapsed state are written to `localStorage`, so
+  a trip to Settings no longer resets the table. The page number is deliberately excluded:
+  restoring page 7 against whichever SBOM happens to be selected lands somewhere arbitrary.
+  `localStorage` rather than the URL because SBOMscope runs on one machine for one person,
+  so there is nobody to share a link with. Stored state is revived through a validating
+  function rather than trusted, since it outlives the code that wrote it.
+- 2026-07-28 — **One export button, with the row counts kept.** Two side-by-side buttons
+  became a split button: primary action exports the view, the caret opens both scopes. Opened
+  by click, not hover — a hover menu is unreachable by keyboard and does not exist on touch,
+  and this is the only route to a whole-inventory export. Both entries still carry their row
+  counts, because the reason those counts existed has not changed.
+- 2026-07-28 — **A group's CVSS vector is shown only when its members agree on it.**
+  Findings are built per group of aliased advisories. The score comes from
+  `max_severity` — the highest across the whole group — while every other field is read
+  from the single advisory whose id is displayed, so where members disagree the number and
+  the vector described different records. Nothing surfaced this because the vector was
+  never displayed; adding a CVSS vector column would have made the tool print a vector that
+  does not produce the score beside it.
+
+  Reading every field from the member whose score is the maximum was considered and is not
+  implementable cheaply: OSV encodes severity as CVSS **vector strings only**, and just the
+  group carries a number, so identifying that member means owning a CVSS v3.1 + v4.0
+  scoring implementation — a few hundred lines of lookup tables duplicating the scanner, in
+  the one place where being subtly wrong is worst. Rejected under constraint 9.
+
+  Instead the vector is returned only when every member carrying one agrees, which makes it
+  unambiguously the vector behind the score; otherwise it is dropped and the score stands.
+  The score is never lowered. Measured against the Maven set: 21 of 6,860 advisories are in
+  a multi-member group, and 11 of those pairs disagree on the vector — so the rule affects
+  ~0.16% of advisories, and where it bites the disagreements are large
+  (`C:H/I:H/A:H` against `C:L/I:L/A:L`), not rounding.
+- 2026-07-28 — **One finding per (component, advisory), decided in the parser.** A scan on
+  another machine failed at `recordScan`: the parsed list held two findings with the same
+  purl and OSV id, which is exactly what `uq_finding_per_component` forbids. The import runs
+  in one transaction, so the whole scan was lost, and the error named a constraint rather
+  than anything the user could act on.
+
+  **The lookup that produces it is not the bug**, which is why the obvious fix is the wrong
+  one. Resolving a reported package back to a purl is many-to-one in two independent ways,
+  both deliberate: `component` is unique on (sbom_id, bom_ref) and not on purl, so one
+  document can legitimately carry the same library twice — npm installs a package at several
+  paths, an aggregate BOM spans several modules — and a component is registered under every
+  name a generator might use for it, which is the fix that stopped scoped npm packages being
+  silently dropped. Making either one-to-one would reintroduce a discarded-findings bug to
+  cure a duplicate-row one.
+
+  So uniqueness is established where the pair is assembled. `OsvReportParser.parse` collects
+  into a map keyed by `VulnerabilityFinding.Key`, which is the schema's constraint written
+  once in Java. Put in the parser rather than at the call site because returning a list that
+  cannot be stored is the parser's defect regardless of who consumes it — and Phase 8's
+  guided remediation is a second consumer waiting to happen.
+
+  **A MERGE in the repository was considered and rejected.** It would have made the write
+  idempotent, and `vulnerability_scan` is already written that way, so it was the consistent
+  choice. But it resolves collisions by last-one-wins, silently, at the point where nothing
+  can see them any more. Colliding findings are normally identical; where they are not, the
+  descriptive fields depend on the reported package name, and the difference is worth a log
+  line rather than a coin toss. The first is kept, which is the entry described from the
+  advisory's own coordinates — `keepsTheFullyDescribedFindingWhenDuplicatesDisagree` pins
+  that, since the alternative silently prefers a row whose fix version could not be resolved.
+- 2026-07-28 — **Severity counts on the SBOM cards, and "not scanned" is not a zero.** The
+  sidebar listed filename, date and component count — nothing about risk — so choosing which
+  upload to open meant opening all of them. Each card now carries critical, high and medium.
+
+  Low and Unscored are left off deliberately: the card exists to pick the next SBOM, and five
+  numbers in a 280px column is a table rather than a glance. Nothing on the card claims to be
+  a total, so unlike the severity chips there is no sum for the omission to break — the
+  findings page still carries every band.
+
+  **The counts alone would have lied.** A document nobody has scanned has no critical
+  vulnerabilities in precisely the way a scanned, clean one does: every component falls in
+  `CLEAN`, and the card would have read 0/0/0 either way. That is the same conflation the scan
+  table was introduced to prevent, one screen further out, so `scannedComponents` travels
+  with the numbers and the card says *Not scanned* instead. It can be non-zero for an SBOM
+  never scanned in its own right, because the purl cache is shared — that is the cache
+  working, and the card is honest either way.
+
+  Counted in one grouped query for the whole list rather than per card, from the same
+  `BAND_EXPRESSION` and the same LEFT JOIN as the findings page. That is a second
+  implementation of a number this project has already refused to duplicate once, so
+  `SeverityBandTest` asserts the batched summary equals the per-SBOM one rather than trusting
+  that they look alike. Zero bands are dimmed rather than hidden, as on the chips.
+- 2026-07-28 — **Advisory dates are UTC dates; timestamps from this machine stay local.**
+  The Published column rendered `2026-07-21T22:00:43Z` as "22.07.2026, 00:00" in Berlin. Both
+  halves are wrong: the 00:00 reads as though no time was recorded, and the date is a day
+  after the advisory the row links to on osv.dev.
+
+  Two kinds of value were being formatted by one rule. Upload, scan and export times happened
+  on the reader's own machine, where their clock is the right one. An advisory's publication
+  date belongs to an external record the reader can go and check, and shifting it into their
+  zone breaks that correspondence for everyone east or west of UTC — but only for advisories
+  filed near midnight, so it would surface as occasional bad data rather than a formatting
+  choice. The time of day is dropped with it: for triage the question is how old an advisory
+  is, never what minute it was filed. The table and the export changed together, as they must.
+- 2026-07-27 — **`-parameters` is configured explicitly in the parent POM.** Because
+  this project imports the Spring Boot BOM instead of inheriting from
+  `spring-boot-starter-parent`, none of that parent's build configuration comes along.
+  Without the flag, `@PathVariable`/`@RequestParam` cannot recover their own names and
+  every such endpoint fails at runtime with a 400 — while parameter-free endpoints keep
+  working, which makes it look like a routing problem rather than a compiler setting.

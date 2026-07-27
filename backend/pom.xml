@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.sbomscope</groupId>
+    <artifactId>sbomscope-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>sbomscope-backend</artifactId>
+  <packaging>jar</packaging>
+
+  <name>SBOMscope Backend</name>
+  <description>Spring Boot application. Produces the single runnable SBOMscope jar.</description>
+
+  <dependencies>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <!-- JDBC rather than JPA. Flyway owns the schema, so entity-driven DDL brings
+         nothing, and the findings views are reporting-shaped reads where explicit
+         SQL is clearer than lazy loading. Also keeps the artifact small, which
+         matters for a tool whose own SBOM is part of its pitch. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!-- Declared explicitly because we parse CycloneDX with Jackson directly.
+         Spring Boot 4 pulls it in for HTTP message conversion at runtime, but that
+         does not put it on the compile classpath — depending on it implicitly would
+         be relying on someone else's transitive dependency for our own core parsing. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-json</artifactId>
+    </dependency>
+
+    <!-- Schema is owned by versioned migrations, never by Hibernate auto-DDL:
+         the local database holds user data that must survive upgrades.
+
+         The starter is required rather than plain flyway-core. Spring Boot 4
+         splits autoconfiguration into per-integration modules, so flyway-core on
+         its own puts Flyway on the classpath without ever triggering it — the
+         application starts cleanly and silently skips every migration. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- Excel export. Not managed by the Spring Boot BOM, so the version is pinned in
+         the parent. This is the one place a heavier dependency earns its keep: a real
+         .xlsx with working hyperlinks is the feature, and hand-rolling OOXML would be
+         far worse than the dependency. -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>${poi.version}</version>
+    </dependency>
+
+    <!-- Contributes the built UI to the classpath under META-INF/resources. -->
+    <dependency>
+      <groupId>dev.sbomscope</groupId>
+      <artifactId>sbomscope-frontend</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- MockMvc support is its own module in Spring Boot 4; the general test starter
+         no longer carries it. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+    <finalName>sbomscope</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+              <!-- Emits META-INF/build-info.properties so the running application can
+                   report its own version to the UI. -->
+              <goal>build-info</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

@@ -1,0 +1,1344 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:0c6d930d-b509-49db-80a0-93ab2c07d4cb",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-07-27T12:43:55.635Z",
+    "lifecycles": [
+      {
+        "phase": "build"
+      }
+    ],
+    "tools": [
+      {
+        "vendor": "npm",
+        "name": "cli",
+        "version": "11.16.0"
+      }
+    ],
+    "component": {
+      "bom-ref": "sbomscope-frontend@0.1.0",
+      "type": "library",
+      "name": "frontend",
+      "version": "0.1.0",
+      "scope": "required",
+      "purl": "pkg:npm/sbomscope-frontend@0.1.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:private",
+          "value": "true"
+        }
+      ],
+      "externalReferences": []
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "@oxc-project/types@0.139.0",
+      "type": "library",
+      "name": "@oxc-project/types",
+      "version": "0.139.0",
+      "scope": "required",
+      "author": "Boshen and oxc contributors",
+      "description": "Types for Oxc AST nodes",
+      "purl": "pkg:npm/%40oxc-project/types@0.139.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@oxc-project/types/-/types-0.139.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/oxc-project/oxc.git"
+        },
+        {
+          "type": "website",
+          "url": "https://oxc.rs"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "afd807a61b42b3ed4cec9d29c3a4a7fe187f5a96bf890ace3a4acd02554b17f807abefc22661c858a2945217568dc0fa0886bc89d6abb290ac012897097bc553"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@rolldown/binding-win32-x64-msvc@1.1.5",
+      "type": "library",
+      "name": "@rolldown/binding-win32-x64-msvc",
+      "version": "1.1.5",
+      "scope": "optional",
+      "description": "Fast JavaScript/TypeScript bundler in Rust with Rollup-compatible API.",
+      "purl": "pkg:npm/%40rolldown/binding-win32-x64-msvc@1.1.5",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.1.5.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/rolldown/rolldown.git"
+        },
+        {
+          "type": "website",
+          "url": "https://rolldown.rs/"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "b5366e0c13f0f39b443793d08b5a67101cc3cb4678f47b5270b01b0f9b7a872794f7603de69456692330d466598bf470812814225d31ad2957213ffd433bd848"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@rolldown/pluginutils@1.0.1",
+      "type": "library",
+      "name": "@rolldown/pluginutils",
+      "version": "1.0.1",
+      "scope": "required",
+      "description": "Plugin utilities for Rolldown",
+      "purl": "pkg:npm/%40rolldown/pluginutils@1.0.1",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/rolldown/plugins.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/rolldown/plugins/tree/main/packages/pluginutils#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/rolldown/plugins/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "da3f5b1ade4987c863faf3ed8333ed97bda3d324711c0cae9a8a3a4cd7c08ec2c1d3852da52bcf6cf703701331cfb9fef42601d1cd46c501716118368e29aa1b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@types/react@19.2.17",
+      "type": "library",
+      "name": "@types/react",
+      "version": "19.2.17",
+      "scope": "required",
+      "description": "TypeScript definitions for react",
+      "purl": "pkg:npm/%40types/react@19.2.17",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/react/-/react-19.2.17.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3177e6a9a54f115824053fda6346860a44565ad072898417a37c5d43caf9473b85acf8919fc19aaf6b5075749443618a5776e45dc91e93cf55f3040163643f03"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@types/react-dom@19.2.3",
+      "type": "library",
+      "name": "@types/react-dom",
+      "version": "19.2.3",
+      "scope": "required",
+      "description": "TypeScript definitions for react-dom",
+      "purl": "pkg:npm/%40types/react-dom@19.2.3",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-dom"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8e9d8bfde63a7e7f8a81555000ea9822d6c5d1563f600a5ee4ccf61746b29123bc831df56d8099caf49e6310872afcc71b97998dcfb3c9a4b906b056c9adbe91"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@typescript/typescript-win32-x64@7.0.2",
+      "type": "library",
+      "name": "@typescript/typescript-win32-x64",
+      "version": "7.0.2",
+      "scope": "optional",
+      "author": "Microsoft Corp.",
+      "description": "TypeScript is a language for application scale JavaScript development",
+      "purl": "pkg:npm/%40typescript/typescript-win32-x64@7.0.2",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@typescript/typescript-win32-x64/-/typescript-win32-x64-7.0.2.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/TypeScript.git"
+        },
+        {
+          "type": "website",
+          "url": "https://www.typescriptlang.org/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/microsoft/TypeScript/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "d014371e40071e528b4a9d6a46f7f7494846a46b03ba107f8e0170ef982ecaa6f126a11a4b40b0fd514ef22da71e094953340246d30c47f20100a137113302e2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@vitejs/plugin-react@6.0.4",
+      "type": "library",
+      "name": "@vitejs/plugin-react",
+      "version": "6.0.4",
+      "scope": "required",
+      "author": "Evan You",
+      "description": "The default Vite plugin for React projects",
+      "purl": "pkg:npm/%40vitejs/plugin-react@6.0.4",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.0.4.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/vitejs/vite-plugin-react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/vitejs/vite-plugin-react/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5dc090cf44c1a418258e18f480cbae0e3e3d8ba62daa1e6ad68b13fc6a79b805495024d6c72b2493f9758f06188aedb170d1c78a974ccf8d0419f33555d6a656"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "cookie@1.1.1",
+      "type": "library",
+      "name": "cookie",
+      "version": "1.1.1",
+      "scope": "required",
+      "author": "Roman Shtylman <shtylman@gmail.com>",
+      "description": "HTTP server cookie parsing and serialization",
+      "purl": "pkg:npm/cookie@1.1.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/cookie/-/cookie-1.1.1.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7a2f00a2cee36b4c1e469173267100f541c9ffb5d09aa8256d1c277f60138dc07d5aaf3be15287f647e38e2acce94854dbf1397c561a77297284595d72a4a275"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "csstype@3.2.3",
+      "type": "library",
+      "name": "csstype",
+      "version": "3.2.3",
+      "scope": "required",
+      "author": "Fredrik Nicol <fredrik.nicol@gmail.com>",
+      "description": "Strict TypeScript and Flow types for style based on MDN data",
+      "purl": "pkg:npm/csstype@3.2.3",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "cf51c629c632db103c00641fc2b9f43c0cbe3c1ed7fc64a3dd45495bda8aca7e37c566be825e675e6538aaa2cc4735952c50bc2aeb145fc4ffd240a2398a4021"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "detect-libc@2.1.2",
+      "type": "library",
+      "name": "detect-libc",
+      "version": "2.1.2",
+      "scope": "required",
+      "author": "Lovell Fuller <npm@lovell.info>",
+      "description": "Node.js module to detect the C standard library (libc) implementation family and version",
+      "purl": "pkg:npm/detect-libc@2.1.2",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git://github.com/lovell/detect-libc.git"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "06d8f604e38ef37a375b21f9f5ef0c817b3111055c6ab9143a9118aee6c1d2eaf09cdd74c90dfae2bb22072535d67665a966199b4e62fe87fb8a8e26ce2841b5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "fdir@6.5.0",
+      "type": "library",
+      "name": "fdir",
+      "version": "6.5.0",
+      "scope": "required",
+      "author": "thecodrr <thecodrr@protonmail.com>",
+      "description": "The fastest directory crawler & globbing alternative to glob, fast-glob, & tiny-glob. Crawls 1m files in < 1s",
+      "purl": "pkg:npm/fdir@6.5.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/thecodrr/fdir.git"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/thecodrr/fdir#readme"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/thecodrr/fdir/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "b486d8b596ee70eb340511aa3c992c84951874bf920c7edd54cf208f2f84469dd60148cb105244fb4da46a7c87b708d63a7c2b298062c0098cd29e242c90275e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "lightningcss@1.33.0",
+      "type": "library",
+      "name": "lightningcss",
+      "version": "1.33.0",
+      "scope": "required",
+      "description": "A CSS parser, transformer, and minifier written in Rust",
+      "purl": "pkg:npm/lightningcss@1.33.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/parcel-bundler/lightningcss.git"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5a4503ae88ee26cd3192019fdae756c5adf21814713edc54901efd8ba68264b46073b3ccf1f65ef53a2c7cf0dcbc4a5065bb850129c762644b04b51b98b38820"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MPL-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "lightningcss-win32-x64-msvc@1.33.0",
+      "type": "library",
+      "name": "lightningcss-win32-x64-msvc",
+      "version": "1.33.0",
+      "scope": "optional",
+      "description": "A CSS parser, transformer, and minifier written in Rust",
+      "purl": "pkg:npm/lightningcss-win32-x64-msvc@1.33.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.33.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/parcel-bundler/lightningcss.git"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3a5108083c7f5e5d05a92a786ebcbccc59c2bc6a628371a5e200aabaf6301eea892840b5fa7f4d8039e216fa871a632fd5992a0c9ac3a8a292ca44c35fe7a1b8"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MPL-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "nanoid@3.3.16",
+      "type": "library",
+      "name": "nanoid",
+      "version": "3.3.16",
+      "scope": "required",
+      "author": "Andrey Sitnik <andrey@sitnik.ru>",
+      "description": "A tiny (116 bytes), secure URL-friendly unique string ID generator",
+      "purl": "pkg:npm/nanoid@3.3.16",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6f394a4f2349efe2dd188230cbc8a316922a11022f69f6a157b798ca427c0af878d8474978e0e827a814257a5026f7a3d4175d1fc3aa4d764d13f29f6d602ef1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "picocolors@1.1.1",
+      "type": "library",
+      "name": "picocolors",
+      "version": "1.1.1",
+      "scope": "required",
+      "author": "Alexey Raspopov",
+      "description": "The tiniest and the fastest library for terminal output formatting with ANSI colors",
+      "purl": "pkg:npm/picocolors@1.1.1",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c5c787dac9e1b5be4cf658aa0ec984c39ea57b7efa993664117fe311bfd1c4d1727a036e97b78db250973fd1438ff2dcbb45fc284c8c71e3f69eda5a1eb0c454"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "picomatch@4.0.5",
+      "type": "library",
+      "name": "picomatch",
+      "version": "4.0.5",
+      "scope": "required",
+      "author": "Jon Schlinkert (https://github.com/jonschlinkert)",
+      "description": "Blazing fast and accurate glob matcher written in JavaScript, with no dependencies and full support for standard and extended Bash glob features, including braces, extglobs, POSIX brackets, and regular expressions.",
+      "purl": "pkg:npm/picomatch@4.0.5",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/micromatch/picomatch"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/micromatch/picomatch/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "46fc3072bb8d8c8d67713e7145a91ec92f4b7fc95c22dbf7e0a0fe6a27fe547f6476e0327d8062a46875db6ef8c6d7a720f675d7dfd1f4175305af200304a1d0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "postcss@8.5.23",
+      "type": "library",
+      "name": "postcss",
+      "version": "8.5.23",
+      "scope": "required",
+      "author": "Andrey Sitnik <andrey@sitnik.es>",
+      "description": "Tool for transforming styles with JS plugins",
+      "purl": "pkg:npm/postcss@8.5.23",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz"
+        },
+        {
+          "type": "website",
+          "url": "https://postcss.org/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/postcss/postcss/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "839d39f3acebe1b666c0589395f94cbbc1346c34dbe48e607abb60c002a6b1d5254d022166dba7cd4943d564b3c1c5563e8015a6cac0eaf95f083ee85ef47082"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "react@19.2.8",
+      "type": "library",
+      "name": "react",
+      "version": "19.2.8",
+      "scope": "required",
+      "description": "React is a JavaScript library for building user interfaces.",
+      "purl": "pkg:npm/react@19.2.8",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/react/-/react-19.2.8.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/react/react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://react.dev/"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3d66980352ffabdbb6bbbc58422f98dcbdd87e789eed7c8b79a248095d4c183e8ba6bb01c5c02a1a3632af4798de9f9076c03ec7f22b92de1089ff03eb7f926f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "react-dom@19.2.8",
+      "type": "library",
+      "name": "react-dom",
+      "version": "19.2.8",
+      "scope": "required",
+      "description": "React package for working with the DOM.",
+      "purl": "pkg:npm/react-dom@19.2.8",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/react-dom/-/react-dom-19.2.8.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/react/react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://react.dev/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/react/react/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ad5a6b8a67c6046dc347e4ead08406d834f93f12ad8755881839a3e723e6973af86017bbbb213e0eee2856a4c35d948718619746d4c910649278fc9008c06095"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "react-router@7.18.1",
+      "type": "library",
+      "name": "react-router",
+      "version": "7.18.1",
+      "scope": "required",
+      "author": "Remix Software <hello@remix.run>",
+      "description": "Declarative routing for React",
+      "purl": "pkg:npm/react-router@7.18.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/react-router/-/react-router-7.18.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/remix-run/react-router"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "1832e08378b7b8cd1a7893b7166f93092fac0d0ee0bb5d93eb1d2a753133730a847e579c8bb270ba054d205dd4fffd0558a9c94fba6d1bedb40768df0ea9d902"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "react-router-dom@7.18.1",
+      "type": "library",
+      "name": "react-router-dom",
+      "version": "7.18.1",
+      "scope": "required",
+      "author": "Remix Software <hello@remix.run>",
+      "description": "Declarative routing for React web applications",
+      "purl": "pkg:npm/react-router-dom@7.18.1",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/react-router-dom/-/react-router-dom-7.18.1.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/remix-run/react-router"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "29a661f97ffa52d129dbcc79d40518643320f4d1a8cf68daddd3476beb5afed938d2f0b32a143f472a4258130b6e60ebebffc4db856fe6e3ecaea5c5a3376402"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "rolldown@1.1.5",
+      "type": "library",
+      "name": "rolldown",
+      "version": "1.1.5",
+      "scope": "required",
+      "description": "Fast JavaScript/TypeScript bundler in Rust with Rollup-compatible API.",
+      "purl": "pkg:npm/rolldown@1.1.5",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/rolldown/-/rolldown-1.1.5.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/rolldown/rolldown.git"
+        },
+        {
+          "type": "website",
+          "url": "https://rolldown.rs/"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "b7dcf6f5c2635dffefc50f1dca1092a6de87e9a4b01d393c713e48de2cba48c5ee169939981e8f2fa5df0bc3c2c2b3d3c7ddee7702949bd1d1b5e0254c604b88"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "scheduler@0.27.0",
+      "type": "library",
+      "name": "scheduler",
+      "version": "0.27.0",
+      "scope": "required",
+      "description": "Cooperative scheduler for the browser environment.",
+      "purl": "pkg:npm/scheduler@0.27.0",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/facebook/react.git"
+        },
+        {
+          "type": "website",
+          "url": "https://react.dev/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/facebook/react/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "78dbfe5ab55b2aed5fdef6d8253ff1b62179b320391cf20cb5ff48818fe72a0d2c5aacc0504bea63fc66ece71973fa9a7cbc7f88ef4580e99e480a78bf9b62fd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "set-cookie-parser@2.7.2",
+      "type": "library",
+      "name": "set-cookie-parser",
+      "version": "2.7.2",
+      "scope": "required",
+      "author": "Nathan Friedly",
+      "description": "Parses set-cookie headers into objects",
+      "purl": "pkg:npm/set-cookie-parser@2.7.2",
+      "properties": [],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-2.7.2.tgz"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/nfriedly/set-cookie-parser"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a1e33596953f52f853c70fa0ddc21fc571f225173fba275ddf22b53f6e368331ddb34b9d401633b37cbc8f8802096f9927b69dd3272d95df1160ef9b76eae5bf"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "source-map-js@1.2.1",
+      "type": "library",
+      "name": "source-map-js",
+      "version": "1.2.1",
+      "scope": "required",
+      "author": "Valentin 7rulnik Semirulnik <v7rulnik@gmail.com>",
+      "description": "Generates and consumes source maps",
+      "purl": "pkg:npm/source-map-js@1.2.1",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/7rulnik/source-map-js"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "51758c2a12cec1529bef6f0852d40f5f17d853ebac7726ed52b2bff2e184f0240cbeb84ea70bf30c1c23d108522fb31073bbc8b084811bc550f3e203431a5f40"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "tinyglobby@0.2.17",
+      "type": "library",
+      "name": "tinyglobby",
+      "version": "0.2.17",
+      "scope": "required",
+      "author": "Superchupu",
+      "description": "A fast and minimal alternative to globby and fast-glob",
+      "purl": "pkg:npm/tinyglobby@0.2.17",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/SuperchupuDev/tinyglobby.git"
+        },
+        {
+          "type": "website",
+          "url": "https://superchupu.dev/tinyglobby"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/SuperchupuDev/tinyglobby/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c1747f758a5ca8a99f5a911d66388a24ec023459dd0f40cc9eb5bf7188d51adb449017d581c2c51e836b963e3b9a339589cf72c8dbbae5a96c805e0d4324dada"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "typescript@7.0.2",
+      "type": "library",
+      "name": "typescript",
+      "version": "7.0.2",
+      "scope": "required",
+      "author": "Microsoft Corp.",
+      "description": "TypeScript is a language for application scale JavaScript development",
+      "purl": "pkg:npm/typescript@7.0.2",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/TypeScript.git"
+        },
+        {
+          "type": "website",
+          "url": "https://www.typescriptlang.org/"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/microsoft/TypeScript/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "f0561abbdea8dcd28e85b8ca8bfa8dbc6fd6e63873c646dd9b9b23f406d9ff94f9b16aa7de12602df1b1dbbb11299593bf2cc23fc74b4414dfe6d05349155434"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "vite@8.1.5",
+      "type": "library",
+      "name": "vite",
+      "version": "8.1.5",
+      "scope": "required",
+      "author": "Evan You",
+      "description": "Native-ESM powered web dev build tool",
+      "purl": "pkg:npm/vite@8.1.5",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/vite/-/vite-8.1.5.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "git+https://github.com/vitejs/vite.git"
+        },
+        {
+          "type": "website",
+          "url": "https://vite.dev"
+        },
+        {
+          "type": "issue-tracker",
+          "url": "https://github.com/vitejs/vite/issues"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ed42cbc2c09d631fe7472ae9884c2fa9be53147acc559c81b7eae0fce0174fbae08ffcfe0ed4c3c8a15e2c074392e6c3543283f233ac9dd9b2ee6e795dc7d4b3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "sbomscope-frontend@0.1.0",
+      "dependsOn": [
+        "react@19.2.8",
+        "react-dom@19.2.8",
+        "react-router-dom@7.18.1",
+        "@types/react@19.2.17",
+        "@types/react-dom@19.2.3",
+        "@vitejs/plugin-react@6.0.4",
+        "typescript@7.0.2",
+        "vite@8.1.5"
+      ]
+    },
+    {
+      "ref": "@oxc-project/types@0.139.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "@rolldown/binding-win32-x64-msvc@1.1.5",
+      "dependsOn": []
+    },
+    {
+      "ref": "@rolldown/pluginutils@1.0.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "@types/react@19.2.17",
+      "dependsOn": [
+        "csstype@3.2.3"
+      ]
+    },
+    {
+      "ref": "@types/react-dom@19.2.3",
+      "dependsOn": [
+        "@types/react@19.2.17"
+      ]
+    },
+    {
+      "ref": "@typescript/typescript-win32-x64@7.0.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "@vitejs/plugin-react@6.0.4",
+      "dependsOn": [
+        "vite@8.1.5",
+        "@rolldown/pluginutils@1.0.1"
+      ]
+    },
+    {
+      "ref": "cookie@1.1.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "csstype@3.2.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "detect-libc@2.1.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "fdir@6.5.0",
+      "dependsOn": [
+        "picomatch@4.0.5"
+      ]
+    },
+    {
+      "ref": "lightningcss@1.33.0",
+      "dependsOn": [
+        "detect-libc@2.1.2",
+        "lightningcss-win32-x64-msvc@1.33.0"
+      ]
+    },
+    {
+      "ref": "lightningcss-win32-x64-msvc@1.33.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "nanoid@3.3.16",
+      "dependsOn": []
+    },
+    {
+      "ref": "picocolors@1.1.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "picomatch@4.0.5",
+      "dependsOn": []
+    },
+    {
+      "ref": "postcss@8.5.23",
+      "dependsOn": [
+        "nanoid@3.3.16",
+        "picocolors@1.1.1",
+        "source-map-js@1.2.1"
+      ]
+    },
+    {
+      "ref": "react@19.2.8",
+      "dependsOn": []
+    },
+    {
+      "ref": "react-dom@19.2.8",
+      "dependsOn": [
+        "react@19.2.8",
+        "scheduler@0.27.0"
+      ]
+    },
+    {
+      "ref": "react-router@7.18.1",
+      "dependsOn": [
+        "react@19.2.8",
+        "react-dom@19.2.8",
+        "cookie@1.1.1",
+        "set-cookie-parser@2.7.2"
+      ]
+    },
+    {
+      "ref": "react-router-dom@7.18.1",
+      "dependsOn": [
+        "react@19.2.8",
+        "react-dom@19.2.8",
+        "react-router@7.18.1"
+      ]
+    },
+    {
+      "ref": "rolldown@1.1.5",
+      "dependsOn": [
+        "@oxc-project/types@0.139.0",
+        "@rolldown/pluginutils@1.0.1",
+        "@rolldown/binding-win32-x64-msvc@1.1.5"
+      ]
+    },
+    {
+      "ref": "scheduler@0.27.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "set-cookie-parser@2.7.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "source-map-js@1.2.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "tinyglobby@0.2.17",
+      "dependsOn": [
+        "fdir@6.5.0",
+        "picomatch@4.0.5"
+      ]
+    },
+    {
+      "ref": "typescript@7.0.2",
+      "dependsOn": [
+        "@typescript/typescript-win32-x64@7.0.2"
+      ]
+    },
+    {
+      "ref": "vite@8.1.5",
+      "dependsOn": [
+        "lightningcss@1.33.0",
+        "picomatch@4.0.5",
+        "postcss@8.5.23",
+        "rolldown@1.1.5",
+        "tinyglobby@0.2.17"
+      ]
+    }
+  ]
+}

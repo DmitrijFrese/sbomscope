@@ -26,6 +26,9 @@ build/
 
 # --- Node / frontend build ----------------------------------------------------
 node_modules/
+# Defensive: the build uses the machine's Node rather than a project-local copy,
+# but an earlier setup installed one here and it must never be committed.
+/frontend/node/
 dist/
 .vite/
 *.tsbuildinfo
