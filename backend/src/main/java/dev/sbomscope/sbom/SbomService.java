@@ -85,6 +85,24 @@ public class SbomService {
         return repository.findComponents(sbomId);
     }
 
+    /**
+     * The component carrying this purl, for the Component Inspector.
+     *
+     * <p>A purl is not unique within an SBOM — the same library at the same version can be
+     * listed under several bom-refs, which npm does when it installs a package at more than
+     * one path. They describe one library, so returning the first is right; and because
+     * {@link #findComponents} orders root first and then by scope, "first" is the most
+     * significant of them rather than an arbitrary one.
+     */
+    public Optional<StoredComponent> findComponentByPurl(UUID sbomId, String purl) {
+        if (purl == null || purl.isBlank()) {
+            return Optional.empty();
+        }
+        return findComponents(sbomId).stream()
+                .filter(component -> purl.equals(component.purl()))
+                .findFirst();
+    }
+
     @Transactional
     public boolean delete(UUID id) {
         boolean deleted = repository.deleteById(id);

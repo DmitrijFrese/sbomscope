@@ -12,6 +12,16 @@
   <name>SBOMscope</name>
   <description>Local-first SBOM analysis for restricted environments.</description>
 
+  <!-- Declared here so it reaches SBOMscope's own generated SBOM. A tool that reports on
+       other projects' dependency metadata should not be missing its own. -->
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
   <modules>
     <module>frontend</module>
     <module>backend</module>

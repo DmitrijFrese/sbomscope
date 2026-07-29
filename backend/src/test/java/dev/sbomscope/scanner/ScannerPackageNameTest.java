@@ -66,9 +66,27 @@ class ScannerPackageNameTest {
     }
 
     @Test
-    void alwaysOffersTheBareName() {
-        // An unscoped package, and the fallback for any generator that reports only the name.
+    void offersTheBareNameForAnUnscopedPackage() {
+        // Nothing special is needed for it: with no group, coordinates() is the name itself.
         assertThat(ScanService.scannerNamesFor(component("", "left-pad", "1.0.0"), "npm"))
                 .contains("left-pad");
+    }
+
+    @Test
+    void neverOffersAMavenArtifactIdOnItsOwn() {
+        // Two groups routinely publish the same artifactId. Registering the bare form let
+        // whichever component was indexed first claim it for both, so a finding could be
+        // reported against a library that does not have it — an error that looks like an
+        // answer. Nothing was lost by removing it: osv-scanner names Maven packages
+        // group:artifact, so the bare form never matched a report in the first place.
+        assertThat(ScanService.scannerNamesFor(component("com.foo", "core", "1.0.0"), "Maven"))
+                .containsExactly("com.foo:core");
+    }
+
+    @Test
+    void neverOffersAScopedPackageWithoutItsScope() {
+        // "common" is a real unscoped package, and it is not @angular/common.
+        assertThat(ScanService.scannerNamesFor(component("@angular", "common", "19.2.17"), "npm"))
+                .doesNotContain("common");
     }
 }

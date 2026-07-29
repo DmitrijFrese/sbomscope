@@ -1,7 +1,6 @@
 package dev.sbomscope.api;
 
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -22,17 +21,13 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import dev.sbomscope.export.AdvisoryLinks;
 import dev.sbomscope.export.ExportColumn;
 import dev.sbomscope.export.ExportDescription;
 import dev.sbomscope.export.FindingsExcelExporter;
-import dev.sbomscope.export.RegistryLinks;
-import dev.sbomscope.sbom.DependencyScope;
 import dev.sbomscope.sbom.SbomService;
 import dev.sbomscope.sbom.StoredSbom;
 import dev.sbomscope.scanner.ScanService;
 import dev.sbomscope.scanner.FindingQuery;
-import dev.sbomscope.scanner.FindingRow;
 import dev.sbomscope.settings.SettingsService;
 
 @RestController
@@ -50,70 +45,6 @@ class ScanController {
         this.sboms = sboms;
         this.settings = settings;
         this.exporter = exporter;
-    }
-
-    /**
-     * One row of the integrated view: a component, plus one vulnerability affecting it
-     * or none at all.
-     *
-     * @param osvId null when the component has no known vulnerability — distinct from a
-     *              finding with a null {@code severityScore}, which is a real
-     *              vulnerability of unknown severity
-     */
-    record RowResponse(
-            String purl,
-            String coordinates,
-            String version,
-            boolean root,
-            /** APPLICATION, DIRECT or TRANSITIVE — what you can do about a finding. */
-            DependencyScope scope,
-            String osvId,
-            String cveId,
-            String summary,
-            BigDecimal severityScore,
-            /**
-             * GitHub's own qualitative label, from the advisory's {@code database_specific}
-             * block. A different scale from a different source than {@code severityScore} —
-             * MODERATE is not a CVSS word — so the two are shown as separate columns.
-             */
-            String severityRating,
-            /** Which CVSS revision produced the score; v3 and v4 are not comparable. */
-            String cvssVersion,
-            /** Null when the group's advisories disagree and it cannot be attributed. */
-            String cvssVector,
-            String fixedVersion,
-            Instant publishedAt,
-            /** The advisory record; null with no finding. */
-            String osvUrl,
-            /** NVD; null when the advisory has no CVE counterpart. */
-            String cveUrl,
-            /**
-             * Public registry page. Supplied by the backend rather than built in the
-             * browser so the view and the export cannot drift apart — it is the same
-             * call the exporter makes.
-             */
-            String registryUrl) {
-
-        static RowResponse from(FindingRow row) {
-            return new RowResponse(
-                    row.purl(),
-                    row.coordinates(),
-                    row.version(),
-                    row.root(),
-                    row.scope(),
-                    row.osvId(),
-                    row.cveId(),
-                    row.summary(),
-                    row.severityScore(),
-                    row.severityRating(),
-                    row.cvssVersion(),
-                    row.cvssVector(),
-                    row.fixedVersion(),
-                    row.publishedAt(),
-                    AdvisoryLinks.osvUrl(row.osvId()),
-                    AdvisoryLinks.cveUrl(row.cveId()),
-                    RegistryLinks.forPurl(row.purl()));
-        }
     }
 
     /**

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { deleteSbom, fetchSboms, uploadSbom } from '../api/client';
 import type { Sbom } from '../api/client';
+import { usePersistentState } from '../state/persisted';
 
 /**
  * Holds the uploaded SBOMs and which one is selected.
@@ -31,7 +32,19 @@ function messageOf(error: unknown): string {
 
 export function SbomProvider({ children }: { children: ReactNode }) {
   const [sboms, setSboms] = useState<Sbom[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Persisted, because the Component Inspector puts the component in the URL and the SBOM
+  // it belongs to is not in there with it — without this, a refresh restored the component
+  // against whichever SBOM happened to be newest. It also fixes the older annoyance that
+  // reloading the findings view silently switched you to a different document.
+  //
+  // Never trusted: a stored id can name an SBOM since deleted, and reload() replaces it
+  // with the most recent upload when it no longer matches anything.
+  const [selectedId, setSelectedId] = usePersistentState<string | null>(
+    'sboms.selected',
+    null,
+    (stored) => (typeof stored === 'string' ? stored : null),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

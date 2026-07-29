@@ -32,6 +32,21 @@ export function ShieldIcon(props: IconProps) {
   );
 }
 
+/**
+ * A package: the Component Inspector's subject is one library, not a directory of files.
+ * Three strokes on purpose — the nav renders these at 18px, where an overlaid magnifier or
+ * anything finer turns to mush.
+ */
+export function ComponentIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 2.5l8 4.5v9l-8 4.5-8-4.5v-9l8-4.5z" />
+      <path d="M4 7l8 4.5L20 7" />
+      <path d="M12 11.5v9" />
+    </Icon>
+  );
+}
+
 export function FilesIcon(props: IconProps) {
   return (
     <Icon {...props}>

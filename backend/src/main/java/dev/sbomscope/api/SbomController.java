@@ -19,6 +19,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import dev.sbomscope.export.RegistryLinks;
+import dev.sbomscope.sbom.ComponentGraph;
+import dev.sbomscope.sbom.DependencyGraphService;
 import dev.sbomscope.sbom.DependencyScope;
 import dev.sbomscope.sbom.InvalidSbomException;
 import dev.sbomscope.sbom.SbomService;
@@ -34,10 +36,12 @@ class SbomController {
 
     private final SbomService service;
     private final ScanService scans;
+    private final DependencyGraphService graphs;
 
-    SbomController(SbomService service, ScanService scans) {
+    SbomController(SbomService service, ScanService scans, DependencyGraphService graphs) {
         this.service = service;
         this.scans = scans;
+        this.graphs = graphs;
     }
 
     record SbomResponse(
@@ -148,12 +152,71 @@ class SbomController {
         return service.findComponents(id).stream().map(ComponentResponse::from).toList();
     }
 
+    /**
+     * Everything the Component Inspector needs about one component.
+     *
+     * @param scannedAt when this component's purl was last checked. <b>Null means never</b>,
+     *                  and {@code findings} then says nothing — an empty finding list from an
+     *                  unscanned component looks exactly like a clean bill of health, which
+     *                  is the one thing this application must never imply
+     * @param findings  the same rows the findings table would show for this component, from
+     *                  the same query and mapper. A single row with a null {@code osvId}
+     *                  means checked and nothing found
+     */
+    record ComponentDetailResponse(
+            ComponentResponse component,
+            Instant scannedAt,
+            List<RowResponse> findings) {}
+
+    /**
+     * Keyed by purl rather than by component row id.
+     *
+     * <p>The findings table is purl-keyed — its query selects DISTINCT over the purl
+     * precisely so a library listed twice in one document produces one row — so linking a
+     * row to a component row id would have meant putting that id back into the row and
+     * losing that collapse. The Inspector's unit has to be the table's unit, or the action
+     * on a row would open something the row was not describing.
+     *
+     * <p>Passed as a query parameter rather than a path segment: a purl contains slashes,
+     * and an encoded slash in a path is rejected outright by some servlet containers.
+     */
+    @GetMapping("/{id}/component")
+    ComponentDetailResponse component(@PathVariable UUID id, @RequestParam("purl") String purl) {
+        if (service.findById(id).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
+        }
+
+        StoredComponent component = service.findComponentByPurl(id, purl)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "That component is not in this SBOM"));
+
+        return new ComponentDetailResponse(
+                ComponentResponse.from(component),
+                scans.scannedAtForPurl(purl).orElse(null),
+                scans.rowsForComponent(id, purl).stream().map(RowResponse::from).toList());
+    }
+
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(@PathVariable UUID id) {
         if (!service.delete(id)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
         }
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Where this component sits in the SBOM's own dependency graph.
+     *
+     * <p>Separate from {@code /component} rather than folded into it: the graph walks the
+     * whole document, while the header and findings are a lookup, and the panel that needs
+     * it is one tab among several. A reader who never opens that tab should not pay for it.
+     */
+    @GetMapping("/{id}/component/graph")
+    ComponentGraph graph(@PathVariable UUID id, @RequestParam("purl") String purl) {
+        if (service.findById(id).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
+        }
+        return graphs.graphFor(id, purl, scans.vulnerablePurls(id));
     }
 
     /**

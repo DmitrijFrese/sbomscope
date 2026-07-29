@@ -1454,6 +1454,460 @@ body {
   padding-left: var(--space-4);
 }
 
+/* ------------------------------------------- component inspector ---- */
+
+/* Like the row number, a fixed narrow cell rather than a column: it holds one control and
+   must not take width from the data. Sized down from the standard icon button so adding it
+   does not make every row in the table taller. */
+.rowaction {
+  width: 28px;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+
+.rowaction .icon-button {
+  width: 24px;
+  height: 24px;
+}
+
+.finder {
+  margin-bottom: var(--space-4);
+}
+
+/* The side column spaces its own children, so the finder's own margin would double it. */
+.inspector__side .finder {
+  margin-bottom: 0;
+}
+
+.finder__input {
+  width: 100%;
+  max-width: 480px;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* Capped rather than scrolled to an arbitrary depth: past a screenful the list has stopped
+   answering "which one did you mean". */
+.finder__results {
+  max-width: 480px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.finder__option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* Keyboard highlight and mouse hover are the same state on purpose — two different
+   "which one is about to happen" indicators on one list is one too many. */
+.finder__option[data-active='true'] {
+  background: var(--bg-hover);
+}
+
+.finder__option[data-current='true'] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.finder__version {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.finder__note {
+  max-width: 480px;
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Finder fixed on the left, answer on the right. The finder earns its column by staying
+   put: pick the next library and the panel you were already reading is on screen for it. */
+.inspector {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+/* What you are looking at, and how to change it. Sticky as one block: scrolling a long
+   dependency tree should not scroll away the name of the thing it belongs to. */
+.inspector__side {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Roomier padding reads as generous at full width and as wasteful in a 280px column. */
+.inspector__side .panel {
+  padding: var(--space-4);
+}
+
+/* Below this the two columns are fighting for width that is not there, and the side column
+   reads fine full-width above the answer. */
+@media (max-width: 900px) {
+  .inspector {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inspector__side {
+    position: static;
+  }
+}
+
+/* Now the first thing in the main column, so no leading margin: the tab strip should line
+   up with the top of the identity block beside it. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab:hover {
+  color: var(--text-primary);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--text-primary);
+  font-weight: 500;
+  border-bottom-color: var(--accent);
+}
+
+.tabpanel {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.panel__hint--planned {
+  margin-bottom: 0;
+  font-style: italic;
+}
+
+/* ------------------------------------------- dependency graph ---- */
+
+.graph-node {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+
+/* The name and version sit inside the link when the node is one, so the gap has to be
+   declared there too — otherwise a linked step renders as "spring-boot-jackson4.1.0" while
+   the one step that is not a link renders correctly, which is a confusing way to be wrong. */
+.graph-node a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.graph-node__version {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* A marker rather than colouring the name: the name is a link, and recolouring links by
+   risk would make "vulnerable" and "clickable" the same signal. */
+.graph-node__flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--severity-critical);
+  border-radius: 999px;
+}
+
+:root[data-theme='dark'] .graph-node__flag {
+  color: var(--bg-base);
+}
+
+.route-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Wraps rather than scrolling: a route is a sentence, and a sentence you have to scroll
+   sideways to finish is worse than one on two lines. */
+.route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
+}
+
+.route__step {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.route__arrow {
+  color: var(--text-muted);
+}
+
+.module-routes {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+}
+
+.module-routes__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.module-routes__more {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.deptree-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.deptree {
+  margin: 0;
+  padding-left: var(--space-4);
+  list-style: none;
+  border-left: 1px solid var(--border);
+}
+
+.deptree--root {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.deptree__leaf,
+.deptree summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 0;
+}
+
+.deptree summary {
+  cursor: pointer;
+}
+
+/* An explicit +/- rather than the native disclosure triangle: it is bigger, it looks the
+   same in every browser, and a tree is read by scanning its left edge for what can still be
+   opened. The native marker is removed rather than styled, since it cannot be. */
+.deptree summary {
+  list-style: none;
+}
+
+.deptree summary::-webkit-details-marker {
+  display: none;
+}
+
+.deptree summary::before {
+  content: '+';
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  font-size: 12px;
+  line-height: 1;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.deptree details[open] > summary::before {
+  content: '−';
+}
+
+.deptree summary:hover::before {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* Keeps a leaf's name on the same left edge as an expandable sibling's, so the column of
+   controls reads as a column rather than as ragged indentation. */
+.deptree__leaf::before {
+  content: '';
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.deptree__count {
+  padding: 0 var(--space-1);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  border-radius: 999px;
+}
+
+/* A coordinate does not break at spaces because it has none, so in a narrow column it has
+   to be allowed to break anywhere or it sets the column's width for it. */
+.component-identity {
+  min-height: 104px;
+  overflow-wrap: anywhere;
+}
+
+.component-identity .panel__title {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.component-identity--empty {
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.component-identity__none {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.component-identity__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.component-identity__purl {
+  margin-top: var(--space-2);
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.advisory-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.advisory {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.advisory__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.advisory__ids {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.advisory__summary {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+}
+
+.advisory__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-3) 0 0;
+}
+
+.advisory__facts dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.advisory__facts dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* A panel for something not built yet. Dimmed so it reads as a placeholder at a glance and
+   is not mistaken for a feature returning no results. */
+.panel--planned {
+  border-style: dashed;
+  box-shadow: none;
+  background: transparent;
+}
+
+.panel--planned .panel__hint {
+  margin-bottom: 0;
+}
+
 :where(a) {
   color: var(--accent);
 }

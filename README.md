@@ -7,8 +7,8 @@ vulnerabilities, whether your code actually uses them, what upgrade would fix th
 and get all of it into a spreadsheet your security team can actually read.
 
 > **Status: working, in active development.** Upload, offline vulnerability scanning,
-> the findings view and the Excel export all work today. Dependency tree, workspace
-> usage detection and upgrade-path analysis are not built yet. See
+> the findings view and the Excel export all work today. The Component Inspector — upgrade
+> paths, the dependency graph and workspace usage — is not built yet. See
 > [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for exactly what is done.
 
 ---
@@ -44,8 +44,8 @@ auto-updates, no admin rights required to install an engine.
 | **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. |
 | **Workspace usage detection** | Optionally supply a path to your source tree. SBOMscope scans it for imports/references to vulnerable libraries and reports the total hit count, the full list of affected files with fully-qualified paths, and a ±5-line preview of any selected hit with language-aware syntax highlighting. |
 | **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below). |
-| **Upgrade path analysis** | For a vulnerable `1.2.3`, shows whether bumping the patch (`1.2.x`), minor (`1.x.y`), or major (`x.y.z`) version would reduce or eliminate its known vulnerabilities — smallest effective jump first. |
-| **Dependency tree** | For any selected library, walk parents and children recursively within the scope of your SBOM. |
+| **Upgrade paths** | For a vulnerable `1.2.3`: the latest patch on its line, the latest within its major, the latest overall, and the earliest version that clears every known critical and high. Each candidate lists the vulnerabilities it would still carry — not a count, since which one remains is the decision. |
+| **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves, within the scope of your SBOM. |
 | **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD and library cells hyperlinked to Maven Central or npmjs.com. |
 
 ## How it works
@@ -60,9 +60,9 @@ because it can run fully offline against locally-cached data.
 | Excel export | Built in-house (Apache POI) | working |
 | Actively-exploited flag | [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | planned |
 | Exploitation probability | [EPSS](https://www.first.org/epss/) (FIRST.org) | planned |
-| Dependency tree | The SBOM's own CycloneDX `dependencies` graph | planned |
+| Dependency graph | The SBOM's own CycloneDX `dependencies` graph | planned |
 | Workspace usage detection | Built in-house | planned |
-| Upgrade path analysis | [OSV-Scanner Guided Remediation](https://google.github.io/osv-scanner/experimental/guided-remediation/) | planned |
+| Upgrade paths | Registry version lists, evaluated against the local OSV data. Guided remediation was the obvious route and does not fit: it needs `pom.xml` / lockfiles, which the reader of a handed-over SBOM does not have | planned |
 
 CVE cells link to [NVD](https://nvd.nist.gov/), but the NVD **API** is deliberately not
 used — it contributes to none of the columns shown, and the link is derivable from the
@@ -84,10 +84,12 @@ A browser-based UI served by the local backend.
 - **Top menu** — icons with text, collapsible to icons only.
 - **Left sidebar** — your uploaded SBOMs: filename, upload date, and metadata such as
   the associated workspace path.
-- **Vulnerability view** — the selected SBOM's findings as an exportable table.
-- **Workspace view** — usage hits and source previews, with a live-search library
-  selector. Reachable directly, or by drilling in from any row of the vulnerability
-  view.
+- **Vulnerability view** — the selected SBOM's findings as an exportable table. List-centred:
+  what is wrong across this SBOM, sorted and filtered.
+- **Component Inspector** — one library in depth: what to upgrade to and what each option
+  still carries, who pulls it in and what it drags along, and whether your own code touches
+  it. Reached by a per-row action from the vulnerability view, or by picking a library
+  directly in a type-ahead finder.
 
 ### Vulnerability table columns
 
@@ -215,4 +217,10 @@ future version. Version 1 does simpler import/symbol-level usage detection.
 
 ## License
 
-Not yet chosen — see the open questions in the implementation plan.
+[Apache License 2.0](LICENSE).
+
+Chosen for the environment SBOMscope is built for: it passes a corporate procurement review
+without discussion, which a copyleft licence often does not — and a supply-chain tool that
+its target organisations cannot approve is not much use to them. It also carries an explicit
+patent grant, and §9 makes clear that anyone redistributing SBOMscope with their own support
+or warranty does so on their own behalf.

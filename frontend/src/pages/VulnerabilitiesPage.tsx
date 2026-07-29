@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import {
   SCOPE_LABELS,
@@ -14,8 +15,14 @@ import { Pagination } from '../components/Pagination';
 import { ScanProgress } from '../components/ScanProgress';
 import { ScanReadinessHint } from '../components/ScanReadinessHint';
 import { ViewOptionsMenu } from '../components/ViewOptionsMenu';
+import { ComponentIcon } from '../components/icons';
 import { COLUMNS, COMPACT_DEFAULT, reviveColumns } from '../findings/columns';
 import type { ColumnId } from '../findings/columns';
+import {
+  SeverityCell,
+  formatAdvisoryDate,
+  formatTimestamp,
+} from '../findings/presentation';
 import { useSboms } from '../sboms/SbomProvider';
 import { usePersistentState } from '../state/persisted';
 
@@ -52,82 +59,8 @@ function reviveQuery(stored: FindingQuery): FindingQuery {
   };
 }
 
-/** Something that happened on this machine — the reader's own clock is the right one. */
-function formatDate(iso: string | null): string {
-  if (!iso) return 'never';
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-/**
- * An advisory's publication date: UTC, and a date rather than a timestamp.
- *
- * Not the same kind of value as the one above, and formatting it as one was wrong in a way
- * that only showed up off-centre. OSV publishes real times — GHSA-5gvw-p9qm-jgwh is
- * 2026-07-21T22:00:43Z — so the local zone moved the date across midnight for anyone east of
- * UTC: in Berlin it read "22.07.2026, 00:00", a day after the record it links to on osv.dev,
- * and the 00:00 made it look as though no time had been recorded at all.
- *
- * The time of day an advisory was filed says nothing for triage either, where the question
- * is how old it is. Dropping it costs nothing and removes the whole class of off-by-one-day
- * disagreement with the source. The export writes the same value, in the same zone.
- */
-function formatAdvisoryDate(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleDateString(undefined, { dateStyle: 'medium', timeZone: 'UTC' });
-}
-
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
-}
-
-/** Standard CVSS bands, matching how the backend filters. */
-function bandOf(score: number): string {
-  if (score >= 9) return 'critical';
-  if (score >= 7) return 'high';
-  if (score >= 4) return 'medium';
-  return 'low';
-}
-
-const BAND_LABELS: Record<string, string> = {
-  critical: 'Critical',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-};
-
-/**
- * Three distinct states, deliberately rendered differently: a scored vulnerability, a
- * vulnerability of unknown severity, and a component with nothing known against it.
- *
- * <p>The word beside the number is the **CVSS band for that score**, derived from it. The
- * GHSA rating that used to sit here is a different scale from a different source — GitHub
- * calls 6.5 "MODERATE" where CVSS calls it "Medium" — so it has its own column now rather
- * than masquerading as this number's label.
- */
-function SeverityCell({ row }: { row: FindingRow }) {
-  if (!row.osvId) {
-    return <span className="text-muted">—</span>;
-  }
-  if (row.severityScore === null) {
-    return (
-      <span className="severity" data-band="none">
-        <strong>?</strong>
-        <span className="severity__label">unscored</span>
-      </span>
-    );
-  }
-  const band = bandOf(row.severityScore);
-  return (
-    <span className="severity" data-band={band}>
-      <strong>{row.severityScore.toFixed(1)}</strong>
-      <span className="severity__label">{BAND_LABELS[band]}</span>
-    </span>
-  );
 }
 
 /** Long free text: clamped so one verbose advisory cannot set the height of every row. */
@@ -381,7 +314,7 @@ export function VulnerabilitiesPage() {
                 <strong>{status.findingCount}</strong> known{' '}
                 {status.findingCount === 1 ? 'vulnerability' : 'vulnerabilities'}
                 {' · scanned '}
-                {formatDate(status.lastScannedAt)}
+                {formatTimestamp(status.lastScannedAt)}
               </>
             )}
             {status && neverScanned && ' · never scanned'}
@@ -511,6 +444,12 @@ export function VulnerabilitiesPage() {
                   <th scope="col" className="rownum" aria-label="Row number">
                     #
                   </th>
+                  {/* Like the row number, not a column: absent from the picker, from
+                      Details and from the export. Leading rather than trailing so it
+                      stays reachable when a wide column set scrolls the table sideways. */}
+                  <th scope="col" className="rowaction">
+                    <span className="visually-hidden">Inspect</span>
+                  </th>
                   {visibleColumns.map((column) =>
                     column.sort ? (
                       <SortableHeader
@@ -534,6 +473,16 @@ export function VulnerabilitiesPage() {
                     {/* Numbered across the whole result, not per page, so "row 437" still
                         means something on page 22. */}
                     <td className="rownum">{firstOnPage + index}</td>
+                    <td className="rowaction">
+                      <Link
+                        className="icon-button"
+                        to={`/component-inspector?purl=${encodeURIComponent(row.purl)}`}
+                        aria-label={`Inspect ${row.coordinates}`}
+                        title={`Inspect ${row.coordinates}`}
+                      >
+                        <ComponentIcon className="navitem__icon" />
+                      </Link>
+                    </td>
                     {visibleColumns.map((column) => (
                       <td key={column.id}>{renderCell(column.id, row)}</td>
                     ))}

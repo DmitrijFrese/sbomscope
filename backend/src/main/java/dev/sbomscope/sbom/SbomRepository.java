@@ -141,6 +141,24 @@ public class SbomRepository {
                 .list();
     }
 
+    /**
+     * The dependency graph as the document declared it.
+     *
+     * <p>By bom-ref rather than joined to components, because that is how the edges are
+     * stored: an edge can name a ref no component row exists for, and a malformed document
+     * should cost a missing node rather than a failed query.
+     */
+    public List<ParsedSbom.DependencyEdge> findEdges(UUID sbomId) {
+        return jdbc.sql("""
+                SELECT from_bom_ref, to_bom_ref FROM component_dependency
+                WHERE sbom_id = ?
+                """)
+                .param(sbomId)
+                .query((ResultSet rs, int row) -> new ParsedSbom.DependencyEdge(
+                        rs.getString("from_bom_ref"), rs.getString("to_bom_ref")))
+                .list();
+    }
+
     /** Components and edges disappear with it, via ON DELETE CASCADE. */
     public boolean deleteById(UUID id) {
         return jdbc.sql("DELETE FROM sbom WHERE id = ?").param(id).update() > 0;

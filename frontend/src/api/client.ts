@@ -117,6 +117,85 @@ export function fetchComponents(sbomId: string): Promise<SbomComponent[]> {
   return request<SbomComponent[]>(`/sboms/${sbomId}/components`);
 }
 
+/** Everything the Component Inspector knows about one component. */
+export interface ComponentDetail {
+  component: SbomComponent;
+  /**
+   * ISO-8601 instant, or null when this component's purl has never been checked. Read it
+   * before `findings`: an empty list from an unscanned component looks exactly like a clean
+   * bill of health, and is not one.
+   */
+  scannedAt: string | null;
+  /**
+   * The same rows the findings table shows for this component, from the same query. A
+   * single row with `osvId` null means checked, nothing found.
+   */
+  findings: FindingRow[];
+}
+
+/**
+ * Keyed by purl, matching the findings table's own unit — its query collapses a library
+ * listed twice in one document into one row, so a row identifies a purl rather than a
+ * component record. Sent as a query parameter because a purl contains slashes, and an
+ * encoded slash in a path segment is rejected outright by some servlet containers.
+ */
+export function fetchComponentDetail(sbomId: string, purl: string): Promise<ComponentDetail> {
+  return request<ComponentDetail>(
+    `/sboms/${sbomId}/component?purl=${encodeURIComponent(purl)}`,
+  );
+}
+
+/** A component as the dependency graph refers to it — enough to render and open a step. */
+export interface GraphNode {
+  bomRef: string;
+  coordinates: string;
+  version: string | null;
+  purl: string | null;
+  root: boolean;
+  scope: DependencyScope;
+  /** Has at least one known vulnerability, so a chain shows where else the problem sits. */
+  vulnerable: boolean;
+}
+
+/** How one of your own modules reaches the component. */
+export interface ModuleRoutes {
+  module: GraphNode;
+  /** The shortest few, each running module → … → component inclusive. */
+  routes: GraphNode[][];
+  totalRoutes: number;
+  /** Enumeration hit its limit, so totalRoutes is a floor rather than a count. */
+  truncated: boolean;
+}
+
+export interface GraphTreeNode {
+  node: GraphNode;
+  children: GraphTreeNode[];
+  /** Expanded elsewhere in the tree; shown here but not rebuilt. */
+  repeated: boolean;
+  /** Already on the path above this point — a real cycle, not a rendering artefact. */
+  cyclic: boolean;
+}
+
+export interface ComponentGraph {
+  /** Every module that pulls this in. Never abbreviated. */
+  reachedFrom: ModuleRoutes[];
+  /**
+   * The denominator, so reachedFrom reads as "3 of your 4 modules". Excludes the root of an
+   * aggregate build: the parent pom aggregates rather than depends, so no route tops out at
+   * it and counting it would understate every ratio.
+   */
+  ownModuleCount: number;
+  /** The component is one of your own modules: nothing above it, nothing to upgrade. */
+  targetIsOwnCode: boolean;
+  tree: GraphTreeNode | null;
+}
+
+export function fetchComponentGraph(sbomId: string, purl: string): Promise<ComponentGraph> {
+  return request<ComponentGraph>(
+    `/sboms/${sbomId}/component/graph?purl=${encodeURIComponent(purl)}`,
+  );
+}
+
 export function uploadSbom(file: File, workspacePath?: string): Promise<Sbom> {
   const form = new FormData();
   form.append('file', file);

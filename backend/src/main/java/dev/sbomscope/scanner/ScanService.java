@@ -205,6 +205,21 @@ public class ScanService {
         return repository.countRows(sbomId, query);
     }
 
+    /** One component's rows, in the same shape and order the table would show them. */
+    public List<FindingRow> rowsForComponent(UUID sbomId, String purl) {
+        return repository.rowsForComponent(sbomId, purl);
+    }
+
+    /** When this purl was last checked; absent means never, which is not "clean". */
+    public Optional<Instant> scannedAtForPurl(String purl) {
+        return repository.scannedAtForPurl(purl);
+    }
+
+    /** Which of an SBOM's purls carry findings — for marking nodes in the dependency graph. */
+    public Set<String> vulnerablePurls(UUID sbomId) {
+        return repository.vulnerablePurls(sbomId);
+    }
+
     /** Vulnerabilities only, for counts that describe risk rather than inventory size. */
     public int countFindings(UUID sbomId, FindingQuery query) {
         return repository.countFindings(sbomId, query);
@@ -267,15 +282,38 @@ public class ScanService {
             }
             String ecosystem = ecosystemOf(component);
             for (String name : scannerNamesFor(component, ecosystem)) {
-                byKey.putIfAbsent(
-                        new OsvReportParser.PackageKey(ecosystem, name, component.version()),
-                        component.purl());
+                var key = new OsvReportParser.PackageKey(ecosystem, name, component.version());
+                String alreadyClaimed = byKey.putIfAbsent(key, component.purl());
+
+                // Same ecosystem, name and version, but two different purls — Maven
+                // qualifiers such as a classifier can produce that. The first still wins,
+                // since reporting the advisory against one of the two beats dropping it,
+                // but nothing else would ever show that a choice was made here.
+                if (alreadyClaimed != null && !alreadyClaimed.equals(component.purl())) {
+                    log.debug("{} is claimed by both {} and {}; keeping the first",
+                            key, alreadyClaimed, component.purl());
+                }
             }
         }
         return byKey;
     }
 
-    /** The spellings a scanner report might use for this component's name. */
+    /**
+     * The spellings a scanner report might use for this component's name.
+     *
+     * <p><b>Never the bare name when the component has a group.</b> It used to be added
+     * unconditionally, which meant every Maven component also claimed its artifactId alone:
+     * {@code com.foo:core} and {@code com.bar:core} both claimed {@code core}, and whichever
+     * was indexed first took it for both — a finding attributed to a library that does not
+     * have it. That is the one error mode worse than dropping a finding, because it looks
+     * like an answer.
+     *
+     * <p>It bought nothing in exchange. osv-scanner names Maven packages
+     * {@code group:artifact}, so the bare form never matched; and an unscoped npm package
+     * already arrives through {@code coordinates()}, which <em>is</em> the plain name when
+     * there is no group. For a scoped npm package it was actively wrong — {@code common} is
+     * a real package, and not the one {@code @angular/common} refers to.
+     */
     static Set<String> scannerNamesFor(StoredComponent component, String ecosystem) {
         Set<String> names = new LinkedHashSet<>();
         names.add(component.coordinates());
@@ -284,7 +322,6 @@ public class ScanService {
             // The scope and the package, joined the way npm and osv-scanner write it.
             names.add(component.group() + "/" + component.name());
         }
-        names.add(component.name());
         return names;
     }
 

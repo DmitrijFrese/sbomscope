@@ -6,7 +6,8 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-07-28 · Status: **Phases 0–2, 4–5 complete — Phase 3, 6, 7, 8 remain**
+Last updated: 2026-07-29 · Status: **Phases 0–2, 4–7 complete — Phase 3, and the Inspector's
+remaining panels (8–9)**
 
 ---
 
@@ -17,13 +18,18 @@ Last updated: 2026-07-28 · Status: **Phases 0–2, 4–5 complete — Phase 3, 
 | 0 | Project scaffolding runs end to end | **Done** |
 | 1 | Upload an SBOM and see its components | **Done** |
 | 2 | Offline vulnerability matching works | **Done** |
-| 3 | Findings enriched with NVD / KEV / EPSS | Not started |
+| 3 | Findings enriched with KEV / EPSS | Not started |
 | 4 | Vulnerability table complete | **Done** |
 | 5 | Excel export | **Done** |
-| 6 | Dependency tree | Not started |
-| 7 | Workspace usage detection | Not started |
-| 8 | Upgrade path analysis | Not started |
-| 9 | Packaging and distribution | Not started |
+| 6 | Component Inspector: the shell | **Done** |
+| 7 | Dependency graph | **Done** |
+| 8 | Upgrade paths | Not started |
+| 9 | Workspace usage detection | Not started |
+| 10 | Packaging and distribution | Not started |
+
+Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
+Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
+usage all survive with their scope intact, re-homed and reordered.
 
 ---
 
@@ -275,34 +281,190 @@ Goal: the differentiator. A spreadsheet people actually want.
 **Done when**: the exported file opens cleanly in Excel with working links and needs no
 manual cleanup.
 
-## Phase 6 — Dependency tree
+## The Component Inspector
 
-Goal: understand where a vulnerable library comes from.
+Phases 6 to 9 build one screen, so they are introduced together.
 
-- [ ] Build the in-memory graph from the SBOM `dependencies` array
-- [ ] For a selected component: ancestors (who pulls this in) and descendants,
-      recursively
-- [ ] Handle cycles and diamond dependencies without infinite recursion
-- [ ] Tree or graph rendering — decide which (see open questions)
-- [ ] Navigate from a vulnerability row into the tree view
+The vulnerability view is **list-centred**: every finding in an SBOM, sorted and filtered,
+answering *what is wrong here*. It is deliberately wide and shallow — a row is a fact, and
+the table's job is to let you rank facts.
 
-**Done when**: selecting a transitive vulnerable library shows the full chain from the
-root project down to it.
+The Component Inspector is **component-centred**: one library, in depth, answering *what do
+I do about this one*. Those are different questions and neither view can serve both. A
+finding tells you `jackson-databind 3.1.4` has a 6.5; it cannot tell you which version to
+move to, what that would cost, who dragged the library in, or whether your code touches it.
 
-## Phase 7 — Workspace usage detection
+It replaces what earlier drafts called the Workspace view. **That name described an input —
+a directory — that is optional, and that only one of the three panels below even uses.**
+Naming the screen after its least central and last-scheduled feature had the priorities
+backwards. It is also not a *viewer*: two of its three panels exist to support a decision,
+not to display a record. See the decision log entry of 2026-07-29.
+
+**Reaching it.** Two ways in, and both matter:
+
+- From any row of the vulnerability view, a per-row action on the component. This is the
+  common path — you are triaging a list, you hit something real, you want the detail.
+- Directly, by picking a library from the current SBOM in a lightweight finder: type-ahead
+  over the component list, no page transition. This is the path when you already know which
+  library you are asking about.
+
+**The three panels**, in the order they earn their place:
+
+| Panel | Answers | Phase |
+|---|---|---|
+| Upgrade paths | Which version should I move to, and what does each option still carry? | 8 |
+| Dependency graph | Who pulls this in, and what does it drag along? | 7 |
+| Workspace usage | Does my own code actually touch this? | 9 |
+
+## Phase 6 — Component Inspector: the shell
+
+Goal: the screen exists, is reachable, and shows one component's identity. No analysis yet.
+
+Small on purpose. It is the thing every later panel needs, and building it first means
+phases 7 to 9 each land as a self-contained, shippable panel rather than as a screen that is
+half-real for months.
+
+- [x] Rename the route, page and navigation item away from "Workspace". The nav carries the
+      full name rather than the noun alone, and `/workspace` redirects rather than falling
+      through to the catch-all, so an open tab lands where it meant to
+- [x] Per-row action in the vulnerability view opening the selected component here. Leading
+      cell beside the row number, and like it not a column — absent from the picker, from
+      Details and from the export
+- [x] Lightweight finder: type-ahead over the current SBOM's components, keyboard-first,
+      scoped to the selected SBOM rather than global (decided 2026-07-26). Filters in the
+      browser against the list already fetched, caps the results and says how many it held
+      back, and marks the component currently open
+- [x] Component header: coordinates, version, scope, purl, registry link, and its own
+      findings — from the same query and the same row shape the table uses
+- [x] Deep-linkable: the component is a query parameter, so a refresh keeps it. Required
+      persisting the selected SBOM too, since the URL names a component but not the document
+      it belongs to
+- [x] Honest empty states per panel — three states, not two: a vulnerable component, one
+      checked with nothing found, and one never scanned at all
+- [ ] Component-level re-scan from here. Today the Inspector can say a component has never
+      been checked but can only point at the Vulnerabilities view to fix that; the
+      single-component refresh in Phase 2 is the missing half
+
+**Done when**: clicking a vulnerable row in the vulnerability view opens that component in
+the Inspector, and the finder reaches any component of the selected SBOM. — **Met.**
+
+## Phase 7 — Dependency graph
+
+Goal: understand where a component comes from and what it brings with it.
+
+Scheduled before upgrade paths, though both are top priority — **confirmed 2026-07-29**.
+The reason is availability, not importance: **the edges are already in the database.**
+`component_dependency` is populated at import, the parser already collapses repeated edges
+and drops self-edges, and `ScopeClassifier` already distinguishes the application from its
+dependencies. This panel needs no new external data, no network, and no unresolved design
+question — where Phase 8 is blocked on R4.
+
+**Rendering decided 2026-07-29: paths upward, a tree downward.** The two directions are
+different questions and a single visualisation serves one of them badly.
+
+- [x] Build the in-memory graph for one SBOM from the stored edges
+- [x] **Ancestors as paths, grouped by owning module.** The routes from an APPLICATION
+      component down to this one, one per line —
+      `sbomscope-backend → spring-boot-starter-web → jackson-databind`. That is the literal
+      answer to "who pulls this in", it states a diamond honestly by listing both routes
+      rather than drawing one, and it pastes into a ticket
+- [x] **Several owning modules is the normal case, not an edge case.** Spring is in every
+      backend module; a shared library is in most of them. **Every owning module is listed,
+      always** — guaranteed by finding the module set with a separate linear reachability
+      pass, which no graph can defeat, rather than as a by-product of route enumeration,
+      which any dense graph can
+- [x] **Cap routes within a module, never the modules themselves.** The three shortest are
+      shown with the total beside them, and where enumeration hit its own limit the total is
+      written as a floor (`3 of 25+`) rather than as a count it did not finish making
+- [x] Lead with the count — *pulled in by 1 of your 2 modules*, before a single route is read
+- [x] The parent pom is never the top of a path, **and is not in the denominator either**.
+      It aggregates rather than depends, so no route can top out at it; counting it as one of
+      "your modules" would put something in the denominator that cannot appear in the
+      numerator. Where the root is the only application component — npm, single-module Maven
+      — it is the module and counts as one
+- [x] **Descendants as a collapsible tree**, with explicit `+`/`−` controls rather than the
+      native disclosure triangle, and no scope badge per row: everything below the component
+      came in with it, and depth already says how directly
+- [x] Handle cycles and diamonds without infinite recursion, and without presenting one
+      route as if it were the only one. Each component is expanded once across the tree, so
+      a shared subtree is marked *also above* rather than rebuilt under every parent
+- [x] Mark vulnerable nodes in both directions, so a chain shows where else the problem sits
+- [x] Scoped to the selected SBOM, which is what makes the answer specific to this project
+      rather than to the library in general
+- [x] No layout engine, and therefore no new frontend dependency: both shapes are ordinary
+      lists and disclosure widgets (constraint 9)
+- [ ] Verify against a genuinely large SBOM. The guards are tested against constructed
+      graphs and the fixture is 61 components; the budgets they enforce have never actually
+      been reached
+
+**Done when**: selecting a transitive vulnerable library shows the full chain from the root
+project down to it, and what it pulls in below. — **Met.** Against the real Maven fixture,
+`jackson-databind` reports three routes from `sbomscope-backend`, shortest first, with the
+parent pom absent from all of them.
+
+## Phase 8 — Upgrade paths
+
+Goal: choose a version to move to, with the consequences of each option visible.
+
+Not one recommendation. The tool does not know the project's appetite for risk, so it
+presents a small set of candidates and what each one still carries, and the choice stays
+with the person who has to make it.
+
+For a component at `x.y.z`, four candidates:
+
+| Candidate | Meaning |
+|---|---|
+| Latest `x.y.*` | Highest patch on the current line — the smallest possible change |
+| Latest `x.*.*` | Highest minor and patch within the current major |
+| Latest overall | Newest release, whatever the major |
+| **Earliest clearing critical and high** | The lowest version that resolves every known CRITICAL and HIGH — or, where none does, the one resolving the most |
+
+The fourth is a different kind of answer from the first three, which is the point. Those
+three minimise disruption and report what that costs; this one names the goal and reports
+what reaching it costs. Where they coincide, that is the useful answer, and saying so is
+worth more than four rows of numbers.
+
+- [ ] **Resolve R4 first** — where the list of available versions comes from, and how a
+      version we do not have is judged offline. Everything below depends on it
+- [ ] Enumerate candidate versions for a component, ordered by `VersionOrder`
+- [ ] For each candidate: its own known vulnerabilities, with severities — not a count.
+      "Clears 3 of 4" is not actionable; *which* one remains decides whether to take it
+- [ ] Present the four candidates above, collapsing them when they coincide
+- [ ] Say plainly when no available version resolves the finding — that is a real answer,
+      and the case where a reader most needs to be told rather than left to infer
+- [ ] Distinguish "no fix exists" from "we could not enumerate versions for this ecosystem",
+      as ever
+- [ ] Populate the Recommended upgrade column in the findings table from the same source,
+      so the table and the Inspector cannot disagree
+- [ ] Application-scoped components are excluded: they are your own modules, and there is
+      no version to upgrade to
+
+**Done when**: a vulnerable library shows concrete target versions, each with the
+vulnerabilities it would still carry, and names the smallest jump that clears the serious
+ones.
+
+## Phase 9 — Workspace usage detection
 
 Goal: is this vulnerable library actually used in my source?
+
+Deliberately last of the three. It is the only panel needing an input the user may not have
+given us, the only one whose correctness rests on a heuristic (R2), and the one whose answer
+is advisory rather than decisive — a library you do not import today can still be reachable
+tomorrow. Valuable, but not what the screen stands or falls on.
 
 - [ ] Attach an optional workspace path to an SBOM (validate it exists and is readable)
 - [ ] Map a component to the source-level identifiers it would appear as — Java package
       names for Maven coordinates, module specifiers for npm packages. **This mapping is
-      the crux of the feature and needs design work; see risks.**
+      the crux of the feature and needs design work; see R2.**
 - [ ] Source scanning honouring ignore rules (`.gitignore`, `node_modules`, `target`,
       `build`, `dist`)
 - [ ] Per-component result: total hit count + affected files with fully-qualified paths
-- [ ] Hit preview: ±5 lines around each hit
-- [ ] Syntax highlighting in the preview, language chosen by file extension
-- [ ] Library selector with live search, scoped to the current SBOM
+- [ ] **A results surface, not a file browser.** Every match in the workspace listed
+      together and grouped by file, each hit rendered in place with the lines around it
+      (±5) and language-aware syntax highlighting, so the whole result can be read top to
+      bottom without opening anything. Selecting a hit expands its context; the
+      fully-qualified path stays visible and copyable, since the next step is usually to
+      open it in an editor
 - [ ] Feed usage status back into the vulnerability table's Workspace usage column
       (Used / Not found / Not analyzed)
 - [ ] Scan performance on a large repository — keep the UI responsive, allow cancelling
@@ -310,25 +472,10 @@ Goal: is this vulnerable library actually used in my source?
 **Done when**: pointing at a real repository correctly distinguishes a library that is
 imported in source from one that is only present transitively.
 
-## Phase 8 — Upgrade path analysis
-
-Goal: what's the smallest version bump that fixes this?
-
-- [ ] **Resolve the manifest dependency first — see risks.** OSV-Scanner's guided
-      remediation operates on `pom.xml` / `package-lock.json`, not on an SBOM.
-- [ ] Invoke guided remediation (or the fallback approach) per project
-- [ ] Present results in the patch → minor → major escalation model: for each step,
-      the best available version and how many vulnerabilities it clears
-- [ ] Populate the Recommended upgrade column
-- [ ] Make clear when no upgrade resolves the finding
-
-**Done when**: a vulnerable library shows concrete target versions with the vulnerability
-counts they would leave behind.
-
-## Phase 9 — Packaging
+## Phase 10 — Packaging
 
 - [ ] Single-artifact build (backend + frontend bundled)
-- [ ] Documented first-run setup: where to put the OSV database, how to set the NVD key
+- [ ] Documented first-run setup: where to put the osv-scanner binary and the OSV database
 - [ ] Documented offline workflow: how to populate caches on a connected machine and
       move them to a restricted one
 - [ ] Sample SBOMs and a quickstart
@@ -339,32 +486,38 @@ counts they would leave behind.
 
 Live list of things known to need resolution before or during the phase they affect.
 
-### R1 — Upgrade path analysis may require manifest files, not just an SBOM
+### R1 — Guided remediation needs manifests, so it does not fit this screen
 
-**Phase 8.** OSV-Scanner's guided remediation works against `pom.xml` and npm lockfiles.
-It does not take an SBOM as input. That means upgrade path analysis, as specified,
-likely cannot run from an uploaded SBOM alone — it needs the workspace path, which the
-spec currently treats as *optional*.
+**Phase 8.** OSV-Scanner's guided remediation works against `pom.xml` and npm lockfiles,
+not an SBOM. Requiring a workspace path for upgrade analysis was one option, and the
+Inspector's design makes it the wrong one: **upgrade paths are the panel most likely to be
+wanted for an SBOM someone was handed**, with no source tree anywhere near it. A panel that
+is blank for exactly that reader is not much of a feature.
 
-Options:
-- **(a)** Require a workspace path for upgrade analysis; degrade gracefully with a
-  clear "workspace needed for this" message when absent. Simplest, honest.
-- **(b)** Let the user upload the manifest file alongside the SBOM.
-- **(c)** Implement upgrade analysis ourselves: enumerate available versions of the
-  library, check each against the local OSV database, report which candidates are
-  clean. Needs a version-list source (registry metadata), which is another network
-  dependency to cache offline.
+That points at option (c) of the original three — computing candidates ourselves against
+the local OSV data — which turns out to be a bigger question than "which tool do we call",
+so it is now **R4**. R1 stays only to record why the obvious route was not taken:
 
-Not yet decided. Affects how central the workspace path is to the product.
+- **(a)** Require a workspace path. Rejected: it makes the most portable panel the least
+  available one.
+- **(b)** Upload manifests alongside the SBOM. Rejected as a *requirement* for the same
+  reason, though it remains a sensible later addition — a resolved manifest would let the
+  Inspector say whether a candidate version is reachable given the project's other
+  constraints, which is a question SBOMs cannot answer at all.
+- **(c)** Compute it ourselves. Taken, subject to R4.
 
 ### R2 — Component-to-source-identifier mapping
 
-**Phase 7.** A Maven coordinate (`com.fasterxml.jackson.core:jackson-databind`) is not
+**Phase 9.** A Maven coordinate (`com.fasterxml.jackson.core:jackson-databind`) is not
 the same as the Java package imported in source (`com.fasterxml.jackson.databind`), and
 npm package names don't always match their import specifiers either. Naive matching
 will produce both false positives and false negatives. Needs a deliberate strategy —
 possibly reading package names from the artifact itself, or a heuristic with a visible
 confidence signal.
+
+This is the reason workspace usage is scheduled last of the three panels: it is the only one
+whose answer depends on a heuristic being right, and a "not used" that is wrong is a finding
+quietly dismissed.
 
 ### R3 — OSV-Scanner distribution in restricted environments — **resolved**
 
@@ -382,6 +535,47 @@ supply-chain tool shipping someone else's opaque executable is the wrong default
 Pin a known-good version: v2.4.0 fixed a panic in the offline matcher when checking
 version ranges, and added CycloneDX 1.7 support.
 
+### R4 — Upgrade paths need two things the current engine does not provide
+
+**Phase 8, and the blocker for it.** Naming candidate versions and saying what each one
+carries decomposes into two separate problems, and only one of them is about tooling.
+
+**1. Enumerating the versions that exist.** OSV knows which versions an advisory *affects*.
+It has no reason to know a library's release list, and does not — a version nobody filed an
+advisory against is invisible to it. So "the latest patch on this line" cannot be answered
+from the data SBOMscope holds. The complete source is the registry (Maven Central's
+`maven-metadata.xml`, npm's packument), which is a network dependency and therefore has to
+be cached deliberately under constraint 1, per component, the way findings already are.
+
+Worth noting what that changes: it is the first cache whose *absence* has no safe default.
+A stale finding is still a real finding; a stale version list silently omits the release
+that fixes the problem. Staleness has to be visible on this panel, not merely recorded.
+
+**2. Judging a version we do not have.** osv-scanner scans a document describing what is
+installed. Asking "would 3.2.0 be clean?" is not a question it takes. Two ways round it:
+
+- **Synthesise a document per candidate and run the scanner over each.** Honest, reuses the
+  engine, and costs a process launch per candidate — with the fourth candidate above needing
+  a walk over the whole range rather than three probes, that is not viable.
+- **Evaluate the local OSV archives ourselves**: for a package and a version, which
+  advisories apply. This is version-range matching against data already on disk, offline,
+  with no process launch.
+
+The second is **the built-in matching idea recorded under Open questions as decided
+against** — and it is not a reversal of that decision, because it is not the same job. That
+proposal was to replace osv-scanner for real scans, and the argument against it stands:
+correctness risk in the reporting path, while a maintained engine does it well. This is a
+strictly smaller thing — answering hypotheticals about versions the user does not have —
+where osv-scanner offers nothing to be consistent with, and where being wrong misranks a
+suggestion rather than misreporting an installed component. The open question closed with
+"reconsider only if a concrete need appears". This is that need, and the measured facts
+recorded there (explicit `versions[]` on ~90% of the Maven set, `VersionOrder` already
+written and tested for the rest) are what make it tractable.
+
+**Undecided, and both halves need deciding before Phase 8 starts.** The likely shape is a
+per-purl version cache plus a local matcher scoped to candidate evaluation only, with every
+number on the panel traceable to the archive it came from.
+
 ---
 
 ## Open questions
@@ -398,11 +592,23 @@ version ranges, and added CycloneDX 1.7 support.
   than version-range arithmetic. That was the main argument against it, and it is weaker
   than it first appeared — but correctness risk in a security tool is not the place to
   spend effort while a maintained engine does the job.
-- [ ] **Upgrade path approach** — resolve R1.
-- [ ] **Dependency view rendering** — collapsible tree, or a graph visualization?
-- [ ] **License** — not yet chosen.
-- [ ] **Multi-module Maven projects** — one SBOM per module or an aggregate? Affects the
-      dependency graph root and workspace mapping.
+
+  **Revisited 2026-07-29, for a narrower job.** Upgrade paths need to answer "which
+  advisories apply to a version the user does not have", which osv-scanner does not take as
+  a question at all. That is not the scanning path and does not replace anything, so the
+  argument above does not reach it. See R4 — the decision here is unchanged for real scans.
+- [ ] **Where version lists come from, and how a candidate is judged** — resolve R4. Blocks
+      Phase 8.
+- **Dependency view rendering — resolved 2026-07-29.** Paths upward, collapsible tree
+  downward. See the decision log; the question was malformed as originally written, since it
+  assumed one rendering had to serve both directions.
+- **License — resolved 2026-07-29.** Apache-2.0. See the decision log.
+- **Multi-module Maven, for the dependency graph — resolved 2026-07-29.** An upward path tops
+  out at the owning module, never the parent pom. See the decision log.
+- [ ] **Multi-module Maven, for workspace mapping** — still open, and Phase 9's problem: with
+      one aggregate SBOM over several module directories, which source tree does a component
+      get scanned against? Recommending per-module SBOMs is not an answer, since SBOMscope
+      reads documents other people generated.
 
 ---
 
@@ -921,6 +1127,220 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   filed near midnight, so it would surface as occasional bad data rather than a formatting
   choice. The time of day is dropped with it: for triage the question is how old an advisory
   is, never what minute it was filed. The table and the export changed together, as they must.
+- 2026-07-29 — **A component's name is never registered without its group.**
+  `scannerNamesFor` added the bare name unconditionally, so every Maven component also
+  claimed its artifactId alone: `com.foo:core` and `com.bar:core` both claimed `core`, and
+  `putIfAbsent` gave it to whichever was indexed first. A finding could then be reported
+  against a library that does not have it — worse than dropping one, because it looks like an
+  answer.
+
+  Dormant rather than live, since osv-scanner names Maven packages `group:artifact` and never
+  emitted the bare form. Which is also why removing it cost nothing: the key could not match
+  a real report, and an unscoped npm package already arrives through `coordinates()`, which
+  *is* the plain name when there is no group. For a scoped npm package the bare form was
+  affirmatively wrong — `common` is a real package and is not `@angular/common`.
+
+  A residual ambiguity is now logged rather than resolved silently: two components can still
+  share ecosystem, name and version while differing in purl, which Maven qualifiers such as a
+  classifier can produce. The first still wins, since reporting the advisory against one of
+  them beats dropping it, but the choice is no longer invisible.
+- 2026-07-29 — **The Workspace view becomes the Component Inspector, and phases 6–9 become
+  one screen.** No scope was dropped: the dependency tree, upgrade analysis and workspace
+  usage all survive intact. What changed is what they are *for*.
+
+  The vulnerability view is list-centred and answers "what is wrong here". Everything left in
+  the roadmap answers "what do I do about this one library", which is a different question
+  and needs a component-centred screen: one library, its findings, its upgrade options, its
+  place in the graph, its use in your code. As three separate phases they read as three
+  unrelated features; as one screen they are three panels of a single argument.
+
+  **The old name described an input, not the screen.** A workspace is a directory, it is
+  optional, and only one of the three panels uses it — the one now scheduled last. Naming
+  the screen after its least central feature made the roadmap look like it was building a
+  source browser that happened to know about vulnerabilities. *Viewer* was rejected in turn:
+  two of the three panels exist to support a decision, and *inspector* is the established
+  word for a focused detail surface on one selected object.
+
+  **The navigation item carries the full name**, not the noun alone. Shortening it to
+  *Component* was proposed for symmetry with *Vulnerabilities* and rejected: on its own the
+  word names a thing rather than what the screen does with it, and with only four nav items
+  there is no width pressure worth paying for that. The icon is a package rather than the
+  earlier document glyph, for the same reason the name changed — the subject is one library,
+  not a directory of files.
+
+  **Reordered: shell, graph, upgrades, usage.** The shell first so each panel afterwards is
+  independently shippable. The dependency graph before upgrade paths despite both being top
+  priority, on availability rather than importance — its edges are already stored, parsed and
+  deduplicated, so it needs no new data source and has no open question in front of it, while
+  upgrade paths are blocked on R4. Workspace usage last: it is the only panel resting on a
+  heuristic (R2), and a wrong "not used" is a finding quietly dismissed.
+- 2026-07-29 — **The Inspector is keyed by purl, not by component row id.** The intended
+  identifier was the component's row id, and it was wrong for a reason that only shows up
+  where the two screens meet: `rowsForSbom` selects **DISTINCT** over the purl precisely so a
+  library listed twice in one document produces one row. Putting the row id back into a row
+  to link from it would have undone that collapse and reintroduced the duplicate rows the
+  parser fix had just removed. The Inspector's unit has to be the table's unit, or the action
+  on a row opens something the row was not describing.
+
+  Carried in the **query string** rather than a path segment, because a purl contains
+  slashes and an encoded slash inside a path is rejected outright by some servlet containers
+  — a failure that would have appeared only for certain packages.
+
+  Two consequences worth stating. `findComponentByPurl` returns the first match from an
+  ordering that puts the root first and then sorts by scope, so where a purl does appear
+  twice the Inspector describes the most significant of them rather than an arbitrary one.
+  And **the selected SBOM is now persisted**: the URL names a component but not the document
+  positioning it, so without that a refresh restored the component against whichever SBOM
+  happened to be newest. That also fixes the older annoyance of the findings view silently
+  switching documents on reload.
+- 2026-07-29 — **`RowResponse` and the finding presentation helpers are shared, not
+  reimplemented.** The Inspector shows the same component the table does, so it reads the
+  same row shape from the same SQL and renders severity through the same component. Two
+  descriptions of one row would have been free to drift, and the specific way they drift is
+  known in advance: "unscored" starts reading as "clean" on one screen and not the other.
+  `RowResponse` moved out of `ScanController` into its own file, and `bandOf`,
+  `SeverityCell`, `formatTimestamp` and `formatAdvisoryDate` out of `VulnerabilitiesPage`
+  into `findings/presentation`.
+
+  The Inspector does add one thing the table cannot say: **three states rather than two.** A
+  component with no advisories is either checked and clean or never examined, and the table
+  answers that once for the whole SBOM while the Inspector has to answer it for one
+  component. `scannedAt` is therefore per purl, and null renders as a warning rather than
+  as silence.
+- 2026-07-29 — **The Inspector's panels are tabs, and the finder is a fixed column beside
+  them.** Stacked, four panels made the page a scroll where only one of them is ever the
+  reason you came. Tabs hold the component's identity and the finder still while the answer
+  changes — which is what makes the finder worth a column rather than a control you use once:
+  pick the next library and the question you were already asking is on screen for it. The tab
+  choice is persisted and deliberately *not* reset when the component changes, because
+  comparing the same panel across several libraries is the workflow.
+
+  **The first tab is "Advisories", not "Vulnerabilities".** The top-level view already owns
+  that word, and two different things under one name in one application is how a reader stops
+  trusting either. It is also the more accurate label: the panel lists advisory records, and
+  a component can legitimately have none.
+
+  Below 900px the columns stop fighting for width and the side column goes full-width above
+  the panel, which is the arrangement it reads fine in and the table never did.
+
+  **Revised the same day: the component's identity moved into the side column too**, above
+  the finder. It had been sitting in the main column above the tab strip, which pushed every
+  panel down by its own height — about 160px, on the one screen whose main content is a
+  dependency tree several hundred rows long. What you are looking at and how to change it
+  belong together, and the tab strip now top-aligns with the identity block beside it.
+
+  With nothing selected the block becomes a dashed placeholder with a **floor on its height
+  and no animation**. A shimmering skeleton was the obvious thing and is wrong here: nothing
+  is loading and nothing is on its way, so animating it would promise something that is not
+  coming — the same reason "never scanned" is a sentence rather than an empty list. The floor
+  is a floor rather than a match: a real identity varies with how long the coordinates are,
+  so the first selection still shifts the finder down somewhat, while switching between
+  components of similar name length does not.
+- 2026-07-29 — **"n of your m modules" excludes the aggregate root from m.** The first
+  version counted every APPLICATION component, so the maven fixture reported "1 of your 3"
+  where the honest answer is "1 of your 2". The parent pom depends only on the project's own
+  modules, so no route can ever top out at it — it was a denominator term that could never
+  appear in the numerator, quietly understating every ratio. Where the root is the only
+  application component, as in npm and single-module Maven, it *is* the module and counts as
+  one, which is the same reduction that makes the scope classification safe there.
+
+  Caught by reading the number the panel actually printed rather than the code that made it.
+- 2026-07-29 — **The tree shows structure, not repeated labels.** Every row carried a
+  direct/transitive badge, which on a tree is a word repeated down the whole left edge to say
+  something the indentation already says — and it competed with the two markers that do carry
+  information, *also above* and *cycle*. Removed. The native disclosure triangle went with it
+  in favour of explicit `+`/`−` controls: bigger, identical in every browser, and a tree is
+  read by scanning its left edge for what can still be opened. Leaves carry a matching spacer
+  so the controls form a column rather than ragged indentation. The open
+  question asked whether to use a collapsible tree or a graph visualisation, and it was
+  malformed: it assumed one rendering had to serve both directions, when the directions are
+  different questions.
+
+  Upward the question is *why is this here*, and the answer is a route: the distinct paths
+  from a root down to the component, shortest first, one per line. A diamond is stated
+  honestly by listing both routes rather than drawing them, the shortest is usually the only
+  one that matters, and a line of arrows pastes into a ticket — which is where this answer
+  tends to end up.
+
+  Downward the question is *what does this drag in*, and the answer is a set. A collapsible
+  tree shows its shape at a glance where a path list would repeat a long shared prefix on
+  every line.
+
+  **A node-link graph was rejected** despite being the only structurally truthful option —
+  one node per library however many edges reach it. It needs a layout algorithm, so either a
+  frontend dependency to justify under constraint 9 or one hand-rolled; and on a real project
+  SBOM of a few thousand components an unfiltered drawing is unreadable without a filtering
+  design nobody has done. Neither shape chosen here needs a layout pass at all, so Phase 7
+  adds no dependency.
+
+  One consequence to honour: with many routes to a root, the panel shows the shortest few and
+  **says how many it held back**. A quietly shortened list of causes is a wrong answer to
+  "why is this here", not a tidier one.
+- 2026-07-29 — **An upward path tops out at the owning module, not the document root.** In an
+  aggregate Maven BOM the root is the parent pom, so a faithful walk reads
+  `sbomscope-parent → sbomscope-backend → spring-boot-starter-web → jackson-databind`, where
+  the first hop is bookkeeping. The parent aggregates; it does not depend on anything the
+  reader can act on, and it would lead every path in every aggregate SBOM with the same
+  uninformative name.
+
+  Stopping at the nearest APPLICATION component instead makes the top of the path say
+  **which of your modules is responsible** — the first thing you need before fixing anything,
+  and something the old `is_direct` boolean could not express at all. `ScopeClassifier`
+  already computes that set, so this costs nothing new. For npm and single-module Maven the
+  application is just the root and the rule reduces to the obvious behaviour, which is the
+  same property that made the scope classification safe to introduce.
+
+  This resolves the dependency-graph half of the multi-module open question. The workspace
+  half is untouched and stays open for Phase 9: an aggregate SBOM spans several source
+  directories, and which one a component should be scanned against has no answer yet.
+
+  **Amended the same day, and the amendment matters more than the decision.** As first
+  written this said "the owning module", singular, and paired it with a rule capping long
+  path lists to the shortest few. Both were wrong for the ordinary case: a library is
+  routinely reached from *many* modules — Spring is in every backend module — and capping by
+  shortest route would then have silently dropped most of the modules affected. That inverts
+  the value of the panel. The number of your own modules carrying a vulnerable library is the
+  scope of the problem, and scope is what decides whether it is a morning's work or a
+  quarter's.
+
+  So: every owning module is always listed. Capping applies only *within* a module, where
+  several routes reach the same component and only the shortest is usually interesting, and
+  even then the count of what was withheld is shown. Hiding a route is a tidier answer;
+  hiding a module is a wrong one — the same distinction the severity chips already make
+  between a number that is smaller and a number that is false.
+- 2026-07-29 — **Apache-2.0.** Chosen on the same reasoning as most of this project: the
+  target is a locked-down corporate machine, so the licence has to survive somebody else's
+  procurement review. Apache-2.0 passes without discussion. AGPL was considered and rejected
+  for precisely the audience it would otherwise protect against — corporate policy at the
+  kind of organisation SBOMscope is for frequently bans it outright, and the risk it guards
+  against (someone running this as a competing hosted service) is small for a local-first
+  single-user tool that explicitly does not run as a shared service.
+
+  MIT was the close alternative and would have been fine. Apache-2.0 wins on two details:
+  §8 states the limitation of liability in specific terms rather than one sentence, and §9
+  has no MIT equivalent — anyone redistributing SBOMscope with their own support or warranty
+  does so on their own behalf and indemnifies us for it. For a tool likely to be repackaged
+  inside a company, that is the difference worth having.
+
+  Two things the licence does **not** do, recorded so they are not assumed: German law limits
+  how far liability can be disclaimed in advance regardless of what the text says, and the
+  EU Cyber Resilience Act's obligations for a security product attach from December 2027
+  independently of licensing. Neither is a licence question, and both need real advice before
+  this is commercialised.
+
+  The `LICENSE` file is the verbatim Apache text, and the licence is declared in the parent
+  POM so it reaches SBOMscope's own generated SBOM.
+- 2026-07-29 — **Upgrade paths present candidates, not a recommendation.** For a component at
+  `x.y.z`: the latest patch on its line, the latest within its major, the latest overall, and
+  the earliest version clearing every known critical and high. The first three minimise
+  disruption and report what that costs; the fourth names the goal and reports what reaching
+  it costs. Where they coincide, saying so is worth more than four rows of numbers.
+
+  **Each candidate carries its own vulnerabilities, not a count of what it clears.** "Clears
+  3 of 4" cannot be acted on — which one remains is the whole question, and a candidate that
+  leaves a critical behind is not an upgrade path. This is also the design constraint that
+  makes R4 unavoidable: a per-candidate advisory list means evaluating versions the user does
+  not have, which nothing in the current pipeline can do.
 - 2026-07-27 — **`-parameters` is configured explicitly in the parent POM.** Because
   this project imports the Spring Boot BOM instead of inheriting from
   `spring-boot-starter-parent`, none of that parent's build configuration comes along.
