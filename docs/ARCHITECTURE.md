@@ -28,8 +28,7 @@ hot-reload against a running backend.
 
 ## Data model
 
-Four tables, all created by Flyway migrations under
-`backend/src/main/resources/db/migration`.
+All created by Flyway migrations under `backend/src/main/resources/db/migration`.
 
 ```
 sbom                     an uploaded document
@@ -54,11 +53,31 @@ vulnerability_finding    one vulnerability affecting one purl
   severity_score, severity_rating, cvss_vector, cvss_version,
   fixed_version, published_at
   UNIQUE (purl, osv_id)
+
+osv_index                the OSV archives, parsed for candidate-version evaluation
+  ecosystem, package_name, osv_id, cve_id, rating, affected
+  PRIMARY KEY (ecosystem, package_name, osv_id)
+
+osv_index_source         which archive produced it, so a refresh invalidates it
+  ecosystem, identity, advisories, packages, built_at
 ```
 
-All of it is created by a single `V1__baseline.sql`. The original V1–V4 were squashed into
-it while SBOMscope was pre-release; see constraint 8 in [AGENTS.md](../AGENTS.md) for when
-that stops being allowed.
+`osv_index` (V2) is **derived data**: rebuildable from the archive at any time, and erasing
+the archives should take it with them. It exists because the archives name their entries by
+advisory id rather than by package, so finding one library's advisories means parsing all of
+them — 5.2 s and ~152 MB retained for npm, measured. Parsed once into a table instead, a
+lookup is an indexed `SELECT` and nothing is held in memory.
+
+`osv_index_source.identity` is the archive's path, size and modification time. It is compared
+rather than trusted, so replacing a download invalidates the index by itself, and it is
+written **last** so an interrupted build leaves rows nothing considers usable — the same
+reasoning as `all.zip.partial`.
+
+Everything above `osv_index` is created by a single `V1__baseline.sql` — the original V1–V4,
+squashed while SBOMscope was pre-release; see constraint 8 in [AGENTS.md](../AGENTS.md) for
+when that stops being allowed. `V2__osv_index.sql` is additive rather than folded in: the
+baseline is now installed with real data behind it, and folding would cost a database nobody
+needs to lose for a table nothing supersedes.
 
 ### Dependency scope
 
@@ -246,6 +265,25 @@ The archives are the standard OSV export — individual advisory JSON documents 
 schema 1.7.3, with no index, manifest, or scanner-specific metadata. Only the directory
 layout belongs to osv-scanner; the data belongs to no tool.
 
+### Index cost for the local matcher (2026-07-29)
+
+Upgrade paths evaluate candidate versions against these archives, which means parsing them.
+Measured on a real machine by `ArchiveIndexProbe`, which skips itself when the archives are
+absent:
+
+| | Archive | First query | Cached query | Heap retained |
+|---|---|---|---|---|
+| Maven | 9.4 MB | 398 ms | <1 ms | ~42 MB |
+| npm | 202.9 MB | **5.2 s** | <1 ms | **~152 MB** |
+
+The entries are named by advisory id rather than by package, so nothing can be skipped
+without parsing it — the whole archive is read however little of it is wanted.
+
+**The retained memory is the more awkward number, not the time.** It is held for the life of
+the process once built, and both ecosystems together approach 200 MB in an application that
+otherwise runs comfortably small. Anything that builds these eagerly pays that in every
+session, including the ones where nobody asks an upgrade question.
+
 ---
 
 ## Key flows
@@ -268,6 +306,18 @@ and export labels.
 reproduces the current page, filter and sort; `all` keeps sort and severity selection but
 drops text filter and paging. Registry URLs come from `RegistryLinks`, the same code the
 API sends to the browser, so view and export cannot drift.
+
+**Index** — `OsvDatabaseService` → `OsvArchiveMatcher.buildIndex`. Runs as a visible second
+phase after a download, and on demand for an archive carried across by hand — being *present*
+and being *indexed* are separately reachable states, and re-downloading 200 MB to fix the
+second would be absurd on any machine and impossible on an air-gapped one.
+
+**Candidate evaluation** — `OsvArchiveMatcher.advisoriesFor` answers "which advisories apply
+to package P at version V" for versions the user does not have. **It is not a second
+scanner.** What is installed is reported by osv-scanner and nothing else; if the two ever
+disagree about a version actually present, the scanner is right by definition. Version-range
+semantics live in `AffectedVersions`, read by both this and the report parser, because two
+implementations would drift in the direction of "this upgrade is clean" against "it is not".
 
 ---
 

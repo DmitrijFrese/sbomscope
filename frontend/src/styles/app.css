@@ -1625,6 +1625,128 @@ body {
   font-style: italic;
 }
 
+/* ------------------------------------------- upgrade paths ---- */
+
+.fixlist {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.fixlist__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  font-size: 13px;
+}
+
+.fixlist__fix {
+  color: var(--text-muted);
+}
+
+.db-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.progress__step {
+  color: var(--text-muted);
+}
+
+.target-advisories {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  font-size: 13px;
+}
+
+/* A checked-and-clean target is genuinely good news and reads as such — but only ever after
+   the check has actually run, which is why it is a separate state from "not checked". */
+.notice--ok {
+  border-left-color: var(--severity-low);
+}
+
+.remedies {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.remedy {
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* An option that does not apply here is dimmed rather than removed: the reason it does not
+   apply — "you do not declare this dependency" — is the part that explains why the obvious
+   remedy is the wrong one. */
+.remedy[data-available='false'] {
+  opacity: 0.72;
+  background: transparent;
+  border-style: dashed;
+}
+
+.remedy[data-suggested='true'] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  opacity: 1;
+}
+
+.remedy__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 14px;
+}
+
+.remedy__target {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.badge--suggested {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+}
+
+.remedy__note {
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.remedy__effect {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.remedy__effect--left {
+  color: var(--severity-high);
+}
+
+/* Meant to be selected and pasted, so it wraps rather than scrolling — a snippet you have
+   to scroll sideways to read is one you copy half of. */
+.snippet {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 /* ------------------------------------------- dependency graph ---- */
 
 .graph-node {

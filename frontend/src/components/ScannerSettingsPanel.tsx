@@ -6,6 +6,7 @@ import {
   fetchScannerStatus,
   saveScannerSettings,
   startDatabaseDownload,
+  startDatabaseIndexing,
   testScanner,
 } from '../api/client';
 import type {
@@ -47,21 +48,36 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
 }
 
+/**
+ * Two jobs, reported as two steps.
+ *
+ * Fetching the archive has a known total and gets a real bar. Parsing it into the index has
+ * none — the archive announces no advisory count — so it gets a counter and an indeterminate
+ * bar rather than one inventing a scale. Collapsing them into a single bar would mean either
+ * stalling at 100% for five seconds or lying about how far along it is.
+ */
 function DownloadBar({ progress }: { progress: DownloadProgress }) {
-  const known = progress.totalBytes > 0;
+  const indexing = progress.phase === 'INDEX';
+  const known = !indexing && progress.totalBytes > 0;
   const percent = known
     ? Math.min(100, Math.round((progress.bytesDownloaded / progress.totalBytes) * 100))
     : 0;
 
+  const label = indexing ? 'Indexing' : 'Downloading';
+
   return (
-    <div className="progress" role="group" aria-label={`Downloading ${progress.ecosystem}`}>
+    <div className="progress" role="group" aria-label={`${label} ${progress.ecosystem}`}>
       <div className="progress__header">
         <span>
-          Downloading <strong>{progress.ecosystem}</strong>
+          {label} <strong>{progress.ecosystem}</strong>
+          <span className="progress__step"> · step {indexing ? 2 : 1} of 2</span>
         </span>
         <span className="mono">
-          {formatBytes(progress.bytesDownloaded)}
-          {known && ` of ${formatBytes(progress.totalBytes)} · ${percent}%`}
+          {indexing
+            ? `${progress.advisoriesIndexed.toLocaleString()} advisories`
+            : `${formatBytes(progress.bytesDownloaded)}${
+                known ? ` of ${formatBytes(progress.totalBytes)} · ${percent}%` : ''
+              }`}
         </span>
       </div>
 
@@ -168,6 +184,17 @@ export function ScannerSettingsPanel() {
     setError(null);
     try {
       setDownload(await startDatabaseDownload(ecosystem));
+      pollUntilFinished();
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
+  /** Indexing an archive already on disk: the same background job, without the fetch. */
+  async function beginIndexing(ecosystem: string) {
+    setError(null);
+    try {
+      setDownload(await startDatabaseIndexing(ecosystem));
       pollUntilFinished();
     } catch (e) {
       setError(messageOf(e));
@@ -361,7 +388,7 @@ export function ScannerSettingsPanel() {
                     source
                   </a>
                 </td>
-                <td>
+                <td className="db-actions">
                   <button
                     type="button"
                     className="button button--small"
@@ -375,6 +402,22 @@ export function ScannerSettingsPanel() {
                   >
                     {entry.present ? 'Refresh' : 'Download'}
                   </button>
+
+                  {/* Only for an archive that is present but not indexed — one carried
+                      across by hand, or downloaded before the index existed. Re-fetching
+                      200 MB to fix that would be absurd, and on an air-gapped machine
+                      impossible. */}
+                  {entry.present && !entry.indexed && (
+                    <button
+                      type="button"
+                      className="button button--small"
+                      onClick={() => beginIndexing(entry.ecosystem)}
+                      disabled={downloading}
+                      title="Parse this archive so upgrade paths can check candidate versions against it."
+                    >
+                      Index
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

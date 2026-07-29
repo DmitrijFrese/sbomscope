@@ -330,46 +330,15 @@ public class OsvReportParser {
         return null;
     }
 
-    /** Whether an affected entry's ranges contain the given version. */
+    /**
+     * Whether an affected entry's ranges contain the given version.
+     *
+     * <p>Delegated to {@link AffectedVersions}, which the local matcher reads too. Two
+     * statements of version-range semantics would drift, and the direction they would drift
+     * in is "this upgrade is clean" against "this upgrade is not".
+     */
     private boolean covers(OsvReport.Affected affected, String version) {
-        if (affected.ranges() == null || version == null || version.isBlank()) {
-            return false;
-        }
-
-        for (OsvReport.Range range : affected.ranges()) {
-            if (range.events() == null) {
-                continue;
-            }
-            String introduced = null;
-            String upperExclusive = null;
-            String upperInclusive = null;
-
-            for (OsvReport.Event event : range.events()) {
-                if (event.introduced() != null) {
-                    introduced = event.introduced();
-                }
-                if (event.fixed() != null) {
-                    upperExclusive = event.fixed();
-                }
-                if (event.lastAffected() != null) {
-                    upperInclusive = event.lastAffected();
-                }
-            }
-
-            // "0" is OSV's way of saying "from the beginning".
-            boolean atOrAfterStart = introduced == null
-                    || "0".equals(introduced)
-                    || VersionOrder.INSTANCE.compare(version, introduced) >= 0;
-
-            boolean beforeEnd = (upperExclusive == null && upperInclusive == null)
-                    || (upperExclusive != null && VersionOrder.INSTANCE.compare(version, upperExclusive) < 0)
-                    || (upperInclusive != null && VersionOrder.INSTANCE.compare(version, upperInclusive) <= 0);
-
-            if (atOrAfterStart && beforeEnd) {
-                return true;
-            }
-        }
-        return false;
+        return AffectedVersions.coveredByRanges(affected, version);
     }
 
     private String firstFixIn(OsvReport.Affected affected) {

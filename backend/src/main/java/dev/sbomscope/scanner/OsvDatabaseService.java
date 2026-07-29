@@ -68,6 +68,19 @@ public class OsvDatabaseService {
         return thread;
     });
 
+    /**
+     * Injected plainly, which only became possible once the archive layout moved out of this
+     * class: the matcher used to ask this service where the file was, and this service now
+     * asks the matcher to index it. Both reading {@link OsvArchiveLayout} instead leaves one
+     * direction of dependency and keeps the two halves of a single visible operation —
+     * download, then index — in one place.
+     */
+    private final OsvArchiveMatcher matcher;
+
+    OsvDatabaseService(OsvArchiveMatcher matcher) {
+        this.matcher = matcher;
+    }
+
     private final AtomicReference<DownloadProgress> progress =
             new AtomicReference<>(DownloadProgress.idle());
 
@@ -92,7 +105,7 @@ public class OsvDatabaseService {
     public List<EcosystemStatus> status(String databaseDirectory) {
         List<EcosystemStatus> statuses = new ArrayList<>();
         for (String ecosystem : ECOSYSTEMS) {
-            Path file = archivePath(databaseDirectory, ecosystem);
+            Path file = OsvArchiveLayout.archivePath(databaseDirectory, ecosystem);
             String url = sourceUrl(ecosystem);
 
             if (Files.isRegularFile(file)) {
@@ -129,13 +142,59 @@ public class OsvDatabaseService {
         downloads.submit(() -> {
             try {
                 long size = downloadEcosystem(databaseDirectory, ecosystem);
+
+                // Second phase, on the same background thread and the same progress record.
+                // Done here rather than on first use because it is the moment the user is
+                // already waiting and the archive is unambiguously fresh — and because the
+                // index is what makes the download answerable rather than merely present.
+                progress.updateAndGet(current -> current.indexing(0));
+                matcher.buildIndex(databaseDirectory, ecosystem,
+                        advisories -> progress.updateAndGet(current -> current.indexing(advisories)));
+
                 progress.updateAndGet(current -> current.completed(size));
             } catch (RuntimeException e) {
-                log.warn("Download of the {} database failed", ecosystem, e);
+                log.warn("Preparing the {} database failed", ecosystem, e);
                 progress.updateAndGet(current -> current.failed(e.getMessage()));
             }
         });
         return progress.get();
+    }
+
+    /**
+     * Indexes an archive already on disk, without downloading it again.
+     *
+     * <p>Needed for two entirely ordinary situations: an archive carried across by hand to a
+     * machine with no internet — the workflow this product is built around — and one
+     * downloaded before the index existed at all. Without it the only way to get an index
+     * would be to re-fetch 200 MB that is already sitting there, which in a restricted
+     * environment may not be possible at all.
+     */
+    public DownloadProgress startIndexing(String databaseDirectory, String ecosystem) {
+        if (!ECOSYSTEMS.contains(ecosystem)) {
+            throw new IllegalArgumentException("Unsupported ecosystem '%s'.".formatted(ecosystem));
+        }
+        if (progress.get().running()) {
+            throw new IllegalStateException(
+                    "Something is already running for " + progress.get().ecosystem() + ".");
+        }
+
+        progress.set(DownloadProgress.starting(ecosystem).indexing(0));
+        downloads.submit(() -> {
+            try {
+                matcher.buildIndex(databaseDirectory, ecosystem,
+                        advisories -> progress.updateAndGet(current -> current.indexing(advisories)));
+                progress.updateAndGet(current -> current.completed(current.totalBytes()));
+            } catch (RuntimeException e) {
+                log.warn("Indexing the {} database failed", ecosystem, e);
+                progress.updateAndGet(current -> current.failed(e.getMessage()));
+            }
+        });
+        return progress.get();
+    }
+
+    /** Whether each ecosystem's archive has a current index behind it. */
+    public boolean isIndexed(String databaseDirectory, String ecosystem) {
+        return matcher.isIndexed(databaseDirectory, ecosystem);
     }
 
     private long downloadEcosystem(String databaseDirectory, String ecosystem) {
@@ -206,7 +265,7 @@ public class OsvDatabaseService {
     }
 
     /** Exactly the layout osv-scanner expects: {dir}/osv-scanner/{ecosystem}/all.zip */
-    private Path archivePath(String databaseDirectory, String ecosystem) {
+    public Path archivePath(String databaseDirectory, String ecosystem) {
         return Path.of(databaseDirectory, "osv-scanner", ecosystem, "all.zip");
     }
 

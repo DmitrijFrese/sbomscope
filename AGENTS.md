@@ -44,11 +44,55 @@ so a rejected idea does not get re-proposed.
 These are architectural commitments, not preferences. Do not violate them without
 raising it with the maintainer first.
 
-1. **Offline-capable by default.** Every analysis path must work on a machine with no
-   internet access, using only locally-cached data. Network access is exclusively for
-   explicit, user-triggered cache refreshes.
-2. **Never refresh vulnerability data automatically.** No background jobs, no
-   refresh-on-startup, no refresh-on-upload. The user asks; only then do we fetch.
+1. **Offline-capable by default.** Every analysis path must produce an *honest* answer on a
+   machine with no internet access, using only locally-cached data — narrower than the online
+   one where it has to be, never silently wrong. No feature may require the network in order
+   to say something true.
+
+   Network access falls into three categories. **The line between them is what the traffic
+   reveals about the user, not whether traffic happens** — "SBOMscope makes no network calls"
+   would be a simpler claim and a false one, since it downloads the OSV archives itself.
+
+   1. **Executable code — never fetched by us.** osv-scanner is placed by the user and
+      pointed at from Settings. A supply-chain tool that downloads and runs somebody else's
+      binary on your behalf has the wrong default, whatever the convenience.
+
+   2. **Bulk public data — fetched by us, only when asked.** The OSV archives today; CISA KEV
+      and EPSS when Phase 3 lands. One fixed URL, shown in the UI, no credentials, downloaded
+      whole. Requesting *every* Maven advisory discloses nothing about which libraries you
+      have — which is exactly why it can be a whole-archive download, and why it can be
+      carried across on a USB stick to a machine with no network at all.
+
+   3. **Anything specific to the user's dependencies — delegated, never asked directly.**
+      "Which versions of `com.acme:internal-billing` exist" identifies that artifact as
+      something you use. SBOMscope does not ask that of anyone. It invokes a build tool the
+      user configured, which asks through *their* mirror with *their* credentials, over a
+      channel their build already uses routinely — so no new disclosure is created and no
+      credential is ever held here.
+
+   Nothing in categories 2 or 3 is ever automatic, and both are written to the activity log.
+   A direct outbound query about a specific artifact belongs to category 3 and must not be
+   added to category 2 by convenience; that boundary was crossed once on 2026-07-29 and
+   reverted the same day.
+2. **Never *fetch* vulnerability data automatically — analysing it is a different act.**
+   The original wording forbade background jobs, refresh-on-startup and refresh-on-upload
+   outright, and was reworded on 2026-07-29 once the distinction it was reaching for became
+   clear.
+
+   **Fetching stays strictly on request.** Downloading an OSV archive, or anything else that
+   leaves the machine, happens only when the user asks. No timers, no refresh-on-startup, no
+   "while we're here".
+
+   **Analysing may happen on its own**, because it costs nothing that anyone needs to
+   consent to: running osv-scanner against an archive already on disk sends nothing anywhere.
+   A newly uploaded SBOM is scanned automatically, and at startup components with no scan
+   record are scanned in the background — *after* the application is serving, so launch is
+   never delayed, one at a time, and only where the scanner is configured and its archive
+   present. Every such run is written to the activity log, because it starts an external
+   process.
+
+   The line is the same one constraint 1 draws: **what leaves the machine, not what the CPU
+   does.**
 3. **Never commit secrets.** Any credential is read from an environment variable or a
    git-ignored local config file, never from the database and never from a committed
    file. Only templates and placeholders are committed. There are no secrets today —

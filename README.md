@@ -37,6 +37,29 @@ locally-cached feeds that can be populated from a separate, connected machine an
 refreshed only when you explicitly ask for it. No background network calls, no
 auto-updates, no admin rights required to install an engine.
 
+SBOMscope does use the network for some things, and the useful question is not whether it
+does but **what that traffic says about you**:
+
+- **It never downloads executable code.** You place the osv-scanner binary and point
+  SBOMscope at it.
+- **It downloads bulk public data when you ask it to** — the OSV advisory archives, from one
+  fixed URL shown in the interface, with no credentials. Asking for *every* Maven advisory
+  discloses nothing about which libraries you happen to have, which is why it can be a whole
+  archive rather than a series of questions, and why you can copy it across on a USB stick to
+  a machine with no network at all.
+- **It never asks anyone about your specific dependencies.** "Which versions of
+  `com.acme:internal-billing` exist" would identify that artifact as something you use. When
+  upgrade analysis needs an answer like that, SBOMscope drives a build tool you already have
+  and already trust — point it at your `mvn` and prove it works with a test button — so the
+  question goes through your mirror, with your credentials, over a channel your build already
+  uses every day. No credentials are ever entered here.
+
+With no build tool configured, nothing degrades into a guess: SBOMscope still names the fix
+versions the advisories carry, still tells you which of your modules pull a vulnerable
+library in, still tells you what to pin it to, and still says plainly which questions it
+cannot answer. Everything it does that touches the network or runs an external process is
+written to a log you can read inside the application.
+
 ## Core features
 
 | Feature | Description |

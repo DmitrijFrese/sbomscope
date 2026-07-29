@@ -38,12 +38,13 @@ public class ScanService {
     private final SbomService sboms;
     private final SbomFileStore files;
     private final OsvDatabaseService databases;
+    private final OsvArchiveMatcher archives;
 
     private final Duration staleAfter;
 
     ScanService(SettingsService settings, OsvScannerRunner runner, OsvReportParser parser,
                 VulnerabilityRepository repository, SbomService sboms, SbomFileStore files,
-                OsvDatabaseService databases,
+                OsvDatabaseService databases, OsvArchiveMatcher archives,
                 @Value("${sbomscope.scan.stale-after-days:7}") int staleAfterDays) {
         this.settings = settings;
         this.runner = runner;
@@ -52,6 +53,7 @@ public class ScanService {
         this.sboms = sboms;
         this.files = files;
         this.databases = databases;
+        this.archives = archives;
         this.staleAfter = Duration.ofDays(staleAfterDays);
     }
 
@@ -323,6 +325,34 @@ public class ScanService {
             names.add(component.group() + "/" + component.name());
         }
         return names;
+    }
+
+    /**
+     * Checks a candidate version for one component against the downloaded archives.
+     *
+     * <p>Assembled here because this is where the scanner settings live. Every spelling the
+     * component might be filed under is tried and the results merged by advisory id — the
+     * same many-names problem the report lookup has, for the same reason.
+     */
+    public UpgradeAdviceService.TargetEvaluator evaluatorFor(StoredComponent component) {
+        String ecosystem = ecosystemOf(component);
+        String directory = settings.scannerSettings().databaseDirectory();
+
+        if (ecosystem.isEmpty() || !archives.isIndexed(directory, ecosystem)) {
+            return UpgradeAdviceService.TargetEvaluator.unavailable();
+        }
+
+        Set<String> names = scannerNamesFor(component, ecosystem);
+        return version -> {
+            Map<String, OsvArchiveMatcher.AdvisoryHit> byId = new LinkedHashMap<>();
+            for (String name : names) {
+                for (OsvArchiveMatcher.AdvisoryHit hit :
+                        archives.advisoriesFor(directory, ecosystem, name, version)) {
+                    byId.putIfAbsent(hit.osvId(), hit);
+                }
+            }
+            return Optional.of(List.copyOf(byId.values()));
+        };
     }
 
     /** Derived from the purl, which is the only place the ecosystem is recorded. */

@@ -5,6 +5,7 @@ import { SCOPE_LABELS, fetchComponentDetail } from '../api/client';
 import type { ComponentDetail, FindingRow } from '../api/client';
 import { ComponentFinder } from '../components/ComponentFinder';
 import { DependencyGraphPanel } from '../components/DependencyGraphPanel';
+import { UpgradePathsPanel } from '../components/UpgradePathsPanel';
 import { SeverityCell, formatAdvisoryDate, formatTimestamp } from '../findings/presentation';
 import { useSboms } from '../sboms/SbomProvider';
 import { usePersistentState } from '../state/persisted';
@@ -329,13 +330,8 @@ export function ComponentInspectorPage() {
                   <DependencyGraphPanel sbomId={selected.id} purl={purl} />
                 )}
 
-                {tab === 'upgrades' && (
-                  <Planned>
-                    Not built yet. Will offer the latest patch on this line, the latest within
-                    this major, the latest overall, and the earliest version clearing every
-                    known critical and high — each with the vulnerabilities it would still
-                    carry.
-                  </Planned>
+                {tab === 'upgrades' && purl && (
+                  <UpgradePathsPanel sbomId={selected.id} purl={purl} />
                 )}
 
                 {tab === 'workspace' && (

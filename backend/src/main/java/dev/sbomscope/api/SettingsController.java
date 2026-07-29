@@ -59,7 +59,16 @@ class SettingsController {
             /** Absolute location on disk, so the file can be found, copied or deleted. */
             String path,
             /** Exactly what gets fetched — nothing is downloaded opaquely. */
-            String sourceUrl) {}
+            String sourceUrl,
+            /**
+             * Whether this archive has been parsed into the upgrade-path index.
+             *
+             * <p>Separate from {@code present} because they are separately reachable: an
+             * archive carried across by hand, or downloaded before the index existed, is on
+             * disk and scannable but cannot answer "would this version be clean". Scanning
+             * never needs the index — osv-scanner reads the archive itself.
+             */
+            boolean indexed) {}
 
     record ScannerStatus(
             ScannerSettingsPayload settings,
@@ -92,7 +101,8 @@ class SettingsController {
                         .map(status -> new DatabaseStatus(
                                 status.ecosystem(), status.present(),
                                 status.sizeBytes(), status.lastModified(),
-                                status.path(), status.sourceUrl()))
+                                status.path(), status.sourceUrl(),
+                                database.isIndexed(current.databaseDirectory(), status.ecosystem())))
                         .toList(),
                 database.progress());
     }
@@ -130,6 +140,20 @@ class SettingsController {
      * <p>Returns as soon as the download starts; the UI polls
      * {@code /scanner/database/progress} for the rest.
      */
+    /**
+     * Indexes an archive that is already on disk.
+     *
+     * <p>Separate from the download because the two are separately reachable states: an
+     * archive copied across by hand has never been downloaded here, and one fetched before
+     * the index existed is present but unusable for upgrade paths. Re-downloading 200 MB to
+     * fix that would be absurd, and on an air-gapped machine impossible.
+     */
+    @PostMapping("/scanner/database/index")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    DownloadProgress indexDatabase(@RequestParam("ecosystem") String ecosystem) {
+        return database.startIndexing(settings.scannerSettings().databaseDirectory(), ecosystem);
+    }
+
     @PostMapping("/scanner/database/download")
     @ResponseStatus(HttpStatus.ACCEPTED)
     DownloadProgress downloadDatabase(@RequestParam("ecosystem") String ecosystem) {

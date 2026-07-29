@@ -404,44 +404,242 @@ parent pom absent from all of them.
 
 ## Phase 8 — Upgrade paths
 
-Goal: choose a version to move to, with the consequences of each option visible.
+Goal: **what do I change, and where** — which is not the same question as "which version".
 
-Not one recommendation. The tool does not know the project's appetite for risk, so it
-presents a small set of candidates and what each one still carries, and the choice stays
-with the person who has to make it.
+The earlier draft of this phase answered "which version of this library should I move to",
+and for the majority of findings that question has no answer, because **you cannot upgrade
+what you do not declare**. `jackson-databind` is vulnerable, the advisory says 3.1.5 fixes
+it, and your `pom.xml` has never mentioned jackson. Handing someone "upgrade to 3.1.5" there
+is not a remedy, it is a fact they cannot act on.
 
-For a component at `x.y.z`, four candidates:
+So the panel is about **remedies**, and the version is one input to them.
 
-| Candidate | Meaning |
-|---|---|
-| Latest `x.y.*` | Highest patch on the current line — the smallest possible change |
-| Latest `x.*.*` | Highest minor and patch within the current major |
-| Latest overall | Newest release, whatever the major |
-| **Earliest clearing critical and high** | The lowest version that resolves every known CRITICAL and HIGH — or, where none does, the one resolving the most |
+### The four remedies
 
-The fourth is a different kind of answer from the first three, which is the point. Those
-three minimise disruption and report what that costs; this one names the goal and reports
-what reaching it costs. Where they coincide, that is the useful answer, and saying so is
-worth more than four rows of numbers.
+| Remedy | When it applies | What it needs |
+|---|---|---|
+| **Upgrade it** | You declare it — `DIRECT` scope | The fixed version. Already known |
+| **Pin it** | You do not declare it, but can force a version anyway: Maven `dependencyManagement`, npm `overrides`, Gradle constraints | The fixed version. Already known |
+| **Bump what pulls it in** | A newer version of the declaring ancestor already ships the fix | That ancestor's dependencies *at candidate versions* — not in the SBOM, not in OSV |
+| **Exclude it** | Your code does not use it at all | Workspace usage (Phase 9). Never recommend without it |
 
-- [ ] **Resolve R4 first** — where the list of available versions comes from, and how a
-      version we do not have is judged offline. Everything below depends on it
-- [ ] Enumerate candidate versions for a component, ordered by `VersionOrder`
-- [ ] For each candidate: its own known vulnerabilities, with severities — not a count.
-      "Clears 3 of 4" is not actionable; *which* one remains decides whether to take it
-- [ ] Present the four candidates above, collapsing them when they coincide
-- [ ] Say plainly when no available version resolves the finding — that is a real answer,
-      and the case where a reader most needs to be told rather than left to infer
-- [ ] Distinguish "no fix exists" from "we could not enumerate versions for this ecosystem",
-      as ever
-- [ ] Populate the Recommended upgrade column in the findings table from the same source,
-      so the table and the Inspector cannot disagree
-- [ ] Application-scoped components are excluded: they are your own modules, and there is
-      no version to upgrade to
+Pinning is the quiet discovery here. It is precise, it is a copy-pasteable snippet, it works
+regardless of what the ancestor does, and **it needs nothing SBOMscope does not already
+hold** — the fixed version comes from the advisory and the ecosystem from the purl. For a
+transitive finding it is very often the correct answer, and it was entirely absent from the
+earlier design.
 
-**Done when**: a vulnerable library shows concrete target versions, each with the
-vulnerabilities it would still carry, and names the smallest jump that clears the serious
-ones.
+Bumping the ancestor is the one that genuinely needs the network. Knowing whether
+`spring-boot-starter-json 4.2.0` ships a fixed jackson means reading *its* dependencies at
+that version, which no SBOM of your project contains and no advisory database records.
+
+### Version candidates
+
+Where a version is the answer, the candidate set from the earlier draft stands: for a
+component at `x.y.z`, the latest `x.y.*`, the latest `x.*.*`, the latest overall, and the
+**earliest version clearing every known critical and high**. The first three minimise
+disruption and report what that costs; the fourth names the goal and reports what reaching
+it costs. Where they coincide, saying so is worth more than four rows of numbers.
+
+Each candidate carries **its own known vulnerabilities, with severities — not a count**.
+"Clears 3 of 4" cannot be acted on; *which* one remains decides whether to take it.
+
+### Two tiers, because offline and online answer different amounts
+
+Judging a version is reliable offline; **enumerating** versions is not. See R4.
+
+- [x] **Tier 1 — offline, and unblocked today.** Needs no network and no new policy.
+  - [x] Candidate versions taken from the advisories themselves: the `fixed` versions they
+        name. The **highest** of them is the pin target, so one pin addresses every advisory
+        as each describes itself — the lowest would leave the others in place
+  - [x] Name the declaring ancestor from the dependency graph Phase 7 already builds, so a
+        transitive finding says *who* to talk to rather than only that it is transitive
+  - [x] Emit the pin snippet per ecosystem, ready to paste
+  - [x] **State the ceiling honestly**: without a registry the newest release is unknown, so
+        "latest patch / minor / overall" are unanswerable and are shown as such rather than
+        silently computed from a biased list
+  - [x] **Tier 1b — a local matcher over the downloaded OSV archives**: for a package and any
+        version, which advisories apply. Scoped to answering hypotheticals, never to
+        reporting on what is installed — that stays osv-scanner's job (see Open questions).
+        Removes the caveat Tier 1a had to print: the panel now answers whether the target is
+        clean instead of saying it cannot
+  - [x] Range semantics live in one place. `AffectedVersions` is read by both the report
+        parser and the matcher, because two statements of "is this version affected" would
+        drift, and the direction they drift in is "this upgrade is clean" against "it is not"
+  - [x] The target's own advisories carry the **GHSA rating, never a CVSS score**. OSV stores
+        severity as vector strings; the numbers elsewhere were computed by the scanner, which
+        only ran against what is installed. Producing one here would mean owning a CVSS
+        implementation, refused once already
+  - [x] Three states kept apart: the target carries something, the target is checked and
+        clean, and no archive was there to check against. The last must never render as the
+        second — `targetEvaluated` is what separates them
+  - [x] **The index is persisted in H2, not held in memory.** Parsed once into `osv_index`
+        (V2), after which a lookup is an indexed SELECT and nothing is retained. Survives a
+        restart, which no in-memory arrangement could
+  - [x] Built as a visible second step after a download — *step 2 of 2*, with an advisory
+        counter rather than a bar, since the archive announces no total
+  - [x] **Index** action for an archive already on disk: one carried across by hand, or
+        downloaded before the index existed. Without it the only route to an index would be
+        re-fetching 200 MB, which on an air-gapped machine is no route at all
+  - [x] The index is keyed to the archive's size and modification time, so a refreshed
+        download invalidates it by itself
+  - [ ] **npm's disk cost is unmeasured.** Maven's 6,860 advisories added ~10 MB to the
+        database; npm has 223,786 over 220,027 packages, so extrapolation suggests a few
+        hundred MB. The trade is RAM for disk and it is the right one, but the number should
+        be taken rather than guessed at
+  - [ ] **Purge does not clear the index.** Erasing the OSV archives leaves `osv_index`
+        behind, which is derived data pointing at files that no longer exist. It should go
+        with them
+### Bumping the declared dependency, properly
+
+`root → A (direct) → B → C`, with the vulnerability in C. Telling someone to move C is
+telling them to override a version they never chose; **the fix upstream intended is a newer
+A that already brings a fixed C.** That remedy is currently listed and permanently
+unavailable, which is the least useful state a remedy can be in.
+
+Making it real needs A's *resolved* dependency tree at each candidate version — not its
+declared dependencies, its resolved ones, after nearest-wins, `dependencyManagement`, BOM
+imports and exclusions have had their say. That exists in no SBOM of your project and in no
+advisory database, which is why this is Tier 2 and not a matter of trying harder offline.
+
+**Three properties decide between remedies, and they are not one axis.**
+
+| | What it asks | Where it comes from |
+|---|---|---|
+| **Route completeness** | Does it fix *every* route to C, or only the ones through A? | The Phase 7 graph |
+| **Blast radius** | How much moves — a patch on one library, or a major on a widely-shared one | Version distance, resolved tree diff |
+| **Durability** | Does the fix ship in a release, or is it a constraint you now own forever? | Which remedy it is |
+
+**Route completeness is the sharp one, and it is the argument for pinning that was missing.**
+Where C is reached by `A → B → C` *and* `D → E → C`, bumping A fixes one route and leaves
+the other — the finding does not go away, and a panel that reported success would be wrong.
+A pin is route-complete by construction: it constrains C wherever C appears. That is not a
+simplicity argument, it is a correctness one, and it is why a pin can remain the right answer
+even when a newer A exists.
+
+**Naming the blocker is worth as much as naming the fix.** With resolved trees for A's
+candidate versions, "no version of A resolves this" becomes answerable — and so does *why*:
+the constraint is B, which has no fixed release. That tells a reader to go and open an issue
+against B, which is the actual next action and something nothing else in the tool can say.
+
+### Tier 2 — driving the user's own build tool
+
+**Designed 2026-07-29. No external API is called; SBOMscope drives a tool the user
+configures.** Maven first; Gradle and npm are the same shape with different probe scripts.
+
+Configured exactly as the scanner is: user-supplied path, a Test button, unavailable rather
+than broken when absent.
+
+**The probe.** A generated POM in a temp directory declaring one dependency at a *version
+range*, resolved with `mvn dependency:tree`. Ranges do both jobs at once — Maven picks the
+version *and* reports the tree it resolves — so "which versions exist" and "what does each
+pull in" stop being separate problems:
+
+| Candidate | Range | Maven resolves to |
+|---|---|---|
+| Latest patch | `[4.1.0,4.2.0)` | highest 4.1.x |
+| Latest minor | `[4.1.0,5.0.0)` | highest 4.x |
+| Latest overall | `[4.1.0,)` | highest release |
+
+Core Maven plugins only. **No settings parsing and no credentials**: Maven reads its own
+`settings.xml`, so mirrors, authentication and proxies come along for free and SBOMscope
+never learns them.
+
+- [ ] `DependencyResolver` behind an interface, per the standing convention on engine
+      integrations — the Maven probe today, a Gradle or npm probe later
+- [ ] **Resolve into an isolated local repository** (`~/.sbomscope/probe-repo`), never the
+      user's `~/.m2`. A failed probe writes `.lastUpdated` markers that can make a later
+      *real* build refuse to retry a download; perturbing someone's build environment to
+      answer a question they asked idly is not a trade worth making. Nearly free, because
+      `dependency:tree` needs POMs and not jars — kilobytes per artifact
+- [ ] **Version enumeration comes from our own repo.** Resolving a range makes Maven download
+      `maven-metadata.xml` into the local repository to learn what exists; we read that file
+      from disk afterwards. No HTTP by us, so "we never call out, Maven does" survives
+- [ ] **Calibration probe.** Before trusting any candidate, probe the declaring dependency at
+      its *current* version and compare the resolved C against the C the SBOM reports.
+      Matching means the isolated model reproduces their build for this chain and candidate
+      results can be trusted; differing means something in their project is overriding it,
+      the bump remedy is unverifiable, and the pin is the answer. Converts "we cannot really
+      rely on this" into a checked claim
+- [ ] **With a workspace, lift in the project's `dependencyManagement`** via
+      `mvn help:effective-pom`, so their pins and imported BOMs are honoured. Without one the
+      probe stays isolated and says so
+- [ ] **Search order: tiers first, then refine.** Three probes establish whether any bump
+      works and in which tier — actionable in under half a minute — then walk ascending
+      inside the winning tier for the true earliest. **Not a binary search**: "brings a fixed
+      C" is not monotonic in the version, since a newer release can introduce a fresh
+      advisory, so an ordered search would report an earliest that is not one
+- [ ] Live progress while probing, linked to the log, with each probe's verdict recorded:
+      *4.2.0 → jackson-databind 3.1.6 → clean* against *→ 3.1.4, still affected by GHSA-…*
+- [ ] Per remedy: routes fixed of routes total, change size on the artifact *you* edit, and
+      whether the fix is upstream or a constraint you maintain
+- [ ] Where no candidate resolves it, name the component in the chain that is holding it —
+      the blocker, not just the failure
+- [ ] Suggested remedy = clears every critical and high **and** fixes every route, at the
+      smallest change size; ties broken toward the upstream fix over the local override
+- [ ] A remedy that fixes some routes and not others is reported as partial, never as a fix
+
+### Logging
+
+Not a feature of upgrade paths, but this is what made it necessary: a recommendation nobody
+can check is the failure mode this project keeps designing against, and probing produces
+reasoning worth showing.
+
+- [ ] **Two files** under `~/.sbomscope/logs`. `sbomscope.log` is the full verbose record in
+      conventional text, rotated with a size cap, for diagnosing after the fact.
+      `activity.jsonl` holds notable events only, one JSON object per line
+- [ ] **The UI tails `activity.jsonl`.** Structured by construction, so the viewer never
+      parses prose — which is what makes reading back one's own log fragile
+- [ ] Notable = anything touching the network, anything running an external process, anything
+      changing stored data, and every probe result with its verdict
+- [ ] The log directory shown in Settings as copyable text, not a link: a browser cannot open
+      a native folder from an `http://` page
+  - [ ] Real version lists per component, cached per purl with a last-fetched timestamp
+  - [ ] The four candidates above, properly
+  - [ ] Whether a newer declaring ancestor ships the fix — the one remedy that cannot be
+        computed offline at all
+  - [ ] **A configurable base URL per ecosystem, defaulting to the public registry.** The
+        organisations this product is for do not let a developer machine reach Maven Central
+        directly; they run a Nexus or Artifactory mirror, and that mirror already holds the
+        metadata this needs. Pointing at it makes the feature work *without leaving the
+        network at all* — which turns the disclosure objection off entirely and is likely
+        the difference between this tier being usable in a locked-down environment and being
+        switched off there permanently. Canonical metadata paths, not search APIs:
+        `maven-metadata.xml` and the npm packument, both of which a mirror proxies verbatim
+  - [ ] Every number traceable to the source that produced it, and to when
+
+### The recommendation
+
+- [ ] **Route completeness — needs no build tool, and should land first.** From the Phase 7
+      graph: how many routes reach this component, and how many a given remedy would fix. A
+      pin fixes all of them by construction; a bump fixes only those through the dependency
+      bumped. The panel already recommends a pin but never says *why* it is the complete
+      answer, and that reasoning is computable offline today
+- [x] One suggested remedy, alongside the alternatives — not a bare verdict. The reasoning is
+      deliberately shallow: declare it and there is a version to change, do not and a pin is
+      the precise answer. Anything cleverer would be guessing at a project's appetite for
+      breakage, which the tool has no way to know
+- [x] It states its inputs, and degrades to "not enough information" rather than guessing.
+      This project has already shipped one confident wrong upgrade target and does not intend
+      to ship a second
+- [x] **Never recommend an exclusion without usage data.** Listed as an option with its
+      caveat until Phase 9 can say the library is genuinely unreferenced
+- [x] Unavailable remedies are shown dimmed with their reason rather than hidden. "You do not
+      declare this dependency" is the part that explains why the obvious remedy is the wrong
+      one, and a reader who cannot see the option cannot learn it
+- [x] Advisories cleared and left, per remedy — left meaning "names no fix at all", which is
+      a real state rather than missing data
+- [ ] The rest of the metrics: version distance (patch / minor / major, as a proxy for how
+      likely it is to break something) and which data source each answer rests on. Distance
+      needs Tier 1b to mean anything, since without it there is only one candidate
+- [ ] Populate the Recommended upgrade column in the findings table from the same source, so
+      the table and the Inspector cannot disagree
+- [x] Application-scoped components are excluded: they are your own modules, and there is no
+      version to upgrade to
+
+**Done when**: a transitive vulnerable library names who pulls it in, what to pin it to, and
+what that leaves behind — offline. With lookups enabled it also names the versions that
+exist and whether a newer parent would do the job.
 
 ## Phase 9 — Workspace usage detection
 
@@ -479,6 +677,184 @@ imported in source from one that is only present transitively.
 - [ ] Documented offline workflow: how to populate caches on a connected machine and
       move them to a restricted one
 - [ ] Sample SBOMs and a quickstart
+
+---
+
+## From using it — 2026-07-29
+
+A day of real use. Kept together rather than distributed into phases, because several are
+small and the list is more useful as a list.
+
+Each item below is specified to be picked up cold. Where a design decision was needed it has
+been taken and the reasoning recorded; **one item is deliberately left open and marked**.
+
+### B0 — Scanning becomes automatic
+
+Decided 2026-07-29 along with the rewording of constraint 2. Fetching stays on request;
+analysing does not need asking, because it sends nothing anywhere.
+
+- **On upload.** After `importSbom` succeeds, queue a scan for that SBOM. Asynchronous on a
+  single-threaded executor — the upload response should not wait on an external process — with
+  the SBOM ids currently in flight exposed so the sidebar can show the card as scanning and
+  refresh its counts when it finishes.
+- **At startup.** On `ApplicationReadyEvent`, **not** `@PostConstruct`: the application must
+  be serving before this begins, or the cost lands on launch, which was the objection to doing
+  it at all. Queue every SBOM that has at least one component with no `vulnerability_scan`
+  row. One at a time, on the same executor.
+- **Gated on readiness**, per SBOM, using the existing `ScanService.readiness`. Scanner off,
+  binary missing or archive absent means do nothing — silently. It is not an error that a
+  machine without a scanner did not scan.
+- **Logged**, every run, because it starts an external process. That is what the activity log
+  is for.
+- **The manual re-scan stays.** Filling a gap and deliberately re-running analysis against a
+  refreshed archive are different needs, and only the first is automatic.
+
+### B1 — Component selection is global, and should be per SBOM
+
+Switching to an SBOM that does not contain the selected component renders an error. It should
+clear instead: a component that is not in this document is not a failure, it is a different
+document.
+
+- Keep the purl in the query string. It is what makes a refresh survive, and Phase 6 needs it.
+- Add an in-memory `Map<sbomId, purl>` in `SbomProvider`. Selecting an SBOM restores its last
+  component; selecting a component records it against the current SBOM. **Not persisted** —
+  a remembered component is a convenience within a session, not a preference.
+- On load, if the purl in the URL is not in the selected SBOM, clear it and show the finder
+  with a quiet note. Do not show an error, and do not guess at a substitute.
+- The backend already returns 404 for an unknown purl, which is correct; the frontend simply
+  must stop rendering that as a failure.
+
+### B2 — Registry links break on vendor-patched versions
+
+`a.b.c.d`, where `.d` is a distributor's patch level, yields a Maven Central URL that 404s.
+Two independent fixes, neither of them a heuristic:
+
+- **Honour the purl's `repository_url` qualifier.** `RegistryLinks.stripQualifiers` currently
+  discards the whole query string, including the one field that names where the artifact
+  actually lives. A vendor build carrying
+  `?repository_url=https://maven.repository.redhat.com/...` is telling us Central is the wrong
+  destination, and we are throwing that away and then linking to Central anyway. Where it is
+  present, link there; where the host is unrecognised, prefer no link over a wrong one.
+- **Split the two links by reliability.** The component *name* links to the artifact page
+  (`/artifact/{group}/{name}`), which resolves whenever the artifact exists at all; the
+  *version* cell carries the version-specific link. A reader who lands on the artifact page
+  can find their version; a reader who lands on a 404 cannot.
+
+**Validating links is not an option.** Testing whether a URL resolves means asking a registry
+about a specific artifact, which constraint 1 puts in category 3 — and an external 404 renders
+the registry's page, not ours, so there is no error of ours to make friendly. The only
+available move is choosing targets that do not fail.
+
+### B3 — The "system" theme appears inert
+
+The mechanism is correct: `ThemeProvider` reads `prefers-color-scheme` and tracks changes
+live. With a dark OS, "System" and "Dark" are visually identical, so it reads as doing
+nothing. **Label it with what it resolved to** — *System (currently dark)* — updating as the
+OS changes. No mechanism change.
+
+### B4 — Multi-file upload
+
+Accept multiple files on the dropzone and the file input. Import sequentially, and report
+**per file**: a partial failure must be visible, since one malformed document among five is
+the normal case and a single "upload failed" would hide the four that worked. Select the last
+successful import, as a single upload already does.
+
+### B5 — Download the stored SBOM
+
+`GET /api/sboms/{id}/document`, serving the stored bytes with the original filename in
+`Content-Disposition`. The stored document is the one the scanner reads, so it is also the one
+worth handing to somebody else. 404 where the file has been swept.
+
+### B6 — Reaching the log directory
+
+Logs live under `~/.sbomscope/logs`. Show the absolute path as copyable text **and** offer a
+button that opens the folder in the OS file manager — possible only because the backend runs
+on the user's own machine, which is the same property that makes workspace scanning possible.
+Use `java.awt.Desktop` where supported and fall back silently to the copyable path when
+headless; a button that does nothing is worse than one that is absent.
+
+### B7 — Dependency graph rendering
+
+- Vertical space between routes; they currently run together.
+- **Drop the repeated root from every line.** The module heading already names it, so
+  repeating it as step 1 of each route spends the widest column on the word the reader
+  already read.
+- Subtly emphasise the **direct dependency** on each route — the step whose version they can
+  actually change. Weight or a quiet underline, not colour: colour already means severity here.
+
+### B8 — Sort by the "fixed in" version
+
+The only item with a real obstacle. Sorting, filtering and paging execute in SQL so the view
+and the export cannot diverge, and H2 orders `1.10.0` before `1.9.0` lexically.
+
+- Add `fixed_version_sort` to `vulnerability_finding` (**V3**, additive), written at insert
+  time in `recordScan`, null when there is no fix.
+- **Generate the key from `VersionOrder`'s own rules, not a second interpretation of
+  versions.** Zero-pad numeric segments to a fixed width and encode pre-release suffixes so
+  they sort below their release. A test must assert that ordering by the key agrees with
+  `VersionOrder.compare` across the fixture set — otherwise the table and the comparator
+  disagree, which is exactly the class of quiet inconsistency this project keeps designing
+  against.
+- `FindingQuery.SortField` gains `FIXED_VERSION`, ascending and descending, with nulls last
+  in both directions: "no fix" is not a version and must not sort as one.
+
+### B9 — Filter and sort by dependency scope
+
+`FindingQuery` gains a scope set, defaulting to all three. The SQL clause is a plain
+`dependency_scope IN (…)` built from enum constants, as the severity clause already is.
+Sorting reuses the `CASE` ordering in `findComponents` (APPLICATION, DIRECT, TRANSITIVE).
+
+**Put the filter in the view-options menu, not the toolbar.** The toolbar already wraps at
+1024px with the severity chips alone, and there is a recorded decision that moving density and
+columns behind one menu is what stopped it reading as a pile of unrelated widgets. A second
+chip row would undo that.
+
+### B10 — Secondary sort
+
+`FindingQuery` gains an optional second criterion, appended to the `ORDER BY` and carried into
+the export description like the first. **Shift-click a second column header** — the
+established pattern, and it costs no toolbar chrome at all, which is the constraint. Show it
+as a small superscript rank on the two active headers so the state is visible rather than
+folklore.
+
+### B11 — Folder and tool pickers — **the open decision**
+
+A browser cannot return an absolute filesystem path, so a picker must come from the backend.
+Two viable shapes, and **this one is not decided**:
+
+- **A backend-rendered directory browser.** Reliable, works headless, no native dependency.
+  It is a filesystem browser exposed over localhost, which is worth stating plainly even
+  though the process already reads and writes that filesystem on request.
+- **A native dialog** via `JFileChooser`. Feels better when it works; fails headless and can
+  open behind the browser window, which is a bad failure because it looks like a hang.
+
+File *upload* is unaffected — that is an ordinary file input.
+
+### B12 — Purge gaps
+
+Erasing the OSV archives should also erase `osv_index` and `osv_index_source`: an index
+without its archive is derived data pointing at nothing. **Bind it to the existing archive
+target rather than adding a fourth checkbox** — four targets were chosen because they differ
+by orders of magnitude in what they cost to undo, and an index is rebuilt by pressing one
+button. Also purge the probe repository and, separately, the logs.
+
+### B13 — Application icon
+
+"Scope" is in the name, and both obvious glyphs are taken by navigation: the shield is
+Vulnerabilities, the cube is the Component Inspector. **A magnifier whose lens contains a
+small cube** reads as "examine a package", is neither existing icon, and survives 16px if the
+cube stays two or three strokes. Needed as a favicon and in the top-left brand slot, which is
+currently a bare wordmark.
+
+### Backlog
+
+- [ ] **Diff two SBOMs, or trend several.** This reopens a closed question: the decision log
+      dropped "group SBOMs into projects" and named trend analysis as what would bring it
+      back. It has. A data-model question before it is a screen — findings are keyed by purl
+      and shared across SBOMs, so "how did this project change" needs a notion of *this
+      project* that does not currently exist
+- [ ] More themes, including a high-contrast one for visually impaired readers. `tokens.css`
+      already holds every colour in one place, which is what makes this cheap
 
 ---
 
@@ -572,9 +948,37 @@ suggestion rather than misreporting an installed component. The open question cl
 recorded there (explicit `versions[]` on ~90% of the Maven set, `VersionOrder` already
 written and tested for the rest) are what make it tractable.
 
-**Undecided, and both halves need deciding before Phase 8 starts.** The likely shape is a
-per-purl version cache plus a local matcher scoped to candidate evaluation only, with every
-number on the panel traceable to the archive it came from.
+**Resolved 2026-07-29**, and the resolution is that the two halves have different answers.
+
+**Judging a candidate is solved, offline, and is the second option above.** A local matcher
+over the downloaded archives answers "which advisories apply to package P at version V" for
+any V, using data already on disk. `VersionOrder` exists and is tested; ~90% of the Maven set
+carries explicit `versions[]`, so most of it is string equality. This is Tier 1 and needs no
+network and no policy change.
+
+**Enumerating candidates has no good offline answer, and saying so matters more than
+working around it.** OSV knows the versions an advisory *mentions*; it has no reason to know
+a library's release list and does not. Deriving one from advisories yields a set biased
+toward versions near known vulnerabilities — so "the latest release" computed that way could
+name 2.15.1 while 2.19.0 exists, and a version nobody has filed against is invisible
+entirely. **That is not a staler answer, it is a wrong one**, which is a different thing
+from the staleness this project already tolerates elsewhere: a stale finding is still a real
+finding, whereas a truncated version list silently omits the release that fixes the problem.
+
+So the offline tier does not compute "latest" at all. It offers the fix versions the
+advisories name — a small, honest, useful set — and says plainly that the newest release is
+unknown without a registry. The complete list requires an outbound call, which is the
+subject of the outbound-calls decision in the log.
+
+Two consequences worth carrying forward:
+
+- **Registry data is cached per purl with a last-fetched time, and staleness is visible on
+  the panel** rather than merely recorded. It is the first cache whose absence has no safe
+  default.
+- **A version lookup discloses your dependency list to whoever answers it.** Asking Maven
+  Central which versions of an internal-sounding artifact exist tells Maven Central you use
+  it. For the environments SBOMscope targets that is a real cost, not a theoretical one, and
+  it is the reason the opt-in is per host with the exact URL shown.
 
 ---
 
@@ -593,12 +997,15 @@ number on the panel traceable to the archive it came from.
   than it first appeared — but correctness risk in a security tool is not the place to
   spend effort while a maintained engine does the job.
 
-  **Revisited 2026-07-29, for a narrower job.** Upgrade paths need to answer "which
-  advisories apply to a version the user does not have", which osv-scanner does not take as
-  a question at all. That is not the scanning path and does not replace anything, so the
-  argument above does not reach it. See R4 — the decision here is unchanged for real scans.
-- [ ] **Where version lists come from, and how a candidate is judged** — resolve R4. Blocks
-      Phase 8.
+  **Revisited 2026-07-29, and now happening — for a narrower job.** Upgrade paths need to
+  answer "which advisories apply to a version the user does not have", which osv-scanner does
+  not take as a question at all. That is not the scanning path and replaces nothing, so the
+  argument above does not reach it. Built as Phase 8 Tier 1, scoped to hypotheticals only:
+  **what is installed is still reported by osv-scanner and nothing else**, and if the two
+  ever disagree about a version the user actually has, the scanner is right by definition.
+  Keeping that boundary sharp is what makes the narrow matcher safe.
+- **Where version lists come from, and how a candidate is judged — resolved 2026-07-29.**
+  See R4: judging is offline and solved, enumerating is not and needs an opt-in lookup.
 - **Dependency view rendering — resolved 2026-07-29.** Paths upward, collapsible tree
   downward. See the decision log; the question was malformed as originally written, since it
   assumed one rendering had to serve both directions.
@@ -1207,6 +1614,250 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   answers that once for the whole SBOM while the Inspector has to answer it for one
   component. `scannedAt` is therefore per purl, and null renders as a warning rather than
   as silence.
+- 2026-07-29 — **Remedies are ranked on three properties, not one — and "bump the direct
+  dependency" is not automatically the best.** For `root → A → B → C` with C vulnerable, the
+  fix upstream intended is a newer A that already brings a fixed C, and telling someone to
+  override C is telling them to own a version they never chose. So the remedy has to become
+  real rather than permanently unavailable, which is the least useful state a remedy can be
+  in.
+
+  Ranking direct bumps above overrides as a rule was proposed and **refined rather than
+  taken**, because it hides the property that actually decides correctness:
+
+  - **Route completeness.** Where C is reached by `A → B → C` *and* `D → E → C`, bumping A
+    fixes one route and leaves the other — the finding does not go away. A pin constrains C
+    wherever C appears, so it is route-complete by construction. That is a correctness
+    argument for pinning, not a convenience one, and it means a direct bump can be the
+    *worse* answer while looking like the better one.
+  - **Blast radius.** A patch on A and a major on A are not the same suggestion, and neither
+    is comparable to one pinned line.
+  - **Durability.** An upstream release is maintained by someone else; a pin is a constraint
+    you own until you remember to remove it.
+
+  Suggested remedy is therefore: clears every critical and high **and** fixes every route, at
+  the smallest change size, with ties broken toward the upstream fix. A minimal direct bump
+  usually wins that — the instinct was right for the common case — but it wins by satisfying
+  the criteria rather than by category.
+
+  **Naming the blocker is worth as much as naming the fix.** With resolved trees for A's
+  candidates, "no version of A resolves this" becomes answerable, and so does why: the
+  constraint is B, which has no fixed release. That is the actual next action — open an issue
+  against B — and nothing else in the tool can say it.
+
+  This is unavoidably Tier 2. It needs A's *resolved* tree at each candidate version, after
+  nearest-wins, `dependencyManagement`, BOM imports and exclusions have had their say. That
+  appears in no SBOM of this project and no advisory database, so it is a matter of a data
+  source rather than of trying harder offline.
+- 2026-07-29 — **The advisory index is persisted in the database, not held in memory.**
+  Measuring the in-memory version answered the question it was meant to and then raised a
+  better one: npm cost 5.2 s to build and **~152 MB retained**, and almost all of that memory
+  described the 220,000 packages a given project does not have.
+
+  Three arrangements of an in-memory index were considered — build it after the download,
+  scope it to the packages the uploaded SBOMs mention, or leave it lazy behind a spinner.
+  All three share a defect: **the index dies with the process.** Whatever the trigger, the
+  first question after every restart pays the parse again.
+
+  Persisting it removes that, and the codebase made it far smaller than a bespoke file
+  format would have been: **H2 is already here**, so the index is a table (`osv_index`, V2)
+  and a lookup is an indexed SELECT. That also dissolves the two moving parts the design
+  seemed to need — nothing loads at startup and nothing is augmented when an SBOM is
+  uploaded, because a query *is* the selective read. Neither can be forgotten if neither
+  exists.
+
+  Measured after building it: Maven indexes in **1.6 s** through the API, evaluation is
+  correct across a restart in **283 ms with no re-parse**, and retained memory is now
+  whatever one query holds.
+
+  Three consequences worth carrying:
+
+  - **Being present and being indexed are different states.** An archive copied onto an
+    air-gapped machine is fully scannable — osv-scanner reads it directly and never touches
+    this index — but cannot answer "would this version be clean". Settings shows both and
+    offers **Index** for the gap, because the alternative was telling someone to re-download
+    200 MB they already have.
+  - **The index is keyed to the archive's size and modification time.** A refreshed download
+    invalidates it without anyone remembering to, which is exactly the kind of thing nobody
+    remembers.
+  - **The source row is written last.** A build interrupted halfway leaves rows that nothing
+    considers usable, and the next attempt rebuilds — the same reasoning as downloading to
+    `all.zip.partial` before moving it into place.
+
+  The trade is RAM for disk: Maven's advisories added ~10 MB to the database. npm's will add
+  considerably more and that number has not been taken.
+- 2026-07-29 — **The local matcher is built, and the boundary around it is the design.** It
+  answers one question osv-scanner does not take: which advisories apply to a version the
+  user *does not have*. The scanner reads a document describing what is present, so
+  "would 3.1.5 be clean?" has nowhere to go in it.
+
+  **What is installed is still reported by osv-scanner and nothing else.** If the two ever
+  disagree about a version actually in the SBOM, the scanner is right by definition. The open
+  question that rejected a built-in matcher rejected it as a replacement for the reporting
+  path, where being wrong misreports a real component; this never touches that path, and
+  being wrong here misranks a suggestion. Keeping the boundary sharp is what makes the
+  revival safe, and it is why the matcher lives behind a callback the advice service
+  receives rather than a dependency it holds.
+
+  Two consequences fell out of building it:
+
+  - **Range semantics moved into one place.** `AffectedVersions` is now read by the report
+    parser *and* the matcher. Two implementations of "does this version fall in this range"
+    would drift, and the direction is not neutral: one says an upgrade is clean, the other
+    says it is not.
+  - **The result carries a GHSA rating, never a CVSS score.** OSV stores severity as vector
+    strings only — the numbers on a finding were computed by the scanner — so producing one
+    here would mean owning a CVSS implementation, which this project declined once already
+    and for the same reason. The panel labels it as GHSA's own scale, as everywhere else.
+
+  Measured on the real archive: **891 ms to index 6,860 Maven advisories, 81 ms cached.** The
+  npm archive is 20× larger and has never been indexed, so that cost is a known unknown
+  rather than a solved one.
+- 2026-07-29 — **Scanning becomes automatic; fetching stays on request.** Constraint 2 said
+  "no background jobs, no refresh-on-startup, no refresh-on-upload", and a day of real use
+  found the gap it left: an SBOM you have just uploaded reads *Not scanned* until you press a
+  button whose necessity is not obvious, and the purl cache means most of the answer was
+  already sitting there.
+
+  The constraint was reaching for something narrower than it said. **Downloading an archive
+  and running a scan are not the same act.** A download leaves the machine and is somebody's
+  data transfer; a scan runs a local binary against a file already on disk and sends nothing
+  anywhere. Only the first needs asking. That is the same line constraint 1 draws — what
+  leaves the machine, not what the CPU does — so the two constraints now agree rather than
+  one being a stricter accident.
+
+  So: a newly uploaded SBOM is scanned automatically, and at startup components with no scan
+  record are scanned in the background.
+
+  **Two costs were raised against the startup half and designed around rather than accepted.**
+  It runs *after* the application is serving, so launch is never delayed; and it covers only
+  components lacking a scan record, one SBOM at a time, and does nothing at all where the
+  scanner is unconfigured or its archive absent. Every run is logged, because it starts an
+  external process and that is precisely what the activity log is for.
+
+  The manual re-scan survives. Findings go stale when the archive is refreshed, and re-running
+  analysis deliberately is a different need from filling a gap.
+- 2026-07-29 — **The network stance is framed by what traffic reveals, not by whether traffic
+  happens.** "SBOMscope's own network access is exclusively user-triggered cache refreshes"
+  was written a few hours earlier and reads as a strict no-calls claim, which it is not:
+  the OSV archives are fetched by us, with our own HTTP client. The README version —
+  *SBOMscope does not go and ask* — was worse, since it is simply false.
+
+  Softer wording would have papered over it. The line that actually holds is **what the
+  traffic discloses about the user**, and it separates three categories cleanly:
+
+  1. **Executable code — never fetched.** The user places osv-scanner. A supply-chain tool
+     that downloads and runs someone else's binary has the wrong default.
+  2. **Bulk public data — fetched on request.** Requesting *every* Maven advisory says
+     nothing about which libraries you have. That is why it can be an archive rather than a
+     series of questions, and why it can travel on a USB stick to an air-gapped machine.
+  3. **Anything about the user's own dependencies — delegated, never asked.** "Which versions
+     of `com.acme:internal-billing` exist" identifies that artifact as one you use. Maven asks
+     it, through their mirror, with their credentials, over a channel their build already
+     uses daily — so no new disclosure is created and no credential is held here.
+
+  This is also the principled version of the reversal below: the rejected API design was a
+  category-3 question being answered by category-2 means. Stating the rule that way makes
+  the same mistake harder to make again than "do not call deps.dev" would.
+- 2026-07-29 — **Upgrade paths drive the user's build tool, and the outbound-API decision
+  taken this morning is reversed.** Both changes came from one observation: asking Maven is
+  better than asking a registry.
+
+  The API design required knowing a mirror URL and credentials, which led me to propose
+  reading `mvn help:effective-settings`. Challenged on why we would need the user's Maven
+  configuration at all, the answer turned out to be that we would not — **Maven reads its own
+  settings when it runs.** The requirement was manufactured by choosing to fetch metadata
+  ourselves. Removing that choice removed it, and produced a better mechanism: a probe POM
+  declaring a *version range*, resolved by `dependency:tree`, which returns the version Maven
+  picked *and* the tree it resolves. Two problems, one invocation, core plugins only.
+
+  **So deps.dev is dropped and constraint 1 is narrowed back to its original claim.**
+  SBOMscope's own network access is again exclusively the OSV download. Delegated access —
+  Maven fetching on the user's behalf, through their mirror, with their credentials — is
+  declared as its own category rather than pretended away, since we cause those calls even
+  though we do not make them. This is a stronger position than the one it replaces and it
+  costs nothing: the tool route is *better* in a restricted environment, not merely
+  acceptable.
+
+  Decisions taken, in order, and the reasoning that is not obvious from the outcome:
+
+  - **Isolated local repository**, never `~/.m2`. A failed probe leaves `.lastUpdated`
+    markers that can make a later real build refuse to retry. Nearly free, since
+    `dependency:tree` resolves POMs and not jars.
+  - **Version enumeration reads `maven-metadata.xml` out of our own repo**, which Maven puts
+    there while resolving a range. Keeps "we never call out" literally true.
+  - **A calibration probe** at the current version, compared against the SBOM's resolved
+    version, before any candidate is trusted. This is what makes the SBOM-only case honest
+    rather than optimistic: matching proves the isolated model reproduces their build for
+    that chain; differing proves something is overriding it and sends the reader to the pin.
+  - **`dependencyManagement` lifted in when a workspace exists**, isolated when it does not.
+  - **Tiers first, then refine.** And explicitly *not* a binary search: "brings a fixed C" is
+    not monotonic in the version, because a newer release can carry a new advisory, so an
+    ordered search would confidently report an earliest that is not one.
+- 2026-07-29 — **Two logs, and the UI tails the structured one.** Probing produces reasoning
+  worth showing — *4.2.0 resolves jackson-databind 3.1.6, clean* — which turns the log from
+  an event feed into the audit trail behind a recommendation. That matters more here than
+  usual: this project's recurring worry is advice nobody can check, and probe results are the
+  working shown.
+
+  `sbomscope.log` is the full verbose record for diagnosing; `activity.jsonl` holds notable
+  events as one JSON object per line and is what the UI reads. Splitting them answers the
+  objection to tailing one's own log — the viewer never parses prose, because the file it
+  reads was written to be read back. Notable means anything touching the network, anything
+  running an external process, anything changing stored data, and every probe verdict.
+- 2026-07-29 — **Outbound lookups become possible, off by default, one host at a time.
+  Superseded the same day — see the build-tool decision above.**
+  Constraint 1 previously allowed the network *only* for cache refreshes. Upgrade paths need
+  something no cache can hold — the list of versions a library actually has — so the
+  constraint is broadened rather than worked around.
+
+  **What is preserved is the guarantee, not the mechanism.** Offline still has to produce an
+  honest answer; what changes is that "honest" is allowed to mean *narrower*. With every
+  switch off the panel names the fix versions the advisories carry, names who pulls the
+  library in, and says which questions it cannot answer — it does not compute a "latest
+  version" from a biased set and present it as the latest. That distinction is the whole
+  point: this project tolerates staleness because a stale finding is still a real finding,
+  and refuses guessing because a truncated version list omits the release that fixes the
+  problem.
+
+  **Per host rather than one master switch.** Two levels of state to reason about is one too
+  many, and the question a security-conscious reader actually asks is not "which feature" but
+  "what leaves this machine, and to whom". Each entry shows its exact URL, matching how the
+  OSV archive panel already works. The default is every switch off, which is what keeps
+  "offline by default" a fact about the shipped product rather than a claim about intent.
+
+  **A lookup is a disclosure**, and the UI has to say so. Asking Maven Central which versions
+  of an artifact exist tells Maven Central that you use it — for an internal-sounding
+  coordinate in a locked-down environment that is a real cost, and precisely the sort of
+  thing users of this product are employed to care about.
+- 2026-07-29 — **Upgrade paths are about remedies, not versions.** The phase was specified as
+  "which version should I move to", and for most findings that question has no answer at all:
+  **you cannot upgrade what you do not declare.** The advisory says 3.1.5 fixes
+  `jackson-databind`, and your `pom.xml` has never mentioned jackson. "Upgrade to 3.1.5" is
+  then a true statement and a useless one.
+
+  Four remedies instead, of which a version bump is only the first: upgrade it (if you
+  declare it), **pin it** (Maven `dependencyManagement`, npm `overrides`), bump whatever
+  pulls it in, or exclude it.
+
+  **Pinning is the discovery.** It is precise, it is a snippet you can paste, it works
+  whatever the ancestor does — and it needs nothing SBOMscope does not already hold, since
+  the fixed version comes from the advisory and the ecosystem from the purl. For a transitive
+  finding it is very often the right answer, and the earlier design had no concept of it.
+  Naming the declaring ancestor is free too, now that Phase 7 computes the routes.
+
+  Bumping the ancestor is the remedy that genuinely requires the network: whether
+  `spring-boot-starter-json 4.2.0` ships a fixed jackson means reading *its* dependencies at
+  that version, which appears in no SBOM of your project and no advisory database.
+
+  Excluding is the remedy that requires **Phase 9**, and is not to be recommended without it.
+  A recommendation to delete a dependency the code turns out to use is worse than no
+  recommendation, so until usage detection exists it is listed as an option with its caveat
+  and never as the suggestion. That dependency runs the other way from how the phases were
+  ordered, and is the first argument for moving workspace usage up.
+
+  A single suggested remedy is offered with its reasoning and its inputs beside the
+  alternatives — not a bare verdict. Constraint 6 is untouched: this is derived from data,
+  not a judgment field a user types into.
 - 2026-07-29 — **The Inspector's panels are tabs, and the finder is a fixed column beside
   them.** Stacked, four panels made the page a scroll where only one of them is ever the
   reason you came. Tabs hold the component's identity and the finder still while the answer

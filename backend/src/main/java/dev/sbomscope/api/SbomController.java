@@ -29,6 +29,8 @@ import dev.sbomscope.sbom.StoredSbom;
 import dev.sbomscope.scanner.FindingQuery;
 import dev.sbomscope.scanner.SbomSeverity;
 import dev.sbomscope.scanner.ScanService;
+import dev.sbomscope.scanner.UpgradeAdvice;
+import dev.sbomscope.scanner.UpgradeAdviceService;
 
 @RestController
 @RequestMapping("/api/sboms")
@@ -37,11 +39,14 @@ class SbomController {
     private final SbomService service;
     private final ScanService scans;
     private final DependencyGraphService graphs;
+    private final UpgradeAdviceService advice;
 
-    SbomController(SbomService service, ScanService scans, DependencyGraphService graphs) {
+    SbomController(SbomService service, ScanService scans, DependencyGraphService graphs,
+                   UpgradeAdviceService advice) {
         this.service = service;
         this.scans = scans;
         this.graphs = graphs;
+        this.advice = advice;
     }
 
     record SbomResponse(
@@ -217,6 +222,29 @@ class SbomController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
         }
         return graphs.graphFor(id, purl, scans.vulnerablePurls(id));
+    }
+
+    /**
+     * What to change about this component, and where.
+     *
+     * <p>Offline by construction: it reads the advisories' own fix versions and the
+     * dependency graph, both already held. Nothing here reaches the network, which is the
+     * whole reason this tier could be built before the outbound-lookup settings exist.
+     */
+    @GetMapping("/{id}/component/upgrade")
+    UpgradeAdvice upgrade(@PathVariable UUID id, @RequestParam("purl") String purl) {
+        if (service.findById(id).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
+        }
+        StoredComponent component = service.findComponentByPurl(id, purl)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "That component is not in this SBOM"));
+
+        return advice.adviseFor(
+                component,
+                scans.rowsForComponent(id, purl),
+                graphs.graphFor(id, purl, scans.vulnerablePurls(id)),
+                scans.evaluatorFor(component));
     }
 
     /**

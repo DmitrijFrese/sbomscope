@@ -196,6 +196,78 @@ export function fetchComponentGraph(sbomId: string, purl: string): Promise<Compo
   );
 }
 
+/** Change the version you declare, force one you don't, move the parent, or drop it. */
+export type RemedyKind = 'UPGRADE' | 'PIN' | 'BUMP_ANCESTOR' | 'EXCLUDE';
+
+export const REMEDY_LABELS: Record<RemedyKind, string> = {
+  UPGRADE: 'Upgrade it',
+  PIN: 'Pin the version',
+  BUMP_ANCESTOR: 'Bump what pulls it in',
+  EXCLUDE: 'Exclude it',
+};
+
+export interface Remedy {
+  kind: RemedyKind;
+  /** False when it cannot be offered here — `note` says why, which beats omitting it. */
+  available: boolean;
+  target: string | null;
+  /** Ready to paste, or null when this ecosystem has no known way to do it. */
+  snippet: string | null;
+  /** Advisories whose own fix version this reaches. */
+  clears: string[];
+  /** Advisories it cannot address, because they name no fix at all. */
+  leaves: string[];
+  note: string | null;
+}
+
+export interface AdvisoryFix {
+  osvId: string;
+  cveId: string | null;
+  severityScore: number | null;
+  /** Null when the advisory offers no fix on this component's branch. */
+  fixedVersion: string | null;
+}
+
+export interface UpgradeAdvice {
+  currentVersion: string | null;
+  scope: DependencyScope;
+  /** Highest fix version the advisories name, so one pin addresses all of them. */
+  pinTarget: string | null;
+  advisories: AdvisoryFix[];
+  /** The dependencies your own code declares that lead here. */
+  declaredBy: string[];
+  remedies: Remedy[];
+  /** Null when nothing can honestly be suggested. */
+  suggested: RemedyKind | null;
+  /**
+   * The target was checked against the local OSV archives. **Read this before
+   * `targetAdvisories`**: an empty list means "clean" only when this is true, and "nobody
+   * looked" otherwise.
+   */
+  targetEvaluated: boolean;
+  /** What the target version itself carries. GHSA ratings, not CVSS scores — see below. */
+  targetAdvisories: AdvisoryHit[];
+}
+
+/**
+ * An advisory affecting a version you do not have.
+ *
+ * `rating` is the advisory's own GHSA scale (LOW/MODERATE/HIGH/CRITICAL), never a CVSS
+ * score: OSV stores severity as vector strings, and the numbers elsewhere in SBOMscope were
+ * computed by the scanner, which only ran against what is installed.
+ */
+export interface AdvisoryHit {
+  osvId: string;
+  cveId: string | null;
+  rating: string | null;
+}
+
+export function fetchUpgradeAdvice(sbomId: string, purl: string): Promise<UpgradeAdvice> {
+  return request<UpgradeAdvice>(
+    `/sboms/${sbomId}/component/upgrade?purl=${encodeURIComponent(purl)}`,
+  );
+}
+
 export function uploadSbom(file: File, workspacePath?: string): Promise<Sbom> {
   const form = new FormData();
   form.append('file', file);
@@ -230,18 +302,38 @@ export interface DatabaseStatus {
   path: string;
   /** Exactly what gets fetched. */
   sourceUrl: string;
+  /**
+   * Parsed into the upgrade-path index. Separate from `present`: an archive copied across by
+   * hand is on disk and fully scannable but cannot answer "would this version be clean".
+   * **Scanning never needs this** — osv-scanner reads the archive itself.
+   */
+  indexed: boolean;
 }
 
 export type DownloadState = 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
+/** Fetching the archive and making it answerable are separate jobs with separate progress. */
+export type DownloadPhase = 'DOWNLOAD' | 'INDEX';
+
 export interface DownloadProgress {
   ecosystem: string | null;
   state: DownloadState;
+  phase: DownloadPhase;
   bytesDownloaded: number;
   /** -1 when the server sent no Content-Length. */
   totalBytes: number;
+  /** Advisories read while indexing. Counts up with no ceiling — the archive states no total. */
+  advisoriesIndexed: number;
   message: string | null;
   startedAt: string | null;
+}
+
+/** Indexes an archive already on disk, without re-downloading it. */
+export function startDatabaseIndexing(ecosystem: string): Promise<DownloadProgress> {
+  return request<DownloadProgress>(
+    `/settings/scanner/database/index?ecosystem=${encodeURIComponent(ecosystem)}`,
+    { method: 'POST' },
+  );
 }
 
 export interface ScannerStatus {
