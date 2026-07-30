@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { SCOPES, SCOPE_FILTER_LABELS } from '../api/client';
+import type { DependencyScope } from '../api/client';
 import { COLUMNS, COMPACT_DEFAULT } from '../findings/columns';
 import type { ColumnId } from '../findings/columns';
 import { MoreIcon } from './icons';
@@ -10,15 +12,25 @@ interface ViewOptionsMenuProps {
   /** Which columns Compact shows. Details always shows everything. */
   compact: ColumnId[];
   onColumnsChange: (columns: ColumnId[]) => void;
+  /** Which dependency scopes the table is showing. All three by default. */
+  scopes: DependencyScope[];
+  onScopeToggle: (scope: DependencyScope) => void;
 }
 
 /**
- * How the table is displayed: density, and which columns Compact carries.
+ * How the table is displayed: density, which columns Compact carries, and which dependency
+ * scopes are shown.
  *
- * <p>Both used to sit inline in the controls row, between the severity chips and the export
- * button — which put "how it looks" in the middle of "which rows" and then an action, three
- * unrelated jobs reading as one strip. Collapsed into a single menu on the actions side, so
- * the row divides cleanly: filtering on the left, things you do to the result on the right.
+ * <p>The first two used to sit inline in the controls row, between the severity chips and the
+ * export button — which put "how it looks" in the middle of "which rows" and then an action,
+ * three unrelated jobs reading as one strip. Collapsed into a single menu on the actions side,
+ * so the row divides cleanly: filtering on the left, things you do to the result on the right.
+ *
+ * <p><b>Scope is a filter and still lives here rather than in the toolbar</b>, which is the
+ * one deliberate exception to that division. The toolbar already wraps at 1024px carrying the
+ * severity chips alone, and a second chip row would undo the tidying the previous paragraph
+ * describes. It is also the narrower control of the two: severity decides whether a row is
+ * worth reading at all, scope decides what you could do about it.
  *
  * <p>Opens on click, closes on Escape or outside click, like the export menu beside it.
  */
@@ -27,6 +39,8 @@ export function ViewOptionsMenu({
   onDetailsChange,
   compact,
   onColumnsChange,
+  scopes,
+  onScopeToggle,
 }: ViewOptionsMenuProps) {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
@@ -89,6 +103,26 @@ export function ViewOptionsMenu({
                 Details
               </button>
             </div>
+          </fieldset>
+
+          <fieldset className="view-options__group">
+            <legend className="view-options__legend">Dependency scope</legend>
+            <ul className="column-picker__list">
+              {SCOPES.map((scope) => (
+                <li key={scope}>
+                  <label className="column-picker__item">
+                    <input
+                      type="checkbox"
+                      checked={scopes.includes(scope)}
+                      onChange={() => onScopeToggle(scope)}
+                    />
+                    <span>
+                      <span className="column-picker__label">{SCOPE_FILTER_LABELS[scope]}</span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
           </fieldset>
 
           <fieldset className="view-options__group">

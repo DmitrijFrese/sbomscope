@@ -120,6 +120,7 @@ class ScanController {
             @RequestParam(value = "scope", defaultValue = "all") String scope,
             @RequestParam(value = "filter", required = false) String filter,
             @RequestParam(value = "severity", required = false) List<String> severity,
+            @RequestParam(value = "scope_filter", required = false) List<String> scopeFilter,
             @RequestParam(value = "column", required = false) List<String> column,
             @RequestParam(value = "limit", required = false) Integer limit,
             @RequestParam(value = "offset", required = false) Integer offset) throws IOException {
@@ -127,8 +128,12 @@ class ScanController {
         StoredSbom sbom = sboms.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM"));
 
+        // Named scope_filter, not scope: `scope` is already this endpoint's visible/all
+        // selector, and two meanings on one parameter name is how an export silently
+        // stops matching the screen it came from.
         FindingQuery onScreen = new FindingQuery(sort, isAscending(direction), filter,
-                FindingQuery.SeverityBand.parse(severity), limit, offset);
+                FindingQuery.SeverityBand.parse(severity),
+                FindingQuery.parseScopes(scopeFilter), limit, offset);
 
         // "visible" reproduces the screen exactly; "all" keeps the ordering and the
         // severity selection but drops the text filter and paging.
@@ -178,13 +183,15 @@ class ScanController {
             @RequestParam(value = "direction", defaultValue = "desc") String direction,
             @RequestParam(value = "filter", required = false) String filter,
             @RequestParam(value = "severity", required = false) List<String> severity,
+            @RequestParam(value = "scope", required = false) List<String> scope,
             @RequestParam(value = "limit", required = false) Integer limit,
             @RequestParam(value = "offset", required = false) Integer offset) {
 
         requireSbom(id);
 
         FindingQuery query = new FindingQuery(sort, isAscending(direction), filter,
-                FindingQuery.SeverityBand.parse(severity), limit, offset);
+                FindingQuery.SeverityBand.parse(severity),
+                FindingQuery.parseScopes(scope), limit, offset);
 
         return new ScanStatusResponse(
                 scans.lastScannedAt(id).orElse(null),

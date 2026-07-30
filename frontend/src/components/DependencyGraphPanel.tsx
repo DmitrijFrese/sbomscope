@@ -17,7 +17,16 @@ function inspectHref(node: GraphNode): string | null {
  * <p>Every node is a link to itself, because the question that follows "who pulls this in"
  * is almost always about one of the answers.
  */
-function Node({ node, current }: { node: GraphNode; current?: boolean }) {
+function Node({
+  node,
+  current,
+  direct,
+}: {
+  node: GraphNode;
+  current?: boolean;
+  /** The step this module actually declares — the one whose version can be changed. */
+  direct?: boolean;
+}) {
   const href = inspectHref(node);
   const label = (
     <>
@@ -27,7 +36,13 @@ function Node({ node, current }: { node: GraphNode; current?: boolean }) {
   );
 
   return (
-    <span className="graph-node" data-vulnerable={node.vulnerable} data-current={!!current}>
+    <span
+      className="graph-node"
+      data-vulnerable={node.vulnerable}
+      data-current={!!current}
+      data-direct={!!direct}
+      title={direct ? 'Declared by this module — the version you can change' : undefined}
+    >
       {href && !current ? <Link to={href}>{label}</Link> : label}
       {node.vulnerable && (
         <span className="graph-node__flag" title="Has known vulnerabilities">
@@ -38,18 +53,40 @@ function Node({ node, current }: { node: GraphNode; current?: boolean }) {
   );
 }
 
-/** module → … → component, read left to right. */
+/**
+ * One route from a module down to the component, read left to right.
+ *
+ * <p><b>The module itself is dropped.</b> The backend sends each route module → … →
+ * component inclusive, and the heading directly above already names the module — repeating it
+ * as step 1 of every route spends the widest column on the word the reader has just read.
+ *
+ * <p><b>The first remaining step is emphasised</b>, because it is the one the module declares
+ * and therefore the only version on the line the reader can actually change. Weight rather
+ * than colour: colour already means severity here, and the name is already a link.
+ */
 function Route({ route, targetPurl }: { route: GraphNode[]; targetPurl: string }) {
+  const steps = route.slice(1);
+
+  // Defensive: a route consisting only of the module would leave nothing to draw. Reachable
+  // in principle if a module ever reached itself; targetIsOwnCode covers the real case.
+  if (steps.length === 0) {
+    return null;
+  }
+
   return (
     <li className="route">
-      {route.map((step, index) => (
+      {steps.map((step, index) => (
         <span key={`${step.bomRef}-${index}`} className="route__step">
           {index > 0 && (
             <span className="route__arrow" aria-hidden="true">
               →
             </span>
           )}
-          <Node node={step} current={step.purl === targetPurl && index === route.length - 1} />
+          <Node
+            node={step}
+            current={step.purl === targetPurl && index === steps.length - 1}
+            direct={index === 0}
+          />
         </span>
       ))}
     </li>

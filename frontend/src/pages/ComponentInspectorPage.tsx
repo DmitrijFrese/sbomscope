@@ -406,10 +406,10 @@ export function ComponentInspectorPage() {
           {component ? (
             <section className="panel component-identity">
               <h2 className="panel__title">
-                {component.registryUrl ? (
+                {component.registryArtifactUrl ? (
                   <a
                     className="mono"
-                    href={component.registryUrl}
+                    href={component.registryArtifactUrl}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -421,7 +421,21 @@ export function ComponentInspectorPage() {
               </h2>
 
               <div className="component-identity__facts">
-                <span className="mono">{component.version ?? 'no version'}</span>
+                {/* The artifact page above, this exact version here — a version-specific
+                    page does not exist for every build, and the name must stay reachable
+                    when it does not. */}
+                {component.version && component.registryVersionUrl ? (
+                  <a
+                    className="mono"
+                    href={component.registryVersionUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {component.version}
+                  </a>
+                ) : (
+                  <span className="mono">{component.version ?? 'no version'}</span>
+                )}
                 {component.root ? (
                   <span className="badge badge--root">root</span>
                 ) : (

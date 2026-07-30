@@ -25,6 +25,7 @@ class FindingsExcelExporterTest {
     // Component, Version, Scope, OSV ID, GHSA rating, CVE ID, Severity, CVSS version,
     // CVSS vector, Fixed in, Published, Summary, Package URL.
     private static final int COMPONENT = 0;
+    private static final int VERSION = 1;
     private static final int SCOPE = 2;
     private static final int OSV_ID = 3;
     private static final int GHSA_RATING = 4;
@@ -88,13 +89,20 @@ class FindingsExcelExporterTest {
     }
 
     @Test
-    void writesTheComponentAsAWorkingHyperlinkToTheRegistry() throws Exception {
+    void writesTheComponentAndTheVersionAsLinksToDifferentDepths() throws Exception {
+        // The name reaches the artifact page, which resolves whenever the artifact exists;
+        // the version cell carries the version-specific page, which for a vendor-patched
+        // build may not exist at all. Splitting them is the whole point of B2, and the
+        // export shares RegistryLinks with the view precisely so it cannot be split in
+        // only one of the two.
         try (Workbook workbook = open(exportAll(List.of(withCve), Instant.now()))) {
-            var componentCell = workbook.getSheet("Findings").getRow(1).getCell(COMPONENT);
+            var row = workbook.getSheet("Findings").getRow(1);
 
-            assertThat(componentCell.getStringCellValue())
+            assertThat(row.getCell(COMPONENT).getStringCellValue())
                     .isEqualTo("tools.jackson.core:jackson-databind");
-            assertThat(componentCell.getHyperlink().getAddress())
+            assertThat(row.getCell(COMPONENT).getHyperlink().getAddress())
+                    .isEqualTo("https://central.sonatype.com/artifact/tools.jackson.core/jackson-databind");
+            assertThat(row.getCell(VERSION).getHyperlink().getAddress())
                     .isEqualTo("https://central.sonatype.com/artifact/tools.jackson.core/jackson-databind/3.1.4");
         }
     }
@@ -107,8 +115,32 @@ class FindingsExcelExporterTest {
                 new BigDecimal("7.1"), "HIGH", null, "CVSS_V3", "8.3.0", null);
 
         try (Workbook workbook = open(exportAll(List.of(npmRow), Instant.now()))) {
-            assertThat(workbook.getSheet("Findings").getRow(1).getCell(COMPONENT).getHyperlink().getAddress())
+            var row = workbook.getSheet("Findings").getRow(1);
+
+            assertThat(row.getCell(COMPONENT).getHyperlink().getAddress())
+                    .isEqualTo("https://www.npmjs.com/package/react-router");
+            assertThat(row.getCell(VERSION).getHyperlink().getAddress())
                     .isEqualTo("https://www.npmjs.com/package/react-router/v/7.18.1");
+        }
+    }
+
+    @Test
+    void leavesBothCellsUnlinkedWhereThePurlNamesAPrivateRepository() throws Exception {
+        // No link beats a wrong one: Central would 404 for a vendor build, and a private
+        // host is unreachable for whoever reads the spreadsheet. The text still stands.
+        FindingRow vendorRow = new FindingRow(
+                "pkg:maven/com.acme/internal-billing@1.2.3.acme-4"
+                        + "?repository_url=https://artifactory.acme.internal/libs-release",
+                "com.acme:internal-billing", "1.2.3.acme-4", false, DependencyScope.TRANSITIVE,
+                "GHSA-aaaa-bbbb-cccc", null, "summary", null, null, null, null, null, null);
+
+        try (Workbook workbook = open(exportAll(List.of(vendorRow), Instant.now()))) {
+            var row = workbook.getSheet("Findings").getRow(1);
+
+            assertThat(row.getCell(COMPONENT).getStringCellValue()).isEqualTo("com.acme:internal-billing");
+            assertThat(row.getCell(COMPONENT).getHyperlink()).isNull();
+            assertThat(row.getCell(VERSION).getStringCellValue()).isEqualTo("1.2.3.acme-4");
+            assertThat(row.getCell(VERSION).getHyperlink()).isNull();
         }
     }
 
@@ -260,7 +292,7 @@ class FindingsExcelExporterTest {
         FindingQuery narrowed = new FindingQuery(
                 FindingQuery.SortField.COMPONENT, true, "jackson",
                 EnumSet.of(FindingQuery.SeverityBand.CRITICAL, FindingQuery.SeverityBand.HIGH),
-                20, 0);
+                EnumSet.of(DependencyScope.DIRECT), 20, 0);
 
         try (Workbook workbook = open(exporter.export(sbom, List.of(withCve), Instant.now(),
                 ExportColumn.all(), ExportDescription.of(true, narrowed, ExportColumn.all())))) {
@@ -270,6 +302,10 @@ class FindingsExcelExporterTest {
             assertThat(about).contains("Component, ascending");
             assertThat(about).contains("Critical, High");
             assertThat(about).contains("jackson");
+            // A workbook narrowed to one scope holds a fraction of the findings and would
+            // otherwise look identical to a complete one.
+            assertThat(about).contains("Scope filter");
+            assertThat(about).contains("Direct");
         }
     }
 

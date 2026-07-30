@@ -4,6 +4,8 @@ import java.util.Collection;
 import java.util.EnumSet;
 import java.util.Set;
 
+import dev.sbomscope.sbom.DependencyScope;
+
 /**
  * How a findings list should be selected, ordered and windowed.
  *
@@ -16,6 +18,12 @@ public record FindingQuery(
         boolean ascending,
         String filter,
         Set<SeverityBand> severities,
+        /**
+         * Which dependency scopes to show. Defaults to all three — unlike severity, where the
+         * default deliberately hides clean rows, there is no scope a reader is normally not
+         * interested in.
+         */
+        Set<DependencyScope> scopes,
         Integer limit,
         Integer offset) {
 
@@ -24,22 +32,44 @@ public record FindingQuery(
         severities = severities == null || severities.isEmpty()
                 ? vulnerableBands()
                 : EnumSet.copyOf(severities);
+        scopes = scopes == null || scopes.isEmpty()
+                ? EnumSet.allOf(DependencyScope.class)
+                : EnumSet.copyOf(scopes);
     }
 
     /** Default view: vulnerabilities only, most severe first. */
     public static FindingQuery defaults() {
-        return new FindingQuery(SortField.SEVERITY, false, null, null, null, null);
+        return new FindingQuery(SortField.SEVERITY, false, null, null, null, null, null);
     }
 
     /** Every row including clean components — used for whole-inventory exports. */
     public static FindingQuery everything() {
         return new FindingQuery(SortField.SEVERITY, false, null,
-                EnumSet.allOf(SeverityBand.class), null, null);
+                EnumSet.allOf(SeverityBand.class), null, null, null);
     }
 
     /** Same selection, but every matching row rather than one page. */
     public FindingQuery withoutPaging() {
-        return new FindingQuery(sort, ascending, filter, severities, null, null);
+        return new FindingQuery(sort, ascending, filter, severities, scopes, null, null);
+    }
+
+    public boolean selectsEveryScope() {
+        return scopes.size() == DependencyScope.values().length;
+    }
+
+    /** Parses the scope names a request carries, falling back to all three. */
+    public static Set<DependencyScope> parseScopes(Collection<String> values) {
+        if (values == null || values.isEmpty()) {
+            return EnumSet.allOf(DependencyScope.class);
+        }
+        Set<DependencyScope> parsed = EnumSet.noneOf(DependencyScope.class);
+        for (String value : values) {
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            parsed.add(DependencyScope.valueOf(value.trim().toUpperCase()));
+        }
+        return parsed.isEmpty() ? EnumSet.allOf(DependencyScope.class) : parsed;
     }
 
     /**
@@ -50,7 +80,7 @@ public record FindingQuery(
      * a sudden reappearance of everything they filtered out.
      */
     public FindingQuery unfiltered() {
-        return new FindingQuery(sort, ascending, null, severities, null, null);
+        return new FindingQuery(sort, ascending, null, severities, scopes, null, null);
     }
 
     public boolean selectsEverySeverity() {
@@ -62,7 +92,21 @@ public record FindingQuery(
          *  reader scanning an alphabetical list expects. */
         COMPONENT,
         /** By numeric CVSS score — the ordering that reflects risk rather than spelling. */
-        SEVERITY
+        SEVERITY,
+        /**
+         * By the version an advisory names as the fix, ordered as a version rather than as a
+         * string — {@code 1.9.0} before {@code 1.10.0}, which lexical ordering gets backwards.
+         *
+         * <p>Rows with no fix sort last in <em>both</em> directions: "no fix" is not a version
+         * and must not answer "which fix is furthest away".
+         */
+        FIXED_VERSION,
+        /**
+         * By dependency scope, ranked APPLICATION, DIRECT, TRANSITIVE — how directly you can
+         * do something about it, which is not the order the words fall in alphabetically by
+         * anything more than coincidence.
+         */
+        SCOPE
     }
 
     /** Bands with an actual vulnerability behind them, i.e. everything except CLEAN. */

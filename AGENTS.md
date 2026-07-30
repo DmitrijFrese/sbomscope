@@ -284,6 +284,26 @@ Verify UI work in the browser rather than assuming: check the console for errors
 the rendered DOM. Note that synthetic clicks from automation tooling do not always
 register with React — dispatching a real DOM `click()` is more reliable.
 
+**Anything driven by the rendering loop does not run in a hidden browser tab, and an automation
+pane usually counts as hidden.** `requestAnimationFrame` callbacks and `ResizeObserver`
+deliveries simply never fire while `document.visibilityState` is `'hidden'` — verified directly
+here, an explicit width change produced zero observer callbacks. Two consequences. Code that
+positions something must not depend on them: `useLayoutEffect` runs regardless of visibility and
+is the right primitive for measure-then-adjust. And when a check like that appears to fail, test
+whether the *mechanism* fires at all before concluding the code is wrong — an hour went into a
+correct implementation that could not be observed.
+
+**The same applies to `prefers-color-scheme`.** Switching the pane's emulated colour scheme
+moves `matchMedia(...).matches` but fires **no `change` event** — a freshly registered listener
+recorded zero events across a flip the query itself reported. Reload under each scheme to check
+what a component reads at mount; live tracking cannot be observed here at all. Note also that
+`window.matchMedia()` returns a **new** `MediaQueryList` each call, so dispatching a synthetic
+event on your own instance never reaches the listener the component registered.
+
+**Check that an activation actually changed something before concluding a handler is broken.**
+Two "bugs" in one session were tests clicking an element that was already active, so the state
+never changed, so the effect never re-ran. Assert the precondition, not just the outcome.
+
 **Hard-refresh after rebuilding, or you will verify the previous build.** The jar serves the
 bundle as static content and the browser caches `index.html`; a plain reload can render the
 old UI while reporting success. A cache-busting query string is enough.
@@ -350,6 +370,22 @@ the severity summary went through two designs before the numbers showed which on
 - **The view and the export share one query path** (`FindingQuery` → SQL). If you add
   sorting or filtering, add it there rather than in a second implementation, or an
   exported spreadsheet will stop matching the screen it came from.
+
+  Two traps that only appear once you do. **`SELECT DISTINCT` rejects an `ORDER BY` expression
+  that is not in the result** — adding `FIXED_VERSION` made the findings endpoint answer 500 for
+  one value of one parameter with the whole suite green, so `FindingSortTest` now walks
+  `SortField.values()` across both directions and both hand-assembled statements. And **the
+  export endpoint already uses `scope`** for its visible/all selector, so the dependency-scope
+  filter travels as `scope_filter` there; reusing the name would have let `exportUrl` overwrite
+  the filter silently.
+
+- **Sorting by a version needs a stored key, not a comparator.** H2 orders `1.10.0` before
+  `1.9.0`. `VersionOrder.sortKey` builds the key from the comparator's own parse — not a helper
+  beside it, because "one reading of what a version is" is the whole requirement — and
+  `VersionSortKeyTest` asserts the two agree across every version in the fixtures. Adding a
+  column like this to an existing table also needs a **backfill**: a null key sorts as "no fix",
+  which is a false statement about an advisory rather than a wrong position, and it cannot be
+  done in SQL without reimplementing the parse there.
 
 - **A local Maven repository does not cache `maven-metadata.xml`.** It caches metadata
   **per remote repository**, named after the repository id — `maven-metadata-central.xml`

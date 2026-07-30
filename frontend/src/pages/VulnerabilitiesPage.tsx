@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import {
+  SCOPES,
   SCOPE_LABELS,
   SEVERITY_BANDS,
   SEVERITY_LABELS,
@@ -9,7 +10,14 @@ import {
   fetchFindings,
   runScan,
 } from '../api/client';
-import type { FindingQuery, FindingRow, ScanStatus, SeverityBand, SortField } from '../api/client';
+import type {
+  DependencyScope,
+  FindingQuery,
+  FindingRow,
+  ScanStatus,
+  SeverityBand,
+  SortField,
+} from '../api/client';
 import { ExportMenu } from '../components/ExportMenu';
 import { Pagination } from '../components/Pagination';
 import { ScanProgress } from '../components/ScanProgress';
@@ -35,6 +43,9 @@ const DEFAULT_QUERY: FindingQuery = {
   // Opens on what needs attention; tick "No vulnerabilities" to bring the rest of the
   // inventory into the same table.
   severities: VULNERABLE_BANDS,
+  // All three by default. Severity opens narrowed because most rows are not worth reading;
+  // there is no scope that is normally not worth reading.
+  scopes: SCOPES,
   pageSize: 20,
   page: 0,
 };
@@ -54,6 +65,10 @@ function reviveQuery(stored: FindingQuery): FindingQuery {
       Array.isArray(stored.severities) && stored.severities.length > 0
         ? stored.severities
         : VULNERABLE_BANDS,
+    // Written by a build before B9 existed, so absent rather than wrong — and an empty
+    // selection would render an empty table for the same reason severities cannot be empty.
+    scopes:
+      Array.isArray(stored.scopes) && stored.scopes.length > 0 ? stored.scopes : SCOPES,
     pageSize: PAGE_SIZES.includes(stored.pageSize) ? stored.pageSize : DEFAULT_QUERY.pageSize,
     page: 0,
   };
@@ -78,11 +93,15 @@ function TruncatedCell({ value, className }: { value: string | null; className?:
 /** One cell, chosen by column id. Kept beside the column list it switches over. */
 function renderCell(column: ColumnId, row: FindingRow) {
   switch (column) {
+    // The two cells link to different depths on purpose: the artifact page resolves
+    // whenever the artifact exists, the version page may not exist at all for a
+    // vendor-patched build. A reader who lands on the artifact page can find their
+    // version; one who lands on a 404 cannot.
     case 'component':
       return (
         <>
-          {row.registryUrl ? (
-            <a className="mono" href={row.registryUrl} target="_blank" rel="noreferrer">
+          {row.registryArtifactUrl ? (
+            <a className="mono" href={row.registryArtifactUrl} target="_blank" rel="noreferrer">
               {row.coordinates}
             </a>
           ) : (
@@ -91,7 +110,16 @@ function renderCell(column: ColumnId, row: FindingRow) {
         </>
       );
     case 'version':
-      return <span className="mono">{row.version ?? '—'}</span>;
+      if (!row.version) {
+        return <span className="mono">—</span>;
+      }
+      return row.registryVersionUrl ? (
+        <a className="mono" href={row.registryVersionUrl} target="_blank" rel="noreferrer">
+          {row.version}
+        </a>
+      ) : (
+        <span className="mono">{row.version}</span>
+      );
     // "root" for the component the document describes; it is an application component, but
     // saying so distinguishes the project itself from its sibling modules.
     case 'scope':
@@ -255,6 +283,17 @@ export function VulnerabilitiesPage() {
     });
   }
 
+  function toggleScope(scope: DependencyScope) {
+    setQuery((current) => {
+      const next = current.scopes.includes(scope)
+        ? current.scopes.filter((s) => s !== scope)
+        : [...current.scopes, scope];
+      // Same rule as severity: unticking the last one empties the table, which reads as a
+      // broken screen rather than as a filter.
+      return { ...current, page: 0, scopes: next.length === 0 ? SCOPES : next };
+    });
+  }
+
   async function scan() {
     if (!selected) return;
     setScanning(true);
@@ -409,6 +448,8 @@ export function VulnerabilitiesPage() {
             onDetailsChange={setDetails}
             compact={compactColumns}
             onColumnsChange={setCompactColumns}
+            scopes={query.scopes}
+            onScopeToggle={toggleScope}
           />
           <ExportMenu
             sbomId={selected.id}

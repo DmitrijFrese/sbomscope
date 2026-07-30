@@ -78,6 +78,11 @@ export interface Sbom {
   scannedComponents: number;
   /** Rows per band across the whole SBOM, unfiltered. Same numbers as the findings page. */
   severityCounts: Partial<Record<SeverityBand, number>>;
+  /**
+   * An automatic scan is queued or running for this SBOM. The counts above are whatever
+   * was known before it started, so a card showing this is showing an answer in progress.
+   */
+  scanning: boolean;
 }
 
 /**
@@ -94,6 +99,16 @@ export const SCOPE_LABELS: Record<DependencyScope, string> = {
   TRANSITIVE: 'transitive',
 };
 
+/** Ranked as the backend ranks them: your own code, then what you declare, then the rest. */
+export const SCOPES: DependencyScope[] = ['APPLICATION', 'DIRECT', 'TRANSITIVE'];
+
+/** Sentence-case, for a filter list — the badges in the table use SCOPE_LABELS. */
+export const SCOPE_FILTER_LABELS: Record<DependencyScope, string> = {
+  APPLICATION: 'Your own code',
+  DIRECT: 'Direct',
+  TRANSITIVE: 'Transitive',
+};
+
 export interface SbomComponent {
   id: string;
   /** group:name for Maven, plain name otherwise. */
@@ -105,8 +120,10 @@ export interface SbomComponent {
   type?: string;
   root: boolean;
   scope: DependencyScope;
-  /** Public registry page, or null for ecosystems we cannot link. */
-  registryUrl: string | null;
+  /** The artifact's own registry page, or null where we have nothing safe to link. */
+  registryArtifactUrl: string | null;
+  /** This exact version's page, or null where that version has none. */
+  registryVersionUrl: string | null;
 }
 
 export function fetchSboms(): Promise<Sbom[]> {
@@ -281,6 +298,17 @@ export function uploadSbom(file: File, workspacePath?: string): Promise<Sbom> {
 
 export function deleteSbom(sbomId: string): Promise<void> {
   return request<void>(`/sboms/${sbomId}`, { method: 'DELETE' });
+}
+
+/**
+ * Download URL for the stored document, exactly as it was uploaded.
+ *
+ * A plain link rather than a fetch, so the browser handles the download and takes the filename
+ * from `Content-Disposition` — the name it arrived under, not the `<uuid>.cdx.json` it is
+ * stored as.
+ */
+export function sbomDocumentUrl(sbomId: string): string {
+  return `/api/sboms/${sbomId}/document`;
 }
 
 // --- vulnerability scanning ------------------------------------------------
@@ -538,11 +566,21 @@ export interface FindingRow {
   osvUrl: string | null;
   /** NVD; null when the advisory has no CVE counterpart. */
   cveUrl: string | null;
-  /** Public registry page for the component, or null when we cannot link it. */
-  registryUrl: string | null;
+  /** The artifact's own registry page, or null where we have nothing safe to link. */
+  registryArtifactUrl: string | null;
+  /**
+   * This exact version's page. Null where that version has none — a vendor-patched
+   * a.b.c.d build has no page on Central — so the version renders unlinked while the
+   * component name still reaches the artifact page.
+   */
+  registryVersionUrl: string | null;
 }
 
-export type SortField = 'COMPONENT' | 'SEVERITY';
+/**
+ * FIXED_VERSION orders by the version an advisory names as the fix, as a version rather than
+ * as a string. Rows with no fix sort last in both directions — "no fix" is not a version.
+ */
+export type SortField = 'COMPONENT' | 'SEVERITY' | 'FIXED_VERSION' | 'SCOPE';
 
 /**
  * NONE and CLEAN are deliberately distinct: NONE is a real vulnerability whose advisory
@@ -571,6 +609,12 @@ export interface FindingQuery {
   filter: string;
   /** Empty means every band; the backend treats it the same way. */
   severities: SeverityBand[];
+  /**
+   * Which dependency scopes to show. Empty means all three, as the backend also reads it.
+   * Unlike severity, the default is everything: there is no scope a reader is normally not
+   * interested in, so this narrows rather than opening pre-narrowed.
+   */
+  scopes: DependencyScope[];
   pageSize: number;
   page: number;
 }
@@ -619,7 +663,12 @@ export interface ScanStatus {
   rows: FindingRow[];
 }
 
-function queryParams(query: FindingQuery): URLSearchParams {
+/**
+ * @param scopeParam what to call the dependency-scope filter. The export endpoint already
+ *   uses `scope` for its visible/all selector, so there it is sent as `scope_filter` — two
+ *   meanings on one parameter name is exactly how an export stops matching its screen.
+ */
+function queryParams(query: FindingQuery, scopeParam = 'scope'): URLSearchParams {
   const params = new URLSearchParams({
     sort: query.sort,
     direction: query.ascending ? 'asc' : 'desc',
@@ -631,6 +680,7 @@ function queryParams(query: FindingQuery): URLSearchParams {
   // default of vulnerabilities-only, silently dropping clean components for a user who
   // had deliberately selected every band.
   query.severities.forEach((band) => params.append('severity', band));
+  query.scopes.forEach((scope) => params.append(scopeParam, scope));
   return params;
 }
 
@@ -661,7 +711,7 @@ export function exportUrl(
   scope: 'visible' | 'all',
   visibleColumns?: string[],
 ): string {
-  const params = queryParams(query);
+  const params = queryParams(query, 'scope_filter');
   params.set('scope', scope);
   if (scope === 'visible') {
     params.set('limit', String(query.pageSize));

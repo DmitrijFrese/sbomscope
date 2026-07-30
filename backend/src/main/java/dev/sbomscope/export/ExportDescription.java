@@ -17,6 +17,12 @@ public record ExportDescription(
         String scope,
         String sortedBy,
         String severityFilter,
+        /**
+         * Which dependency scopes were selected. Its own line rather than folded into the
+         * severity one: a workbook narrowed to direct dependencies holds a fraction of the
+         * findings and looks identical to a complete one otherwise.
+         */
+        String scopeFilter,
         String textFilter,
         String columns) {
 
@@ -30,8 +36,22 @@ public record ExportDescription(
                         : "All findings matching the severity selection",
                 sortDescription(query),
                 severityDescription(query),
+                scopeDescription(query),
                 query.filter() == null || query.filter().isBlank() ? "none" : query.filter(),
                 columnDescription(columns));
+    }
+
+    private static String scopeDescription(FindingQuery query) {
+        if (query.selectsEveryScope()) {
+            return "every scope";
+        }
+        return String.join(", ", query.scopes().stream()
+                .map(scope -> switch (scope) {
+                    case APPLICATION -> "Your own code";
+                    case DIRECT -> "Direct";
+                    case TRANSITIVE -> "Transitive";
+                })
+                .toList());
     }
 
     private static String sortDescription(FindingQuery query) {
@@ -39,6 +59,10 @@ public record ExportDescription(
         return switch (query.sort()) {
             case COMPONENT -> "Component, " + direction;
             case SEVERITY -> "Severity, " + direction;
+            // Named as it is labelled on screen, and the null rule stated: a reader looking at
+            // a descending export should not have to work out why the blanks are at the bottom.
+            case FIXED_VERSION -> "Fixed in, " + direction + " (no fix last)";
+            case SCOPE -> "Scope, " + direction + " (your own code, direct, transitive)";
         };
     }
 

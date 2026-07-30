@@ -13,6 +13,15 @@ const DARK_QUERY = '(prefers-color-scheme: dark)';
 interface ThemeContextValue {
   preference: ThemePreference;
   resolved: ResolvedTheme;
+  /**
+   * What the OS is currently asking for, whether or not 'system' is selected.
+   *
+   * <p>Distinct from `resolved`, and the distinction is the whole point of exposing it: with
+   * 'light' chosen, `resolved` is 'light' and says nothing about what picking 'system' would
+   * give you. The System option is labelled from this, so it describes itself rather than
+   * appearing to do nothing on a machine whose OS already matches the chosen theme.
+   */
+  systemTheme: ResolvedTheme;
   setPreference: (preference: ThemePreference) => void;
 }
 
@@ -68,8 +77,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ preference, resolved, setPreference }),
-    [preference, resolved, setPreference],
+    () => ({ preference, resolved, systemTheme, setPreference }),
+    [preference, resolved, systemTheme, setPreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

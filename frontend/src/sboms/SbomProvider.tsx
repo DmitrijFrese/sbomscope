@@ -22,6 +22,21 @@ export interface InspectorTabs {
   recent: string[];
 }
 
+/**
+ * What became of one file in an upload.
+ *
+ * <p>Per file rather than per batch, because one malformed document among five is the normal
+ * case — a single "upload failed" would hide the four that worked, and a single "uploaded"
+ * would hide the one that did not.
+ */
+export interface UploadOutcome {
+  filename: string;
+  /** Set when the import succeeded. */
+  sbomId?: string;
+  /** Set when it did not, carrying the backend's own message. */
+  error?: string;
+}
+
 /** Shared so an SBOM with no tabs does not hand out a new object on every render. */
 const NO_TABS: InspectorTabs = { open: [], active: null, recent: [] };
 
@@ -79,7 +94,12 @@ interface SbomContextValue {
   error: string | null;
   select: (id: string | null) => void;
   reload: () => Promise<void>;
-  upload: (file: File, workspacePath?: string) => Promise<void>;
+  /**
+   * Imports one or more documents, sequentially, and reports what happened to each. Never
+   * rejects for a failed file: a partial failure is a result, not an error, and throwing
+   * would discard the outcomes of the files that did import.
+   */
+  upload: (files: File[], workspacePath?: string) => Promise<UploadOutcome[]>;
   remove: (id: string) => Promise<void>;
   /** Open Inspector tabs per SBOM id. Absent means none open this session. */
   inspectorTabs: Record<string, InspectorTabs>;
@@ -162,8 +182,15 @@ export function SbomProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  /**
+   * @param quiet skips the loading flag. The scan poll below runs every couple of seconds
+   *              while something is being scanned, and flipping `loading` on each pass would
+   *              blink the sidebar into its "Loading…" state for a list that is already there.
+   */
+  const load = useCallback(async (quiet: boolean) => {
+    if (!quiet) {
+      setLoading(true);
+    }
     try {
       const result = await fetchSboms();
       setSboms(result);
@@ -184,15 +211,51 @@ export function SbomProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const reload = useCallback(() => load(false), [load]);
+
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  // An automatic scan finishes on the backend with nothing to announce it, so the list is
+  // polled while one is in flight and left completely alone otherwise — the same list call
+  // clears the marker and brings the new counts, so there is no moment where a card claims
+  // to be scanning something that has already been counted.
+  const anyScanning = sboms.some((sbom) => sbom.scanning);
+  useEffect(() => {
+    if (!anyScanning) {
+      return;
+    }
+    const timer = window.setInterval(() => void load(true), 2000);
+    return () => window.clearInterval(timer);
+  }, [anyScanning, load]);
+
   const upload = useCallback(
-    async (file: File, workspacePath?: string) => {
-      const created = await uploadSbom(file, workspacePath);
+    async (files: File[], workspacePath?: string): Promise<UploadOutcome[]> => {
+      const outcomes: UploadOutcome[] = [];
+
+      // Sequential, not Promise.all. Each import is a transaction that writes a document to
+      // disk and parses it back off again, and the failure of one must not be entangled with
+      // the progress of another — which is the whole reason this reports per file.
+      for (const file of files) {
+        try {
+          const created = await uploadSbom(file, workspacePath);
+          outcomes.push({ filename: file.name, sbomId: created.id });
+        } catch (e) {
+          outcomes.push({ filename: file.name, error: messageOf(e) });
+        }
+      }
+
+      // One reload for the batch: five uploads should not redraw the sidebar five times.
       await reload();
-      setSelectedId(created.id);
+
+      // The last one that worked, as a single upload already does. Deliberately not the last
+      // one attempted — landing on a document that failed to import would select nothing.
+      const lastImported = [...outcomes].reverse().find((outcome) => outcome.sbomId);
+      if (lastImported?.sbomId) {
+        setSelectedId(lastImported.sbomId);
+      }
+      return outcomes;
     },
     [reload],
   );

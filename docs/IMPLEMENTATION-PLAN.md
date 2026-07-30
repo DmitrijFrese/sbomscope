@@ -6,14 +6,24 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-07-30 · Status: **Phases 0–2, 4–7 complete. Phase 8 Tier 1 complete; Tier 2
-passes A, B and C built and verified against a real `mvn`, plus the configurable probe budget,
+Last updated: 2026-07-31 · Status: **Phases 0–2, 4–7 complete. Phase 8 Tier 1 complete; Tier 2
+passes A–D built and verified against a real `mvn`, plus the configurable probe budget,
 Maven profiles, configurable plugin versions, queued-vs-running status, full `mvn` command and
 output logging, continuable searches, and honest reporting of a budget-truncated major. One
 open question carried forward: the isolated probe repository cannot work on a fully air-gapped
-machine — see the decision log. B-items started: **B1 (session-scoped per-SBOM component tabs)
-is built and verified live**, and B1a (Monitoring: the probe queue, stopping it, and the full log)
-with it; B2 onward next — then Phase 3 and Phase 9**
+machine — see the decision log.
+
+**B-items built: B0, B1, B1a, B2, B3, B4, B5, B6, B7, B8, B9**, each verified in a running
+application rather than asserted. Scanning is now automatic on upload and at startup; registry
+links honour a purl's `repository_url` and split into artifact and version destinations; upload
+takes several files at once and reports per file; the stored document can be downloaded back;
+the dependency graph no longer repeats the module on every route and marks the declaration you
+can change; and the findings table sorts by fix version (V3 adds `fixed_version_sort`) and both
+sorts and filters by dependency scope.
+
+Next: **B10 (secondary sort), then B11 — which is the open decision and needs the maintainer —
+then B12, B13, and B14 (route completeness), which is specified in full** — then Phase 3 and
+Phase 9**
 
 ---
 
@@ -971,7 +981,11 @@ reasoning worth showing.
       graph: how many routes reach this component, and how many a given remedy would fix. A
       pin fixes all of them by construction; a bump fixes only those through the dependency
       bumped. The panel already recommends a pin but never says *why* it is the complete
-      answer, and that reasoning is computable offline today
+      answer, and that reasoning is computable offline today. **Specified in full as
+      [B14](#b14--route-completeness-per-module--specified-2026-07-30-not-started) — read that
+      rather than this line**, which understates it: the work is per-module, three of the four
+      remedies need a proof stated rather than a number counted, and the mixed direct/transitive
+      case currently produces a false statement
 - [x] One suggested remedy, alongside the alternatives — not a bare verdict. The reasoning is
       deliberately shallow: declare it and there is a version to change, do not and a pin is
       the precise answer. Anything cleverer would be guessing at a project's appetite for
@@ -1154,26 +1168,69 @@ small and the list is more useful as a list.
 Each item below is specified to be picked up cold. Where a design decision was needed it has
 been taken and the reasoning recorded; **one item is deliberately left open and marked**.
 
-### B0 — Scanning becomes automatic
+### B0 — Scanning becomes automatic — **built 2026-07-30**
+
+Checked rather than assumed before starting, because the constraint-2 rewording this depends on
+*is* done and the item read as though it might have followed: the only `ApplicationReadyEvent`
+listener in the codebase was `StoredDocumentSweeper`, and nothing queued a scan on upload or at
+startup.
 
 Decided 2026-07-29 along with the rewording of constraint 2. Fetching stays on request;
 analysing does not need asking, because it sends nothing anywhere.
 
-- **On upload.** After `importSbom` succeeds, queue a scan for that SBOM. Asynchronous on a
+- [x] **On upload.** After `importSbom` succeeds, queue a scan for that SBOM. Asynchronous on a
   single-threaded executor — the upload response should not wait on an external process — with
   the SBOM ids currently in flight exposed so the sidebar can show the card as scanning and
   refresh its counts when it finishes.
-- **At startup.** On `ApplicationReadyEvent`, **not** `@PostConstruct`: the application must
+- [x] **At startup.** On `ApplicationReadyEvent`, **not** `@PostConstruct`: the application must
   be serving before this begins, or the cost lands on launch, which was the objection to doing
   it at all. Queue every SBOM that has at least one component with no `vulnerability_scan`
   row. One at a time, on the same executor.
-- **Gated on readiness**, per SBOM, using the existing `ScanService.readiness`. Scanner off,
+- [x] **Gated on readiness**, per SBOM, using the existing `ScanService.readiness`. Scanner off,
   binary missing or archive absent means do nothing — silently. It is not an error that a
   machine without a scanner did not scan.
-- **Logged**, every run, because it starts an external process. That is what the activity log
+- [x] **Logged**, every run, because it starts an external process. That is what the activity log
   is for.
-- **The manual re-scan stays.** Filling a gap and deliberately re-running analysis against a
+- [x] **The manual re-scan stays.** Filling a gap and deliberately re-running analysis against a
   refreshed archive are different needs, and only the first is automatic.
+
+**Built as `AutomaticScanner`**, plus `VulnerabilityRepository.sbomIdsWithUnscannedComponents`
+and a `scanning` flag on the SBOM list response. Three things the item did not settle, decided
+during the build:
+
+- **The marker rides on the SBOM list rather than an endpoint of its own.** What changes when a
+  scan finishes is the counts *beside* the marker, so one poll of `/api/sboms` both clears the
+  flag and brings the new numbers — two sources could disagree about which of the two had
+  happened. The sidebar polls only while something is in flight, and not at all otherwise.
+- **QUEUED and RUNNING are deliberately not split**, unlike the probe queue. There the
+  distinction was load-bearing, because reporting a queued probe as running claimed Maven was
+  being invoked for something that had not started. Here the card says "Scanning…", whose honest
+  reading is "this document is being dealt with", and queued satisfies it.
+- **The activity entry carries the trigger, not the result.** `ScanService` already writes the
+  counts and is shared with the manual path, so repeating them would put the same numbers in the
+  log twice while still leaving unanswered the only question this entry exists for — *why did an
+  external process run when I did not ask for one*. It is written before the scan, and reads
+  `prompted by a newly uploaded SBOM` or `prompted by components that had never been scanned`.
+
+**Never rather than stale**, on the startup sweep. A stale row is a real answer that has aged and
+re-running it against a refreshed archive has a real cost — that stays the manual button. A
+missing row is a gap, and a gap reads as "nothing found" to anyone who does not know to check
+`scannedComponents`. Components with no purl are excluded from the query, or an SBOM containing
+one would be permanently unscanned and re-queued on every startup for work that cannot change.
+
+Verified live, end to end, rather than asserted:
+
+| Behaviour | Result |
+|---|---|
+| Upload with the scanner configured | response already carries `scanning: true`; 0 → 29 components scanned with nothing pressed |
+| The card during that scan | *"Scanning…"* in place of the counts, replaced by them when it finished |
+| Upload with scanning switched **off** | `scanning: false`, no scan, no error, nothing in the log |
+| Restart with an SBOM whose purls nothing had checked | queued from `ApplicationReadyEvent` and scanned on the `sbomscope-auto-scan` thread; 1 critical found |
+| Activity log | `AUTO_SCAN`/`STARTED` naming the trigger, then the ordinary `SCAN` entry with the counts |
+
+`AutomaticScannerTest` covers the parts a live run cannot show cheaply: the silent skip, a
+failure being recorded instead of escaping the worker, the startup sweep queueing every SBOM
+with a gap, and the same SBOM not being queued twice while one is still pending.
 
 ### B1 — Component selection is global, should be per SBOM, and should be session-persistent tabs — **built 2026-07-30**
 
@@ -1327,18 +1384,18 @@ invisible, holding the only probe thread, and unstoppable.
       progress surfaces, so folding all three into one honest "what is this application doing"
       is a reconciliation job rather than an addition.
 
-### B2 — Registry links break on vendor-patched versions
+### B2 — Registry links break on vendor-patched versions — **built 2026-07-30**
 
 `a.b.c.d`, where `.d` is a distributor's patch level, yields a Maven Central URL that 404s.
 Two independent fixes, neither of them a heuristic:
 
-- **Honour the purl's `repository_url` qualifier.** `RegistryLinks.stripQualifiers` currently
+- [x] **Honour the purl's `repository_url` qualifier.** `RegistryLinks.stripQualifiers` currently
   discards the whole query string, including the one field that names where the artifact
   actually lives. A vendor build carrying
   `?repository_url=https://maven.repository.redhat.com/...` is telling us Central is the wrong
   destination, and we are throwing that away and then linking to Central anyway. Where it is
   present, link there; where the host is unrecognised, prefer no link over a wrong one.
-- **Split the two links by reliability.** The component *name* links to the artifact page
+- [x] **Split the two links by reliability.** The component *name* links to the artifact page
   (`/artifact/{group}/{name}`), which resolves whenever the artifact exists at all; the
   *version* cell carries the version-specific link. A reader who lands on the artifact page
   can find their version; a reader who lands on a 404 cannot.
@@ -1348,25 +1405,136 @@ about a specific artifact, which constraint 1 puts in category 3 — and an exte
 the registry's page, not ours, so there is no error of ours to make friendly. The only
 available move is choosing targets that do not fail.
 
-### B3 — The "system" theme appears inert
+**Reconcile this with the recorded decision in `RegistryLinks` before writing code** (noted
+2026-07-30 on starting the item). That class says links are *"deliberately public rather than
+configurable to an internal mirror"*, because an exported spreadsheet is usually read by somebody
+outside the network it was produced on, and a link into a private Artifactory is useless to them.
+That is not contradicted by honouring `repository_url`, but the difference has to be deliberate:
+the old decision is about **configuring** one mirror as the base for everything, while this is a
+purl **declaring where that artifact actually lives**. The downstream-reader objection still
+applies to a private host, which is what B2's own *"where the host is unrecognised, prefer no link
+over a wrong one"* resolves — an allowlist of public vendor repositories (Red Hat's first, since
+those are exactly the `a.b.c.d` builds this item is about), and no link at all otherwise. For a
+raw Maven repository the artifact path is derivable from the standard layout
+(`group/with/slashes/artifact/version/`), so the link works for any such host once its host is
+trusted.
+
+**Splitting the two links touches more than the panel.** The name-links-to-artifact-page,
+version-links-to-version-page change means a second URL per component, so it runs through
+`ComponentResponse`, `RowResponse` **and `FindingsExcelExporter`** — the view and the export share
+`RegistryLinks` precisely so they cannot drift, and adding a URL to one without the other is how
+they would.
+
+**Built 2026-07-30.** `RegistryLinks.forPurl` now returns a `Links(artifactUrl, versionUrl)` record
+rather than one string, so both destinations come out of one parse and no call site can obtain one
+without the other. The reconciliation above was written into the class's own Javadoc, beside the
+decision it qualifies, rather than left in this file. Three allowlists: Central's own hosts (which
+resolve to the existing `central.sonatype.com` link), public vendor repositories linked through the
+standard Maven layout, and the public npm registry. The vendor list is `maven.repository.redhat.com`
+and `repository.jboss.org`, and its membership rule is written down as *"does the derived URL
+actually resolve for a reader with no credentials"* — both serve browsable directory listings, which
+is what makes `group/artifact/version/` a destination rather than a guess. Anything else yields
+`Links.NONE`, both halves null, and the cells render as plain text.
+
+Two things settled while building it:
+
+- **The host is parsed, never substring-matched.** `https://evil.example/maven.repository.redhat.com/`
+  contains an allowlisted name and is not that host; `URI.getHost()` is what decides. Pinned by a test.
+- **A schemeless or `http://` `repository_url` becomes `https://`** rather than being rejected or
+  followed as given. The purl spec permits a bare host, and every allowlisted host serves https.
+
+Verified live against `vuln-multi-module.cdx.json`: the findings table's component cell links to
+`…/artifact/com.fasterxml.jackson.core/jackson-databind` and its version cell to that plus `/2.9.5`,
+and the Inspector's identity panel does the same. The vendor-repository path has no live fixture —
+no committed SBOM carries a `repository_url` qualifier — so it is covered by unit tests only, which
+is worth knowing before trusting it against a real Red Hat BOM.
+
+### B3 — The "system" theme appears inert — **built 2026-07-30**
 
 The mechanism is correct: `ThemeProvider` reads `prefers-color-scheme` and tracks changes
 live. With a dark OS, "System" and "Dark" are visually identical, so it reads as doing
 nothing. **Label it with what it resolved to** — *System (currently dark)* — updating as the
 OS changes. No mechanism change.
 
-### B4 — Multi-file upload
+**Built as specified, with one thing the item did not name.** The label needs `systemTheme`,
+newly exposed from `ThemeProvider`, and **not** the existing `resolved`. They differ exactly
+when the answer matters: with *Light* chosen, `resolved` is `light` and says nothing about what
+the OS is asking for, so the System option would describe the current selection instead of
+itself. Read from the media query, the label also answers *"what would I get if I picked this"*
+while a different option is selected. The note below the group still reports what is actually
+rendered — a different statement, and both are now true at once.
+
+Verified in the browser under both emulated schemes: *System (currently light)* with a light OS,
+*System (currently dark)* with a dark one, and — with **Dark** explicitly selected against a
+light OS — the option still reading *(currently light)* while the note reads *"Currently showing
+the dark theme."*
+
+**Live updating could not be observed in the automation pane, and the code was not changed on
+that basis.** Switching the emulated scheme moves `matchMedia(...).matches` but delivers no
+`change` event: a freshly registered listener recorded zero events across a flip that the query
+itself reported. This is the same trap AGENTS.md records for `requestAnimationFrame` and
+`ResizeObserver` — test whether the mechanism fires before concluding the code is wrong. The
+listener is pre-existing, unchanged, and the label is derived from the state it maintains, so
+whatever updated the theme before updates the label now.
+
+### B4 — Multi-file upload — **built 2026-07-30**
 
 Accept multiple files on the dropzone and the file input. Import sequentially, and report
 **per file**: a partial failure must be visible, since one malformed document among five is
 the normal case and a single "upload failed" would hide the four that worked. Select the last
 successful import, as a single upload already does.
 
-### B5 — Download the stored SBOM
+**Built as specified.** `SbomProvider.upload` now takes a `File[]` and returns an
+`UploadOutcome[]`; the backend endpoint is untouched, since one document per request is the
+right shape for a transaction that writes a file and parses it back off disk. Four decisions the
+item did not spell out:
+
+- **The provider never rejects for a failed file.** A partial failure is a *result*, not an
+  error — throwing would discard the outcomes of the files that did import, which is the exact
+  information this item exists to preserve.
+- **The last *successful* import is selected, not the last attempted.** "As a single upload
+  already does" is unambiguous for one file and not for five ending in a malformed one, where
+  the obvious reading would select nothing.
+- **The report lists successes too.** A list of only the failures leaves the reader working out
+  which of five names is missing from it.
+- **The form closes only when everything imported.** With a partial failure it stays open
+  holding the report, or the sidebar would show four new cards and no account of the fifth.
+  The dropzone's own extension check keeps the valid files and names only the rejected ones,
+  rather than discarding a whole selection because one name is wrong.
+
+Verified in the browser with three files, the middle one deliberately malformed: two cards
+appeared, the report read `imported` / the backend's real "not valid JSON" message / `imported`,
+the selection landed on the *third* file, and the panel stayed open. Re-run with two valid files
+and a `.txt`: the `.txt` was named in the error, the two valid ones still uploaded, and the panel
+closed by itself.
+
+### B5 — Download the stored SBOM — **built 2026-07-30**
 
 `GET /api/sboms/{id}/document`, serving the stored bytes with the original filename in
 `Content-Disposition`. The stored document is the one the scanner reads, so it is also the one
 worth handing to somebody else. 404 where the file has been swept.
+
+**Built as specified**, plus a download control beside the existing delete on each sidebar card.
+A plain `<a download>` rather than a fetch, so the browser handles the transfer and takes the
+name from the response — the same reasoning the Excel export link already follows.
+
+Two things worth recording:
+
+- **`Content-Disposition` names the upload, not the storage.** Documents are stored as
+  `<uuid>.cdx.json` because osv-scanner picks its parser from the filename; handing a reader a
+  uuid would leak an implementation detail as the name of their own file.
+- **The two row actions live in one cluster, and the card's filename reserves room for it
+  permanently.** Measured rather than eyeballed, and the first attempt was wrong twice: the
+  cluster came out 66px because `.icon-button`'s own 32px is declared later in the stylesheet
+  and won on source order, and the filename ran underneath it. Now 50px, with 46px of
+  right padding on the name — reserved always rather than on hover, since a filename that
+  reflowed the moment the pointer arrived would be worse than a little space that is always
+  there. Verified with a `Range` over the text itself, not the padded box: the text ends at
+  195px and the controls begin at 213px.
+
+Covered by two tests: the served bytes are identical to what was uploaded and the header carries
+the original name, and a row whose document has been deleted from disk answers 404 rather than
+500 — a real state, since the sweeper is deliberately one-directional.
 
 ### B6 — Reaching the log directory — **built 2026-07-29**
 
@@ -1383,32 +1551,97 @@ entirely rather than shown disabled — matches the "fall back silently" instruc
 `false` when launched as a backgrounded process from this shell during verification; expected
 to report `true` under a normal interactive launch, worth confirming on your machine.
 
-### B7 — Dependency graph rendering
+### B7 — Dependency graph rendering — **built 2026-07-30**
 
-- Vertical space between routes; they currently run together.
-- **Drop the repeated root from every line.** The module heading already names it, so
+- [x] Vertical space between routes; they currently run together.
+- [x] **Drop the repeated root from every line.** The module heading already names it, so
   repeating it as step 1 of each route spends the widest column on the word the reader
   already read.
-- Subtly emphasise the **direct dependency** on each route — the step whose version they can
+- [x] Subtly emphasise the **direct dependency** on each route — the step whose version they can
   actually change. Weight or a quiet underline, not colour: colour already means severity here.
 
-### B8 — Sort by the "fixed in" version
+**Measured before and after rather than eyeballed.** The gap between routes was **0px** — not
+merely tight, literally none — which matters more than it looks because `.route` wraps by
+design: a route running onto a second line was indistinguishable from the next route. Now 8px.
+
+**The module is dropped in the renderer, not the API.** Routes still arrive module → … →
+component inclusive, and `Route` slices off the first step. The backend shape is right — a
+route that did not name its own origin would be ambiguous to anything but this panel — and
+`BumpScope` reads the same routes. With the module gone the list needed something else to say
+it belongs to the heading above it, so `.route-list` gained a 12px indent and a hairline left
+rule.
+
+**The emphasised step is the first one after the module**, which is by construction the
+declaration that module owns. Weight 600 against 400, verified computed; not colour, and not an
+underline either, since the name is already a link. It carries a title explaining *why* it is
+marked — "the version you can change" is the point, and the styling alone cannot say it.
+
+Verified on `bcprov-jdk15on@1.60`, which the adversarial fixture reaches by three routes from
+each of two modules: gaps 8px throughout, every line now starting at `org.keycloak:keycloak-core`
+instead of repeating the module, and the keycloak step at weight 600 with every other step at
+400. Also checked the degenerate case — a component the module declares directly — where the
+one remaining step is both the direct dependency and the target, and no leading arrow is left
+dangling.
+
+### B8 — Sort by the "fixed in" version — **built 2026-07-30**
 
 The only item with a real obstacle. Sorting, filtering and paging execute in SQL so the view
 and the export cannot diverge, and H2 orders `1.10.0` before `1.9.0` lexically.
 
-- Add `fixed_version_sort` to `vulnerability_finding` (**V3**, additive), written at insert
+- [x] Add `fixed_version_sort` to `vulnerability_finding` (**V3**, additive), written at insert
   time in `recordScan`, null when there is no fix.
-- **Generate the key from `VersionOrder`'s own rules, not a second interpretation of
+- [x] **Generate the key from `VersionOrder`'s own rules, not a second interpretation of
   versions.** Zero-pad numeric segments to a fixed width and encode pre-release suffixes so
   they sort below their release. A test must assert that ordering by the key agrees with
   `VersionOrder.compare` across the fixture set — otherwise the table and the comparator
   disagree, which is exactly the class of quiet inconsistency this project keeps designing
   against.
-- `FindingQuery.SortField` gains `FIXED_VERSION`, ascending and descending, with nulls last
+- [x] `FindingQuery.SortField` gains `FIXED_VERSION`, ascending and descending, with nulls last
   in both directions: "no fix" is not a version and must not sort as one.
 
-### B9 — Filter and sort by dependency scope
+**The key lives in `VersionOrder.sortKey`, built from the comparator's own `Parsed`** — not in a
+helper beside it, because "from `VersionOrder`'s own rules" is only true if there is literally
+one parse. Four encoding decisions, each with a failure it prevents:
+
+| Piece | Why |
+|---|---|
+| Trailing zero segments dropped | The comparator treats a missing part as zero, so `1.2` and `1.2.0` must produce *identical* keys, not adjacent ones — otherwise the key imposes an order the comparator does not have |
+| 19 digits per segment | The width of `Long.MAX_VALUE`, so nothing a parse can produce is truncated. Ugly, and the only width with no failure case |
+| `'!'` terminates the release | It sorts below every digit, which is what makes `1` sort before `1.2`. Without it the marker below would be compared against another version's digits and reverse the pair |
+| `'~'` for a release, `'-'` + suffix for a pre-release | `'-' < '~'` reproduces "a pre-release is on the way to the release, not past it", and comparing the verbatim suffixes reproduces the comparator's own `String.compareTo` |
+
+`VersionSortKeyTest` asserts agreement over **every version string in all four committed
+fixtures** plus a list of adversarial shapes (the lexical trap, trailing zeros, pre-releases, a
+pre-release of the next major, build metadata, date-shaped versions, the vendor patch level B2
+is about, and unparseable input), comparing all pairs both ways.
+
+**Three things the item did not anticipate, all found by verifying rather than by reading:**
+
+- **Existing rows would have lied.** V3 leaves `fixed_version_sort` null on findings written
+  before it, and a null key sorts as "no fix" — not a wrong position but a false statement about
+  an advisory, persisting until that component happened to be re-scanned. The migration cannot
+  fill them, because the key comes from a Java parse and rewriting it in H2 SQL would be exactly
+  the second interpretation this design removes. `FixedVersionSortBackfill` does it once after
+  startup; it repaired **285 findings** on the maintainer's own database.
+- **`SELECT DISTINCT` rejects an ORDER BY expression that is not in the result.** The findings
+  endpoint answered **500** for this one sort value while every existing test passed. The column
+  is now selected although nothing maps it — it cannot affect distinctness, being derived from
+  `fixed_version`, which was already there. `FindingSortTest` now walks `SortField.values()`
+  across both directions and both hand-assembled statements, so a field added later is covered
+  without anybody remembering to come back.
+- **Leading with the severity rank was wrong.** The first version copied `SEVERITY`'s shape and
+  put the rank first, which groups by *whether a finding carries a CVSS score* before the column
+  the reader actually clicked — an unscored finding with a fix landed below scored findings with
+  none. `COMPONENT` already leads with its own field, and `FIXED_VERSION` now does too. The rank
+  still decides the tail, where every row has no fix and "checked, nothing found" belongs below
+  "found, no fix available".
+
+Verified live against the adversarial fixture: ascending runs `1.2.9, 1.2.13, 1.3.15, 1.3.16,
+1.5.25…` — the exact pair H2 got backwards — descending runs `26.0.6, 24.0.7, 24.0.0, 23.0.4`,
+and with every band selected the 321 rows partition cleanly into 270 with a fix, then 18
+findings with no fix, then 32 clean components, with no interleaving in either direction.
+
+### B9 — Filter and sort by dependency scope — **built 2026-07-30**
 
 `FindingQuery` gains a scope set, defaulting to all three. The SQL clause is a plain
 `dependency_scope IN (…)` built from enum constants, as the severity clause already is.
@@ -1418,6 +1651,31 @@ Sorting reuses the `CASE` ordering in `findComponents` (APPLICATION, DIRECT, TRA
 1024px with the severity chips alone, and there is a recorded decision that moving density and
 columns behind one menu is what stopped it reading as a pile of unrelated widgets. A second
 chip row would undo that.
+
+**Built as specified**, with `SortField.SCOPE` alongside the filter — the Scope column header is
+now sortable like Component, Severity and Fixed in. Four things worth recording:
+
+- **A parameter-name collision, caught before it could bite.** The export endpoint already uses
+  `scope` for its visible/all selector, so the scope *filter* travels as `scope_filter` there and
+  as `scope` on the findings endpoint. Sent through the same `queryParams` builder with the name
+  passed in, so the two cannot drift — had it been left as `scope`, `exportUrl`'s own
+  `params.set('scope', …)` would have silently overwritten the filter and produced a workbook
+  quietly wider than the screen it came from.
+- **The scope filter is on the About sheet.** A workbook narrowed to direct dependencies holds a
+  fraction of the findings and would otherwise look identical to a complete one — the same
+  argument that put the severity filter and the text filter there.
+- **Defaults to everything, unlike severity.** Severity opens narrowed because most rows are not
+  worth reading; there is no scope that is normally not worth reading. Unticking the last one
+  falls back to all three rather than emptying the table, matching the severity rule.
+- **A stored query from before this existed has no `scopes` key**, so `reviveQuery` fills it in
+  rather than leaving the table empty for anybody who had the page open before the upgrade.
+
+Verified live against the adversarial fixture: the three scopes partition its 321 rows exactly
+(3 application, 69 direct, 249 transitive, summing to 321), omitting the parameter means all
+three, `SCOPE` sorts `APPLICATION → DIRECT → TRANSITIVE` ascending and the reverse descending,
+unticking Transitive in the menu leaves only direct rows on screen, unticking the last box
+restores all three, and the toolbar stays a single 39px row — the constraint this item's
+placement decision was protecting.
 
 ### B10 — Secondary sort
 
@@ -1455,6 +1713,104 @@ Vulnerabilities, the cube is the Component Inspector. **A magnifier whose lens c
 small cube** reads as "examine a package", is neither existing icon, and survives 16px if the
 cube stays two or three strokes. Needed as a favicon and in the top-left brand slot, which is
 currently a bare wordmark.
+
+### Running several Maven probes at once — researched 2026-07-30, not started
+
+Asked while building B1a. Recorded because the research is the expensive part and would
+otherwise be redone.
+
+**Today: one at a time, deliberately.** A single-thread executor, because the isolated probe
+repository cannot safely take concurrent writes. `QUEUED` exists to describe that honestly.
+
+**It is changeable, and there are two routes.**
+
+- **Maven Resolver named locks** — `-Daether.syncContext.named.factory=file-lock` with
+  `nameMapper=file-gav`. The officially supported way for concurrent Maven processes to share
+  one local repository; `file-lock` uses OS advisory file locking for exactly this case. Two
+  caveats: the mapper **must** be `file-gav` (no other works with `file-lock`), and there is a
+  history of lock-acquisition flakiness — MRESOLVER-374 had 1.9.13 failing a large share of
+  acquisitions. It also depends on the user's resolver version, which we do not control, the
+  same reason plugin versions became configurable.
+- **One probe repository per worker.** Sidesteps locking entirely; costs duplicate downloads
+  (POMs, kilobytes) and **multiplies the air-gap seeding problem** — every repository would need
+  the pinned plugins seeded, which is the open question above, N times over.
+
+**Recommendation: do not parallelise yet.** The binding constraint is not the thread. Measured
+here already: the cold-repository run spent about four minutes on twelve probes against about
+one minute warm, and that gap is network round-trips to the mirror — two concurrent probes
+against the same repository mostly duplicate them, and once warm the queue drains in seconds.
+Concurrency would also quietly break something the serial design gets for free: `runBudgetMinutes`
+is wall-clock-meaningful per component today, and with N probes contending for CPU and network it
+stops meaning what it says.
+
+- [ ] If it becomes a felt problem — which several open Inspector tabs makes likelier — the cheap
+      first move is a **bounded pool of 2 with `file-lock`/`file-gav`, behind a setting defaulting
+      to 1**: measurable, reversible, and it keeps `QUEUED` honest rather than removing it.
+
+### B14 — Route completeness, per module — **specified 2026-07-30, not started**
+
+Re-homed here from Phase 8's *"The recommendation"* list, where it sat as one line reading
+*"needs no build tool, and should land first"*. That was right about the priority and wrong
+about the size. Specified properly after asking a question that turned out to matter: **is route
+completeness only for the Maven ancestor search, or also for direct version bumps?**
+
+**It is for all four remedies, and it is a different kind of claim for each.**
+
+| Remedy | Complete? | Established by |
+|---|---|---|
+| **Pin it** | Yes, at any depth | Construction — `dependencyManagement` constrains the component whichever declaration would otherwise win |
+| **Upgrade it** (direct) | Yes, **within the module that declares it** | Nearest-wins — a depth-1 declaration beats every transitive route |
+| **Bump what pulls it in** | Only the routes through that ancestor | **The only one where it is a counted number** |
+| **Exclude it** | Same shape as the pin | Blocked on workspace usage (Phase 9) |
+
+So three of the four need a **proof stated**, not a figure computed. Only `BUMP_ANCESTOR` needs
+*"fixes 3 of 5 routes"*. The item as previously written read as though it were all counting.
+
+**The finding that resizes this: scope is global, not per module.** `ScopeClassifier.classify`
+builds `direct` as a set of bom-refs, so if *any* application module depends on a component it is
+`DIRECT` for the whole SBOM. Take a library `module-a` declares and `module-b` inherits
+transitively — an ordinary shape, and one no current fixture has:
+
+- The panel offers **Upgrade it** with a version to change. Complete for `module-a`, and does
+  **nothing** for `module-b`, silently.
+- The Tier 2 probe **refuses outright** — `BumpProbeService.start` rejects anything not
+  `TRANSITIVE` with *"Nothing pulls this in on your behalf."* For `module-b` that sentence is
+  **false**, not merely incomplete. Something does pull it in on their behalf.
+
+That is the failure class this project designs against everywhere else, and it is reachable
+today. It is also invisible to an ancestor-only version of this item.
+
+- [ ] **Key routes by (component, module), not by component.** The whole point is that the answer
+      differs per module; a per-component number would average away the case above.
+- [ ] **The query must be uncapped.** `DependencyGraphService` caps displayed routes at 3 per
+      module and reports a floor past 25 (`ComponentGraph.ModuleRoutes.truncated`), so counting
+      against what is *shown* undercounts silently whenever a module reaches a component more than
+      three ways — a confidently wrong number, which is worse than none.
+- [ ] **`UPGRADE` states its module scope**: *"Complete for `module-a`. `module-b` also pulls this
+      in and this change does not affect it."*
+- [ ] **`PIN` states its construction argument** — asserted since this phase was written and never
+      once demonstrated — **with its own caveat**: a pin in one module's POM is complete for that
+      module only, while one in the parent's `dependencyManagement` is complete across the build.
+      Those are different remedies and the snippet should say which it is emitting.
+- [ ] **`BUMP_ANCESTOR` reports routes fixed of routes total**, and a remedy fixing some routes and
+      not others is reported as **partial, never as a fix**.
+- [ ] **Replace the probe's blanket scope refusal.** A component that is `DIRECT` somewhere and
+      transitive in the module being asked about is a legitimate probe, and the current message is
+      wrong rather than conservative.
+- [ ] **Then, and only then, `advice.suggested` may offer a successful `BUMP_ANCESTOR`** — it
+      currently never does, because "fixes every route" could not be checked. This is the last
+      thing standing between passes B–D and the bump remedy being suggestable.
+- [ ] **A fixture for the mixed case.** No committed SBOM has a component that is direct in one
+      module and transitive in another, which is why none of the above was caught by a test.
+      Per the testing rules: build the throwaway project outside the repository and commit only
+      the generated `.cdx.json`.
+
+**Cheaper than when it was first written**, because pass D made the probe retain provenance: the
+deciding declaration is now read from `dependency:tree`'s own indentation, so "which routes does
+this actually fix" has an authoritative input rather than an inferred one.
+
+**Done when**: every remedy states which modules it holds for, a pin can show why it is complete,
+a partial bump is labelled partial, and the mixed-scope case above produces a true statement.
 
 ### Backlog
 
@@ -3054,3 +3410,151 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   whether the reporting machine is truly network-isolated or merely has no route to Central while
   reaching an internal mirror — the latter needs no change at all, and the new "Test Maven"
   plugin check answers that in one click.
+- 2026-07-30 — **Registry links honour `repository_url`, and this does not reverse the
+  "deliberately public" decision it looks like it reverses** (B2). The two are about different
+  acts. The 2026-07-26 decision refuses a *setting* that repoints every link at one internal
+  mirror, because an exported spreadsheet is usually read outside the network it was produced on
+  and a link into somebody's Artifactory is useless to that reader. A purl's `repository_url` is
+  not our configuration at all — it is the document stating where that one artifact actually
+  lives, and discarding it was how a Red Hat `a.b.c.d` build ended up linked to a Central page
+  that does not exist.
+
+  **The downstream reader is protected by an allowlist rather than by ignoring the qualifier.**
+  Public vendor repositories are followed; anything else produces no link on either half. The
+  membership rule is deliberately not "is this repository well known" but **"does the derived URL
+  resolve for a reader with no credentials"** — Red Hat's GA repository and JBoss public serve
+  browsable directory listings, which is what makes the standard layout a usable destination
+  rather than a guess. That rule is what a future addition has to be checked against.
+
+  **Both destinations come from one call**, `Links(artifactUrl, versionUrl)`. The name reaches the
+  artifact page, which resolves whenever the artifact exists; the version cell reaches the
+  version-specific page, which for a vendor build may not exist at all. A reader landing on the
+  artifact page can find their version; one landing on a 404 cannot. Returning a record rather
+  than adding a second static method is the mechanical reason the view and the export cannot end
+  up split differently — there is no way to fetch one half without the other, which is the drift
+  `FindingsExcelExporter` shares this class to prevent. The Excel `Version` column is now a
+  hyperlink where it previously was plain text.
+
+  **Two smaller decisions inside it.** The host is compared after `URI.getHost()`, never as a
+  substring, so `https://evil.example/maven.repository.redhat.com/` is not that host. And a
+  schemeless or `http://` qualifier is normalised to `https://` rather than rejected: the purl
+  spec allows a bare host and every allowlisted host serves https, so rejecting it would drop a
+  correct link, and following plain http would be a downgrade nobody asked for.
+
+  **Not validated, and cannot be.** Testing whether a link resolves means asking a registry about
+  a specific artifact the user holds, which is constraint 1's category 3. Choosing targets that do
+  not fail is the only move available, which is the whole reason for the split.
+- 2026-07-30 — **Scanning becomes automatic, and the constraint that permits it is the one about
+  what leaves the machine** (B0). Built as specified on 2026-07-29; three decisions the item left
+  open were settled while building it.
+
+  **The "scanning" marker lives on the SBOM list, not on an endpoint of its own.** What changes
+  when a scan finishes is the counts sitting next to the marker, so one poll of `/api/sboms`
+  clears the flag and delivers the new numbers together. Two sources would have been free to
+  disagree about which of the two had happened, and a card reading "Scanning…" beside numbers
+  that had already been updated is exactly the kind of small dishonesty this project keeps
+  removing. The sidebar polls only while something is in flight and not at all otherwise.
+
+  **QUEUED and RUNNING are not split here, unlike the probe queue.** That distinction was
+  load-bearing for the probe: reporting a queued probe as running claimed Maven was being invoked
+  right now for something that had not started. A card saying "Scanning…" claims only that the
+  document is being dealt with, which a queued scan satisfies. Copying the probe's states here
+  would have been consistency for its own sake.
+
+  **The activity entry carries the trigger rather than the result.** The first version recorded
+  `AUTO_SCAN`/`SUCCESS` with the component and finding counts, which put the same numbers in the
+  log twice — `ScanService` already writes them and is shared with the manual path — while still
+  not answering the only question this entry exists for: *why did an external process run when I
+  did not press anything*. It now records `STARTED` before the run with the trigger in prose.
+  Failures are still recorded, and still swallowed rather than rethrown: nothing is waiting for
+  this answer, so an escaping exception would reach nobody.
+
+  **The startup sweep queues never-scanned, never merely stale.** A stale row is a real answer
+  that has aged, and re-running analysis against a refreshed archive is a decision with a cost —
+  that stays the manual button, as the item required. A missing row is a gap, and a gap reads as
+  "nothing found" to anyone who does not know to check `scannedComponents`. Components with no
+  purl are excluded from the query, or an SBOM holding one would be permanently unscanned and
+  re-queued on every startup for work that could never change it.
+- 2026-07-30 — **The System theme option is labelled from `systemTheme`, not from `resolved`**
+  (B3). The item said "label it with what it resolved to", and the obvious reading — reuse the
+  `resolved` value the panel already has — is wrong in the one case the label exists for. With
+  *Light* selected, `resolved` is `light` and describes the selection, not the OS, so the System
+  option would read *(currently light)* on a dark machine. `ThemeProvider` now exposes the media
+  query's own answer separately, which also makes the label say what picking System would give
+  you rather than only what is on screen. The note under the group still reports what is actually
+  rendered; the two statements are different and both are now present.
+
+  **A verification note worth keeping.** Switching the browser pane's emulated colour scheme
+  changes `matchMedia(...).matches` but fires no `change` event — a freshly registered listener
+  recorded nothing across a flip the query itself reported. The live-tracking half of this item
+  therefore could not be observed here, and nothing was changed on the strength of that: the
+  listener is pre-existing and the new label is derived from the state it maintains. Same lesson
+  as the `requestAnimationFrame` finding — establish that the mechanism fires before concluding
+  the code is broken.
+- 2026-07-30 — **The fix-version sort key is generated inside `VersionOrder`, and existing rows
+  are backfilled rather than left null** (B8). Three findings from building it, two of which
+  only surfaced by running the thing.
+
+  **One parse, not two.** B8 asked for a key generated "from `VersionOrder`'s own rules"; the
+  obvious shape — a `VersionSortKey` helper beside it — would still have been a second reading of
+  what a version is, which is the drift the requirement exists to prevent. `sortKey` is a static
+  method on `VersionOrder` built from the same `Parsed` the comparator uses. Trailing zero
+  segments are dropped so that versions the comparator calls *equal* produce *identical* keys, not
+  merely adjacent ones: a key that distinguished `1.2` from `1.2.0` would impose an order the
+  comparator does not have, on a pair nobody can see is a pair.
+
+  **A null key is a false statement, not a missing one.** V3 adds the column and leaves earlier
+  findings null, and a null key sorts as "this advisory names no fix" — for rows that name one.
+  Writing the backfill in SQL was rejected on the same grounds as above, so
+  `FixedVersionSortBackfill` runs it once after startup, through the same `sortKey`. It repaired
+  285 rows on the maintainer's own database, which is the measure of how wrong leaving it would
+  have been.
+
+  **Two mistakes caught by verification, both invisible to the unit tests.** `SELECT DISTINCT`
+  requires every `ORDER BY` expression in the result, so the findings endpoint returned 500 for
+  one value of one parameter with the whole suite green — `FindingSortTest` now walks
+  `SortField.values()` across both directions and both hand-assembled statements. And the first
+  ordering led with the severity rank, copied from `SEVERITY`, which sorts by whether a finding
+  has a CVSS score *before* the column the reader clicked; `COMPONENT` already led with its own
+  field and this now does too, with the rank left to decide the tail where nothing has a fix.
+- 2026-07-31 — **The dependency-scope filter travels under two different parameter names, on
+  purpose** (B9). The export endpoint has used `scope` since Phase 5 for its own visible/all
+  selector, so a scope *filter* called `scope` would have been silently overwritten by
+  `exportUrl`'s `params.set('scope', …)` — producing a workbook wider than the screen it claims
+  to reproduce, which is the one property the shared `FindingQuery` exists to guarantee. It is
+  `scope_filter` on the export and `scope` on the findings endpoint, emitted by the same builder
+  with the name passed in, so the two cannot drift apart by editing one of them.
+
+  **The filter is in the view-options menu rather than the toolbar**, as the item required, and
+  the reason was re-measured rather than taken on trust: the controls row is a single 39px line
+  and a second chip row would have undone the tidying that put density and columns behind one
+  menu. Scope is also the narrower question of the two — severity decides whether a row is worth
+  reading at all, scope decides what you could do about it.
+
+  **Default is every scope, which is the opposite of the severity default and deliberately so.**
+  Severity opens narrowed because most rows are not worth reading; there is no scope that is
+  normally not worth reading. Unticking the last box falls back to all three rather than
+  emptying the table, matching the rule severity already follows — an empty table reads as a
+  broken screen, not as a filter.
+- 2026-07-31 — **Three smaller B-items, recorded here because each turned on a decision the item
+  itself did not settle.**
+
+  **B4 — a partial upload failure is a result, not an error.** `SbomProvider.upload` never
+  rejects for a failed file: throwing would discard the outcomes of the files that *did* import,
+  which is the information the item exists to preserve. Two consequences follow — the selection
+  lands on the last file that actually imported rather than the last attempted, and the panel
+  stays open holding the per-file report when anything failed, since closing it would leave four
+  new cards in the sidebar and no account of the fifth.
+
+  **B5 — the download is named after the upload, not after the storage.** Documents are stored as
+  `<uuid>.cdx.json` because osv-scanner picks its parser from the filename, and handing a reader
+  a uuid would make an implementation detail the name of their own file. The row-action cluster
+  that carries it reserves space in the card's filename *permanently* rather than on hover: a
+  name that reflowed the moment the pointer arrived would be worse than a little space that is
+  always there.
+
+  **B7 — the module is dropped in the renderer, not in the API.** Routes still arrive
+  module → … → component inclusive, because a route that did not name its own origin would be
+  ambiguous to anything but this panel, and `BumpScope` reads the same routes. With the module
+  gone from every line the list needed something else to say it belongs to the heading above it,
+  so the indent and hairline rule replace the word that was being repeated.

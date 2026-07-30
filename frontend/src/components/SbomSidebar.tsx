@@ -1,10 +1,10 @@
 import { useState } from 'react';
 
-import { SEVERITY_LABELS } from '../api/client';
+import { SEVERITY_LABELS, sbomDocumentUrl } from '../api/client';
 import type { Sbom, SeverityBand } from '../api/client';
 import { useSboms } from '../sboms/SbomProvider';
 import { SbomUploadForm } from './SbomUploadForm';
-import { ChevronLeftIcon, ChevronRightIcon } from './icons';
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from './icons';
 
 function formatUploadedAt(iso: string): string {
   const date = new Date(iso);
@@ -30,6 +30,12 @@ const CARD_BANDS: SeverityBand[] = ['CRITICAL', 'HIGH', 'MEDIUM'];
  * table all exist to prevent.
  */
 function SbomRisk({ sbom }: { sbom: Sbom }) {
+  // Said before the counts rather than beside them: while a scan is running the numbers are
+  // whatever was known beforehand, and "0 critical" from a document still being read is the
+  // same false reassurance "Not scanned" exists to prevent.
+  if (sbom.scanning) {
+    return <span className="sbom-card__meta">Scanning…</span>;
+  }
   if (sbom.scannedComponents === 0) {
     return <span className="sbom-card__meta">Not scanned</span>;
   }
@@ -176,15 +182,29 @@ export function SbomSidebar({ collapsed, onToggleCollapsed }: SbomSidebarProps) 
                   )}
                 </button>
 
-                <button
-                  type="button"
-                  className="icon-button sbom-row__delete"
-                  onClick={() => onRemove(sbom.id, sbom.filename)}
-                  aria-label={`Delete ${sbom.filename}`}
-                  title="Delete"
-                >
-                  ×
-                </button>
+                <div className="sbom-row__actions">
+                  {/* A plain link, not a fetch: the browser does the download and takes the
+                      filename from the response, which is the name it was uploaded under. */}
+                  <a
+                    className="icon-button sbom-row__action"
+                    href={sbomDocumentUrl(sbom.id)}
+                    download
+                    aria-label={`Download ${sbom.filename}`}
+                    title="Download the uploaded document"
+                  >
+                    <DownloadIcon />
+                  </a>
+
+                  <button
+                    type="button"
+                    className="icon-button sbom-row__action"
+                    onClick={() => onRemove(sbom.id, sbom.filename)}
+                    aria-label={`Delete ${sbom.filename}`}
+                    title="Delete"
+                  >
+                    ×
+                  </button>
+                </div>
               </li>
             );
           })}

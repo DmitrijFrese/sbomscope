@@ -56,6 +56,17 @@ export function FilesIcon(props: IconProps) {
   );
 }
 
+/** Arrow into a tray: the stored document, handed back as it arrived. */
+export function DownloadIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3v11" />
+      <path d="M8 10.5l4 4 4-4" />
+      <path d="M4.5 17v2.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V17" />
+    </Icon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>

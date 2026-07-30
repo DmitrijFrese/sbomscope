@@ -206,21 +206,36 @@ body {
   position: relative;
 }
 
-.sbom-row__delete {
+/* Both row actions in one cluster, revealed together. Hidden until the row is hovered or
+   one of them is focused, so the card stays a card and not a toolbar. */
+.sbom-row__actions {
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
-  width: 24px;
-  height: 24px;
-  font-size: 16px;
-  line-height: 1;
+  display: flex;
+  gap: 2px;
   opacity: 0;
   transition: opacity var(--transition);
 }
 
-.sbom-row:hover .sbom-row__delete,
-.sbom-row__delete:focus-visible {
+.sbom-row:hover .sbom-row__actions,
+.sbom-row__actions:focus-within {
   opacity: 1;
+}
+
+/* Two-class selector deliberately: .icon-button's own 32px is declared later in this file
+   and would otherwise win on source order, giving a 66px cluster in a 280px column. */
+.sbom-row__actions .icon-button {
+  width: 24px;
+  height: 24px;
+  font-size: 16px;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.sbom-row__actions .icon-button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .sbom-card__path {
@@ -240,6 +255,10 @@ body {
   display: block;
   font-weight: 500;
   overflow-wrap: anywhere;
+  /* Room for the row actions, reserved permanently rather than on hover. They sit over this
+     line, and a filename that reflowed the moment the pointer arrived would be worse than a
+     little space that is always there. Measured to clear both controls exactly. */
+  padding-right: 46px;
 }
 
 .sbom-card__meta {
@@ -538,6 +557,48 @@ body {
 .dropzone:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* The per-file report after a multi-file upload. Successes stay in the list beside the
+   failures: a list of only what went wrong leaves the reader to work out which of five names
+   is missing from it. */
+.upload-results {
+  margin: var(--space-3) var(--space-4) 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.upload-result {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  border-left: 3px solid var(--border-strong);
+}
+
+.upload-result[data-failed='true'] {
+  border-left-color: var(--severity-critical);
+  background: color-mix(in srgb, var(--severity-critical) 8%, transparent);
+}
+
+.upload-result__name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-result__detail {
+  color: var(--text-secondary);
+}
+
+.upload-result[data-failed='true'] .upload-result__detail {
+  color: var(--severity-critical);
 }
 
 .form-error {
@@ -1428,6 +1489,13 @@ body {
   color: var(--text-secondary);
 }
 
+/* What "System" currently resolves to. Part of the label rather than the hint below it, and
+   quieter than the label, so it reads as a state the option is in and not as its name. */
+.setting-option__resolved {
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
 .setting-group__note {
   margin: var(--space-3) 0 0;
   font-size: 13px;
@@ -1939,6 +2007,13 @@ body {
   font-size: 12px;
 }
 
+/* The step the module declares — the only version on the line the reader can change.
+   Weight, not colour: colour already means severity in this panel, and the name is already
+   a link, so a second colour would be a third meaning on one word. */
+.graph-node[data-direct='true'] .mono {
+  font-weight: 600;
+}
+
 /* A marker rather than colouring the name: the name is a link, and recolouring links by
    risk would make "vulnerable" and "clickable" the same signal. */
 .graph-node__flag {
@@ -1965,13 +2040,28 @@ body {
 }
 
 /* Wraps rather than scrolling: a route is a sentence, and a sentence you have to scroll
-   sideways to finish is worse than one on two lines. */
+   sideways to finish is worse than one on two lines.
+
+   Which is exactly why routes need space between them: a wrapped route runs onto a second
+   line, and with no gap the reader cannot tell that second line from the next route. Measured
+   at 0px before this. */
 .route {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1);
   padding: var(--space-1) 0;
+}
+
+.route + .route {
+  margin-top: var(--space-2);
+}
+
+/* Indented under the module heading, now that the module is no longer repeated as step 1 of
+   every line — the indent is what carries "these belong to that heading" instead. */
+.route-list {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
 }
 
 .route__step {

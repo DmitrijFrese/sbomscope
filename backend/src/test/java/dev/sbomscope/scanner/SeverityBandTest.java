@@ -91,7 +91,7 @@ class SeverityBandTest {
     private int rowsIn(SeverityBand band) {
         return repository.countRows(sbomId,
                 new FindingQuery(FindingQuery.SortField.SEVERITY, false, null,
-                        EnumSet.of(band), null, null));
+                        EnumSet.of(band), null, null, null));
     }
 
     @Test

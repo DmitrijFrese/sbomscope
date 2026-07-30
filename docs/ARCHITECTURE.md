@@ -51,7 +51,7 @@ vulnerability_scan       "this purl was checked, at this time"
 vulnerability_finding    one vulnerability affecting one purl
   id, purl → vulnerability_scan, osv_id, cve_id, summary,
   severity_score, severity_rating, cvss_vector, cvss_version,
-  fixed_version, published_at
+  fixed_version, fixed_version_sort, published_at
   UNIQUE (purl, osv_id)
 
 osv_index                the OSV archives, parsed for candidate-version evaluation
@@ -148,10 +148,43 @@ are never buried regardless of sort direction.
 
 ### One query object
 
-`FindingQuery` carries sort, direction, text filter, severity bands, limit and offset.
-The view, the row counts and the export all pass through the same object into the same
-SQL, which is what guarantees an exported spreadsheet matches the screen it came from.
+`FindingQuery` carries sort, direction, text filter, severity bands, **dependency scopes**,
+limit and offset. The view, the row counts and the export all pass through the same object into
+the same SQL, which is what guarantees an exported spreadsheet matches the screen it came from.
 Do not add a second code path that sorts or filters independently.
+
+`SortField` has four values, and two of them needed something the schema did not have.
+`FIXED_VERSION` orders by `fixed_version_sort` (V3), a lexically-sortable encoding of the
+version — see below. `SCOPE` orders by an explicit `CASE` ranking APPLICATION, DIRECT,
+TRANSITIVE, stated rather than left to alphabetical coincidence. Both put the chosen field
+first and the scored/unscored/clean rank second, as `COMPONENT` does: leading with the rank
+would sort by whether a finding carries a CVSS score before the column the reader clicked.
+
+**The scope filter is `scope` on the findings endpoint and `scope_filter` on the export**,
+because the export has used `scope` for its own visible/all selector since Phase 5. Both are
+emitted by one builder with the name passed in; giving them one name would let `exportUrl`
+overwrite the filter and produce a workbook wider than the screen it claims to reproduce.
+
+### Sorting by a version
+
+H2 orders `1.10.0` before `1.9.0`, because it is comparing strings. Sorting executes in SQL —
+that is what stops the view and the export diverging — so the ordering has to be a stored value
+rather than a comparator applied afterwards.
+
+`VersionOrder.sortKey` produces it, from the same parse `VersionOrder.compare` uses, because two
+readings of what a version is would eventually disagree and the table would then be ordered
+differently from the upgrade advice describing the same versions. Trailing zero segments are
+dropped so versions the comparator calls equal produce *identical* keys; each segment is padded
+to 19 digits; the release part is terminated with `'!'`, which sorts below every digit, so a
+shorter version sorts before one that extends it; and a release is marked `'~'` against a
+pre-release's `'-'` + suffix, reproducing "a pre-release is on the way to the release".
+`VersionSortKeyTest` asserts the two agree across every version string in the committed
+fixtures. **NULL means no fix, and sorts last in both directions** — "no fix" is not a version
+and must not answer "which fix is furthest away".
+
+`FixedVersionSortBackfill` fills the key in once after startup for findings written before V3.
+A null key would otherwise sort as though the advisory named no fix, which is a false statement
+about an advisory rather than a cosmetic mis-ordering.
 
 ---
 
@@ -472,14 +505,42 @@ to record what ran, invokes the scanner against the stored document, parses the 
 resolves packages back to purls, then writes a scan row for **every** component and
 replaces that component's findings wholesale (so a withdrawn advisory disappears).
 
+**Automatic scan** — `AutomaticScanner`, on a single daemon thread. After an upload, and on
+`ApplicationReadyEvent` for every SBOM holding a component with no `vulnerability_scan` row
+(`VulnerabilityRepository.sbomIdsWithUnscannedComponents`). Permitted by constraint 2 because
+running the scanner against an archive already on disk sends nothing anywhere — see the
+constraint for where that line is drawn. Gated on `ScanService.readiness` per SBOM and skipped
+**silently** when it is not met, since a machine with no scanner has not failed at anything.
+The in-flight set is surfaced as `scanning` on the SBOM list, so the sidebar can mark a card and
+pick up the new counts in the same poll. The activity entry records the *trigger*, written
+before the run; the counts are the scan's own entry, shared with the manual path.
+
+**Download the stored document** — `SbomController.document`. The stored bytes, under the
+filename it was uploaded with rather than the `<uuid>.cdx.json` it is stored as. 404 where the
+file has been swept, which is a real state: `StoredDocumentSweeper` is deliberately
+one-directional, so a row can outlive its document.
+
 **View** — `ScanController.findings` returns a page of `FindingRow` plus totals: the
 unfiltered vulnerability count for the headline, and the filtered row count for paging
 and export labels.
 
 **Export** — `ScanController.export` → `FindingsExcelExporter`. Two scopes: `visible`
-reproduces the current page, filter and sort; `all` keeps sort and severity selection but
-drops text filter and paging. Registry URLs come from `RegistryLinks`, the same code the
-API sends to the browser, so view and export cannot drift.
+reproduces the current page, filter and sort; `all` keeps sort, severity and dependency-scope
+selection but drops text filter and paging. Registry URLs come from `RegistryLinks`, the same
+code the API sends to the browser, so view and export cannot drift.
+
+`RegistryLinks.forPurl` returns **two** destinations, `Links(artifactUrl, versionUrl)`, from one
+parse — so no call site can take one without the other, which is the mechanical reason the
+component name and the version cell cannot end up linked differently in the view and the export.
+The name reaches the artifact page, which resolves whenever the artifact exists; the version
+cell reaches that exact version, which for a vendor-patched `a.b.c.d` build may not exist at
+all. A purl's `repository_url` qualifier is honoured where the host is a public repository a
+downstream reader can reach, and produces **no link on either half** otherwise — a link into a
+private Artifactory is useless to that reader, and Central would be a confident 404. That is not
+in tension with the 2026-07-26 "links stay public" decision: that one refuses a *setting* that
+repoints everything at one mirror, while this is the document stating where one artifact lives.
+Whether a link resolves is never tested, because asking a registry about a specific artifact is
+constraint 1's category 3.
 
 **Index** — `OsvDatabaseService` → `OsvArchiveMatcher.buildIndex`. Runs as a visible second
 phase after a download, and on demand for an archive carried across by hand — being *present*

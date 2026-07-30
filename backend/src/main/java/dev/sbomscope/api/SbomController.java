@@ -4,9 +4,15 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,9 +33,11 @@ import dev.sbomscope.sbom.DependencyGraphService;
 import dev.sbomscope.sbom.DependencyScope;
 import dev.sbomscope.sbom.GraphNode;
 import dev.sbomscope.sbom.InvalidSbomException;
+import dev.sbomscope.sbom.SbomFileStore;
 import dev.sbomscope.sbom.SbomService;
 import dev.sbomscope.sbom.StoredComponent;
 import dev.sbomscope.sbom.StoredSbom;
+import dev.sbomscope.scanner.AutomaticScanner;
 import dev.sbomscope.scanner.FindingQuery;
 import dev.sbomscope.scanner.SbomSeverity;
 import dev.sbomscope.scanner.ScanService;
@@ -43,15 +51,20 @@ class SbomController {
 
     private final SbomService service;
     private final ScanService scans;
+    private final AutomaticScanner autoScans;
+    private final SbomFileStore files;
     private final DependencyGraphService graphs;
     private final UpgradeAdviceService advice;
     private final BumpProbeService bumpProbes;
     private final SettingsService settings;
 
-    SbomController(SbomService service, ScanService scans, DependencyGraphService graphs,
-                   UpgradeAdviceService advice, BumpProbeService bumpProbes, SettingsService settings) {
+    SbomController(SbomService service, ScanService scans, AutomaticScanner autoScans,
+                   SbomFileStore files, DependencyGraphService graphs, UpgradeAdviceService advice,
+                   BumpProbeService bumpProbes, SettingsService settings) {
         this.service = service;
         this.scans = scans;
+        this.autoScans = autoScans;
+        this.files = files;
         this.graphs = graphs;
         this.advice = advice;
         this.bumpProbes = bumpProbes;
@@ -77,9 +90,18 @@ class SbomController {
              */
             int scannedComponents,
             /** Rows per band across the whole SBOM, unfiltered. Every band is present. */
-            Map<FindingQuery.SeverityBand, Integer> severityCounts) {
+            Map<FindingQuery.SeverityBand, Integer> severityCounts,
+            /**
+             * An automatic scan is queued or running for this SBOM right now.
+             *
+             * <p>Carried on the list itself rather than on an endpoint of its own, because
+             * the counts beside it are what change when the scan finishes — one poll of this
+             * list both clears the marker and updates the numbers, and two sources could
+             * disagree about which of the two had happened.
+             */
+            boolean scanning) {
 
-        static SbomResponse from(StoredSbom sbom, SbomSeverity severity) {
+        static SbomResponse from(StoredSbom sbom, SbomSeverity severity, boolean scanning) {
             SbomSeverity risk = severity == null ? SbomSeverity.notScanned() : severity;
             return new SbomResponse(
                     sbom.id(),
@@ -89,7 +111,8 @@ class SbomController {
                     sbom.specVersion(),
                     sbom.componentCount(),
                     risk.scannedComponents(),
-                    risk.counts());
+                    risk.counts(),
+                    scanning);
         }
     }
 
@@ -104,10 +127,13 @@ class SbomController {
             boolean root,
             /** APPLICATION, DIRECT or TRANSITIVE. */
             DependencyScope scope,
-            /** Public registry page, or null for ecosystems we cannot link. */
-            String registryUrl) {
+            /** The artifact's own registry page, or null where we have nothing safe to link. */
+            String registryArtifactUrl,
+            /** This exact version's page, or null where that version has none. */
+            String registryVersionUrl) {
 
         static ComponentResponse from(StoredComponent component) {
+            RegistryLinks.Links links = RegistryLinks.forPurl(component.purl());
             return new ComponentResponse(
                     component.id(),
                     component.coordinates(),
@@ -118,7 +144,8 @@ class SbomController {
                     component.type(),
                     component.root(),
                     component.scope(),
-                    RegistryLinks.forPurl(component.purl()));
+                    links.artifactUrl(),
+                    links.versionUrl());
         }
     }
 
@@ -134,8 +161,15 @@ class SbomController {
         try (var content = file.getInputStream()) {
             StoredSbom stored = service.importSbom(
                     originalFilename(file), workspacePath, content);
+
+            // Queued, never awaited: importing a document must not take as long as scanning
+            // it. The response already carries `scanning`, so the card can say so on arrival
+            // rather than only on the next poll.
+            autoScans.scanLater(stored.id(), AutomaticScanner.Trigger.UPLOAD);
+
             return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(SbomResponse.from(stored, scans.severityFor(stored.id())));
+                    .body(SbomResponse.from(stored, scans.severityFor(stored.id()),
+                            autoScans.isInFlight(stored.id())));
         } catch (IOException e) {
             throw new InvalidSbomException("The uploaded file could not be read.", e);
         }
@@ -146,16 +180,48 @@ class SbomController {
         // One lookup for the whole list rather than one per entry: this is what the sidebar
         // renders, and it re-renders on every upload, deletion and scan.
         Map<UUID, SbomSeverity> risk = scans.severityBySbom();
+        Set<UUID> scanning = autoScans.inFlight();
         return service.findAll().stream()
-                .map(sbom -> SbomResponse.from(sbom, risk.get(sbom.id())))
+                .map(sbom -> SbomResponse.from(sbom, risk.get(sbom.id()), scanning.contains(sbom.id())))
                 .toList();
     }
 
     @GetMapping("/{id}")
     SbomResponse get(@PathVariable UUID id) {
         return service.findById(id)
-                .map(sbom -> SbomResponse.from(sbom, scans.severityFor(id)))
+                .map(sbom -> SbomResponse.from(sbom, scans.severityFor(id), autoScans.isInFlight(id)))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM"));
+    }
+
+    /**
+     * The document exactly as it was uploaded.
+     *
+     * <p>The stored bytes, not a re-serialisation of our parse: this is the file osv-scanner
+     * reads, so it is also the one worth handing to somebody else — and anything reconstructed
+     * here would quietly launder a parsing mistake into what the reader believes they were
+     * given.
+     *
+     * <p>404 where the document has been swept. The SBOM row can outlive its file (the sweeper
+     * is deliberately one-directional, and a schema reset leaves the disk untouched), and that
+     * is the same state a re-scan already reports as "upload it again".
+     */
+    @GetMapping("/{id}/document")
+    ResponseEntity<Resource> document(@PathVariable UUID id) {
+        StoredSbom sbom = service.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM"));
+
+        if (!files.exists(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "The uploaded document for this SBOM is no longer on disk.");
+        }
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                // The name it arrived under, not the <uuid>.cdx.json it is stored as — that
+                // filename is an implementation detail of the scanner's parser selection.
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(sbom.filename()).build().toString())
+                .body(new FileSystemResource(files.pathFor(id)));
     }
 
     @GetMapping("/{id}/components")

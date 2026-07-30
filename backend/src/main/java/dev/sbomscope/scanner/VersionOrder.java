@@ -56,6 +56,62 @@ public final class VersionOrder implements Comparator<String> {
         return a.preRelease.compareTo(b.preRelease);
     }
 
+    /**
+     * A string that sorts lexically in exactly the order {@link #compare} would put versions.
+     *
+     * <p>Here rather than in a helper of its own, and built from {@link Parsed}, because the
+     * two must not be two readings of what a version is. The table sorts by this key in SQL —
+     * H2 puts {@code 1.10.0} before {@code 1.9.0} lexically, which is the whole problem — while
+     * every other version decision in the codebase goes through the comparator, and a
+     * disagreement between them would show up as a findings table ordered differently from the
+     * upgrade advice describing the same versions.
+     *
+     * <p>The encoding, and why each piece is what it is:
+     *
+     * <ul>
+     *   <li><b>Trailing zero segments are dropped</b>, because the comparator treats a missing
+     *       part as zero — {@code 1.2} and {@code 1.2.0} are the same version and must produce
+     *       the same key, not merely adjacent ones.</li>
+     *   <li><b>Each segment is padded to 19 digits</b>, the width of {@link Long#MAX_VALUE}, so
+     *       no segment a parse can produce is ever truncated. Wasteful to look at and the only
+     *       width with no failure case.</li>
+     *   <li><b>The release part is terminated by {@code '!'}</b>, which sorts below every
+     *       digit. That is what makes a shorter version sort before a longer one that extends
+     *       it: after the trailing zeros are gone, extra segments are non-zero, and the
+     *       comparator ranks {@code 1} below {@code 1.2} for exactly that reason.</li>
+     *   <li><b>A release is marked {@code '~'} and a pre-release {@code '-'}</b> followed by
+     *       the suffix verbatim. {@code '-'} sorts below {@code '~'}, which reproduces "a
+     *       pre-release is on the way to the release, not past it", and comparing the verbatim
+     *       suffixes reproduces the comparator's own {@code String.compareTo} on them.</li>
+     * </ul>
+     *
+     * @return null for a null or blank version, so "no fix" stays distinguishable from a fix
+     *         at some version — it is not a version and must not sort as one
+     */
+    public static String sortKey(String version) {
+        if (version == null || version.isBlank()) {
+            return null;
+        }
+        Parsed parsed = Parsed.of(version);
+
+        int significant = parsed.release.length;
+        while (significant > 0 && parsed.release[significant - 1] == 0L) {
+            significant--;
+        }
+
+        StringBuilder key = new StringBuilder();
+        for (int index = 0; index < significant; index++) {
+            key.append("%019d".formatted(parsed.release[index]));
+        }
+        key.append('!');
+        if (parsed.preRelease == null) {
+            key.append('~');
+        } else {
+            key.append('-').append(parsed.preRelease);
+        }
+        return key.toString();
+    }
+
     /** Release numbers, plus whatever followed the first {@code -}. */
     private record Parsed(long[] release, String preRelease) {
 

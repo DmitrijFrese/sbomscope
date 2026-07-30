@@ -111,16 +111,21 @@ public class FindingsExcelExporter {
      *
      * <p>Advisory destinations come from {@link AdvisoryLinks} and component destinations
      * from {@link RegistryLinks} — the same code the API sends to the browser, so a link
-     * here cannot point somewhere else than the one in the table this came from.
+     * here cannot point somewhere else than the one in the table this came from. That
+     * includes the split into two destinations: the component name carries the artifact
+     * page, which resolves whenever the artifact exists, and the version cell carries the
+     * version-specific page, which for a vendor-patched build may not exist at all. Linking
+     * only one of the two here would be exactly the drift sharing this class prevents.
      */
     private void write(Row row, int index, ExportColumn column, FindingRow entry,
                        CreationHelper helper, CellStyle linkStyle) {
 
         switch (column) {
             case COMPONENT -> writeLinked(row, index, entry.coordinates(),
-                    RegistryLinks.forPurl(entry.purl()), helper, linkStyle);
+                    RegistryLinks.forPurl(entry.purl()).artifactUrl(), helper, linkStyle);
 
-            case VERSION -> writeText(row, index, entry.version());
+            case VERSION -> writeLinked(row, index, entry.version(),
+                    RegistryLinks.forPurl(entry.purl()).versionUrl(), helper, linkStyle);
 
             // "root" rather than "application" for the one component the document describes:
             // it is an application component, but the distinction is worth keeping visible.
@@ -204,6 +209,7 @@ public class FindingsExcelExporter {
             row = writePair(sheet, row, labelStyle, "Scope", description.scope());
             row = writePair(sheet, row, labelStyle, "Sorted by", description.sortedBy());
             row = writePair(sheet, row, labelStyle, "Severity filter", description.severityFilter());
+            row = writePair(sheet, row, labelStyle, "Scope filter", description.scopeFilter());
             row = writePair(sheet, row, labelStyle, "Text filter", description.textFilter());
             row = writePair(sheet, row, labelStyle, "Columns", description.columns());
         }

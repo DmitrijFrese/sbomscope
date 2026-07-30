@@ -66,12 +66,12 @@ written to a log you can read inside the application.
 
 | Feature | Description |
 |---|---|
-| **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. |
+| **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. Several files at once, reported per file so one malformed document does not hide the rest. The stored document can be downloaded back, byte for byte. |
 | **Workspace usage detection** | Optionally supply a path to your source tree. SBOMscope scans it for imports/references to vulnerable libraries and reports the total hit count, the full list of affected files with fully-qualified paths, and a ±5-line preview of any selected hit with language-aware syntax highlighting. |
 | **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below). |
 | **Upgrade paths** | Offline, from the advisory data alone: pin, upgrade, or exclude, with the exact fix version an advisory names. For a transitive dependency Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — SBOMscope drives your own `mvn` to check, ranking every major line as its own candidate rather than guessing at one winner. Each candidate lists the vulnerabilities it would still carry — not a count, since which one remains is the decision. |
 | **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves, within the scope of your SBOM. |
-| **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD and library cells hyperlinked to Maven Central or npmjs.com. |
+| **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD, library cells to the artifact's registry page and version cells to that exact version. A second sheet records what was selected, so a filtered workbook can account for its own size. |
 
 ## How it works
 
@@ -93,14 +93,27 @@ CVE cells link to [NVD](https://nvd.nist.gov/), but the NVD **API** is deliberat
 used — it contributes to none of the columns shown, and the link is derivable from the
 CVE identifier alone.
 
+Library links are public by design, because an exported spreadsheet is usually read by somebody
+outside the network it was produced on. Where a purl declares its own `repository_url` —
+vendor rebuilds such as Red Hat's `a.b.c.d` artifacts do — that destination is honoured instead,
+provided the host is a public repository a reader can actually reach. For anywhere else, no link
+at all: a link into a private Artifactory is useless to the reader, and Maven Central would be a
+confident 404.
+
 ### Caching and freshness
 
 Vulnerability data is cached per component (keyed by package URL), shared across every
 SBOM you've uploaded — so a library appearing in five SBOMs is looked up once. Each
 cache entry records when it was last refreshed and is flagged stale after a
 configurable threshold (default: 7 days), so the UI can tell you the data may be
-outdated. Refreshing is always a deliberate action: per-component or global, never
-automatic.
+outdated.
+
+**Downloading advisory data is always a deliberate action; analysing what is already on disk is
+not.** A newly uploaded SBOM is scanned by itself, and at startup anything holding a component
+that has never been checked is scanned in the background — after the application is serving,
+one at a time, and only where you have configured a scanner and its archive is present. That
+sends nothing anywhere, which is the whole reason it needs no asking; every run is written to
+the activity log. Re-scanning against a freshly downloaded archive stays a button you press.
 
 ## Interface
 
@@ -182,8 +195,10 @@ at it.
 4. Download the offline database for the ecosystems you need — Maven is around 10 MB,
    npm around 200 MB, each with its own button and a progress bar.
 
-Then press **Scan for vulnerabilities** on any uploaded SBOM. Everything from that point
-runs offline.
+From that point everything runs offline, and uploaded SBOMs are scanned without being asked —
+including anything already uploaded that has never been checked, picked up the next time
+SBOMscope starts. **Scan for vulnerabilities** stays available for re-running the analysis
+against a refreshed archive.
 
 On a machine with no internet access, copy the database directory across from a machine
 that has it; the layout is all osv-scanner needs.

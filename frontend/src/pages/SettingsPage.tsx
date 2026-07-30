@@ -19,7 +19,7 @@ const THEME_OPTIONS: ReadonlyArray<{
 ];
 
 export function SettingsPage() {
-  const { preference, resolved, setPreference } = useTheme();
+  const { preference, resolved, systemTheme, setPreference } = useTheme();
   const { hash } = useLocation();
 
   // React Router only pushes history on an in-app <Link>; it does not repeat the browser's
@@ -62,7 +62,21 @@ export function SettingsPage() {
                 onChange={() => setPreference(option.value)}
               />
               <span>
-                <span className="setting-option__label">{option.label}</span>
+                <span className="setting-option__label">
+                  {option.label}
+                  {/* On a machine whose OS is already dark, "System" and "Dark" render
+                      identically, so the option looked inert. Saying what it currently
+                      resolves to — live, since ThemeProvider tracks the media query — is
+                      the whole fix; the mechanism was never wrong. Shown whichever option
+                      is selected, because it also answers "what would I get if I picked
+                      this", which `resolved` cannot. */}
+                  {option.value === 'system' && (
+                    <span className="setting-option__resolved">
+                      {' '}
+                      (currently {systemTheme})
+                    </span>
+                  )}
+                </span>
                 <span className="setting-option__hint">{option.hint}</span>
               </span>
             </label>

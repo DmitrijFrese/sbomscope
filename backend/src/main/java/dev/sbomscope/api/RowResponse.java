@@ -50,13 +50,20 @@ record RowResponse(
         /** NVD; null when the advisory has no CVE counterpart. */
         String cveUrl,
         /**
-         * Public registry page. Supplied by the backend rather than built in the browser so
-         * the view and the export cannot drift apart — it is the same call the exporter
-         * makes.
+         * The artifact's own registry page, version-independent. Supplied by the backend
+         * rather than built in the browser so the view and the export cannot drift apart —
+         * it is the same call the exporter makes.
          */
-        String registryUrl) {
+        String registryArtifactUrl,
+        /**
+         * The page for this exact version, which does not exist for every version — a
+         * vendor-patched {@code a.b.c.d} build has no page on Central. Null then, and the
+         * artifact page above is what the reader is offered instead.
+         */
+        String registryVersionUrl) {
 
     static RowResponse from(FindingRow row) {
+        RegistryLinks.Links links = RegistryLinks.forPurl(row.purl());
         return new RowResponse(
                 row.purl(),
                 row.coordinates(),
@@ -74,6 +81,7 @@ record RowResponse(
                 row.publishedAt(),
                 AdvisoryLinks.osvUrl(row.osvId()),
                 AdvisoryLinks.cveUrl(row.cveId()),
-                RegistryLinks.forPurl(row.purl()));
+                links.artifactUrl(),
+                links.versionUrl());
     }
 }
