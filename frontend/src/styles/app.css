@@ -1592,6 +1592,17 @@ body {
   }
 }
 
+/* What the bump rows are an answer about — which library, and where it holds. Sits above the
+   table rather than repeating in a column, since every row of one run shares it. */
+.bump-scope {
+  margin-bottom: var(--space-3);
+}
+
+.bump-scope__line {
+  margin: 0 0 var(--space-1);
+  font-size: 13px;
+}
+
 /* ------------------------------------------------------- monitoring ---- */
 
 /* A button that has to read as a link, because what it does is navigate — it is only a button

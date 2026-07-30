@@ -475,6 +475,8 @@ export interface BumpProgress {
   candidates: BumpCandidate[];
   remedy: Remedy | null;
   message: string | null;
+  /** Null until calibration has run — the deciding ancestor is read from that probe's tree. */
+  scope: BumpScope | null;
 }
 
 /** Starts the probe if one is not already running or cached, and returns current progress. */
@@ -799,6 +801,28 @@ export interface ProbeTask {
 }
 
 export const PROBE_FINISHED: readonly ProbeTask['state'][] = ['COMPLETED', 'STOPPED', 'FAILED'];
+
+/**
+ * What the ranked candidates are an answer *about* — two diamonds, one level apart.
+ *
+ * Across modules, several may own the component and only the most-affected one is probed.
+ * Within that module, several direct dependencies may pull it in and only one is the
+ * declaration Maven honours. A version with neither stated does not say what to bump, nor
+ * where the answer holds.
+ */
+export interface BumpScope {
+  module: string | null;
+  /** Owning modules that were not probed; their direct sets differ, so their answer may too. */
+  otherModules: string[];
+  /** The direct dependency being bumped. */
+  ancestor: string;
+  ancestorVersion: string | null;
+  /** Also reach the component, but Maven does not resolve through them, so bumping them alone
+   *  cannot move it. Listed, never ranked. */
+  otherAncestors: string[];
+  /** False when the tree could not be read and the ancestor fell back to the shortest route. */
+  decidedByMaven: boolean;
+}
 
 /** Running, queued, and recently finished — live rows first, then this session's history. */
 export function fetchProbeQueue(): Promise<ProbeTask[]> {

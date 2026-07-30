@@ -389,6 +389,61 @@ public class BumpProbeService {
         return graph.reachedFrom().getFirst().module().bomRef() + "->" + component.coordinates();
     }
 
+    /**
+     * The declaring ancestor Maven actually resolves the target through, not the one on the
+     * shortest SBOM route.
+     *
+     * <p>These are different questions and the difference decides whether a bump does anything.
+     * Maven picks by depth in the <em>resolved</em> tree; the graph's routes are ordered by
+     * length in the SBOM. Where they disagree, bumping the shortest-route ancestor moves the
+     * resolved version by nothing at all — a result that reads as "upstream has not fixed this"
+     * when it actually means "this declaration never won".
+     *
+     * <p>Calibration already resolved the untouched module and its tree names the winner, so
+     * this costs nothing. Falls back to the first route when the tree could not be read for
+     * provenance, or when the winner is not one of the ancestors the graph knows about —
+     * reported through {@link BumpScope#decidedByMaven} rather than silently.
+     */
+    private GraphNode decidingAncestor(List<GraphNode> ancestorNodes, ProbeOutcome calibration) {
+        String declaredBy = calibration.targetDeclaredBy();
+        if (declaredBy == null) {
+            return ancestorNodes.getFirst();
+        }
+        return ancestorNodes.stream()
+                .filter(node -> declaredBy.equals(node.coordinates()))
+                .findFirst()
+                .orElse(ancestorNodes.getFirst());
+    }
+
+    /**
+     * Publishes what this run is an answer about, so the panel can say it rather than implying
+     * it: which module, which declaring ancestor, and what else reaches the component and was
+     * deliberately not ranked.
+     */
+    private void recordScope(String key, BumpRequest request, List<GraphNode> ancestorNodes,
+                              GraphNode chosen, ProbeOutcome calibration) {
+        List<ComponentGraph.ModuleRoutes> owners = request.graph().reachedFrom();
+        List<String> otherModules = owners.stream()
+                .skip(1)
+                .map(owner -> owner.module().coordinates())
+                .toList();
+        List<String> otherAncestors = ancestorNodes.stream()
+                .filter(node -> !node.coordinates().equals(chosen.coordinates()))
+                .map(GraphNode::coordinates)
+                .toList();
+
+        BumpScope scope = new BumpScope(
+                owners.isEmpty() ? null : owners.getFirst().module().coordinates(),
+                otherModules,
+                chosen.coordinates(),
+                chosen.version(),
+                otherAncestors,
+                chosen.coordinates().equals(calibration.targetDeclaredBy()));
+
+        progressByKey.compute(key, (k, current) ->
+                (current == null ? BumpProgress.starting() : current).withScope(scope));
+    }
+
     /** Every distinct Maven ancestor, within the most-affected module, that reaches the target. */
     private List<GraphNode> distinctAncestorsInPrimaryModule(ComponentGraph graph) {
         if (graph.reachedFrom().isEmpty()) {
@@ -480,10 +535,11 @@ public class BumpProbeService {
                 return;
             }
 
-            // Step 1 — rank every major line for the primary declaring ancestor. Not "first
+            // Step 1 — rank every major line for the ancestor that actually decides. Not "first
             // success wins": a later major being affected proves nothing about an earlier one,
             // and Tier 1's own "candidates, not a recommendation" shape applies here too.
-            GraphNode primary = ancestorNodes.getFirst();
+            GraphNode primary = decidingAncestor(ancestorNodes, calibration);
+            recordScope(key, request, ancestorNodes, primary, calibration);
             List<BumpCandidate> candidates = rankCandidates(
                     key, moduleDeps, primary, target, request.targetEvaluator(), context, budget);
             boolean anyClean = candidates.stream().anyMatch(BumpCandidate::clean);

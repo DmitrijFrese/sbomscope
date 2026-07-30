@@ -49,4 +49,45 @@ class MavenDependencyResolverTest {
 
         assertThat(resolver.findVersion(tree, new MavenArtifact("com.acme", "module-a"))).isNull();
     }
+
+    /**
+     * The whole-module POM declares several direct dependencies and more than one can reach the
+     * same component. Which one Maven resolved it through is the only thing that decides whether
+     * bumping does anything — and it is already written in the indentation.
+     */
+    private static final String DIAMOND = String.join("\n",
+            "dev.sbomscope.probe:probe:pom:0",
+            "+- org.keycloak:keycloak-core:jar:4.8.3.Final:compile",
+            "|  +- com.fasterxml.jackson.core:jackson-databind:jar:2.9.5:compile",
+            "|  |  \\- com.fasterxml.jackson.core:jackson-annotations:jar:2.9.0:compile",
+            "|  \\- org.bouncycastle:bcprov-jdk15on:jar:1.60:compile",
+            "\\- org.springframework.boot:spring-boot-starter-web:jar:2.1.0.RELEASE:compile",
+            "   \\- org.springframework.boot:spring-boot-starter-json:jar:2.1.0.RELEASE:compile");
+
+    @Test
+    void namesTheDirectDependencyTheTargetActuallyHangsUnder() {
+        assertThat(resolver.declaringDependencyOf(
+                DIAMOND, new MavenArtifact("com.fasterxml.jackson.core", "jackson-databind")))
+                .isEqualTo("org.keycloak:keycloak-core");
+    }
+
+    @Test
+    void walksPastIntermediateDepthsToReachTheDirectDependency() {
+        // Three levels down, under keycloak-core rather than under its own immediate parent.
+        assertThat(resolver.declaringDependencyOf(
+                DIAMOND, new MavenArtifact("com.fasterxml.jackson.core", "jackson-annotations")))
+                .isEqualTo("org.keycloak:keycloak-core");
+    }
+
+    @Test
+    void reportsNothingForAnArtifactThatIsItselfADirectDependency() {
+        // Nothing declares it on the reader's behalf, so there is no ancestor to bump.
+        assertThat(resolver.declaringDependencyOf(DIAMOND, new MavenArtifact("org.keycloak", "keycloak-core")))
+                .isNull();
+    }
+
+    @Test
+    void reportsNothingWhenTheTargetIsAbsent() {
+        assertThat(resolver.declaringDependencyOf(DIAMOND, new MavenArtifact("org.nowhere", "nothing"))).isNull();
+    }
 }

@@ -244,7 +244,8 @@ public class MavenDependencyResolver implements DependencyResolver {
             }
             resolvedVersions.put(overridden, resolvedVersion);
         }
-        return ProbeOutcome.resolved(resolvedVersions, findVersion(tree, target));
+        return ProbeOutcome.resolved(
+                resolvedVersions, findVersion(tree, target), declaringDependencyOf(tree, target));
     }
 
     private String describeOverrides(Map<MavenArtifact, String> overrides) {
@@ -396,6 +397,59 @@ public class MavenDependencyResolver implements DependencyResolver {
                     return parts[3];
                 }
             }
+        }
+        return null;
+    }
+
+    /**
+     * Which of the generated POM's own direct dependencies the artifact hangs under in the
+     * resolved tree, as {@code group:artifact}.
+     *
+     * <p><b>This is the declaration Maven actually honoured</b>, and it is a different question
+     * from which route is shortest in the SBOM — the one the search used to pick by. When a
+     * component is reached through several direct dependencies, only the winning one can change
+     * what it resolves to; bumping any other moves nothing, which is a result that reads as
+     * "upstream has not fixed it" unless the panel can say otherwise.
+     *
+     * <p>It costs no extra invocation: {@code -DoutputType=text} already writes the tree to a
+     * file this class reads, and <b>the indentation is the parent chain</b>. Maven writes three
+     * characters per level ({@code "+- "}, {@code "\- "}, {@code "|  "}, {@code "   "}), so
+     * depth is the width of that prefix over three, and the answer is the nearest line above the
+     * artifact at depth 1. {@link #findVersion} scans the same file and throws all of this away,
+     * which is why the question looked like it needed a second probe.
+     *
+     * @return null when the artifact is absent, is itself a direct dependency, or the tree is
+     *         shaped in a way this cannot read — in every case the caller says less rather than
+     *         guessing at a declaration
+     */
+    String declaringDependencyOf(String tree, MavenArtifact artifact) {
+        String prefix = artifact.groupId() + ":" + artifact.artifactId() + ":";
+        String[] lines = tree.split("\n");
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String stripped = line.replaceFirst("^[\\s|+\\\\-]*", "");
+            if (!stripped.startsWith(prefix)) {
+                continue;
+            }
+            int depth = (line.length() - stripped.length()) / 3;
+            if (depth <= 1) {
+                // Depth 0 is the generated project itself; depth 1 means the target *is* a
+                // direct dependency, so nothing declares it on the reader's behalf.
+                return null;
+            }
+            for (int j = i - 1; j >= 0; j--) {
+                String candidate = lines[j];
+                String candidateStripped = candidate.replaceFirst("^[\\s|+\\\\-]*", "");
+                if (candidateStripped.isBlank()) {
+                    continue;
+                }
+                if ((candidate.length() - candidateStripped.length()) / 3 == 1) {
+                    String[] parts = candidateStripped.strip().split(":");
+                    return parts.length >= 2 ? parts[0] + ":" + parts[1] : null;
+                }
+            }
+            return null;
         }
         return null;
     }

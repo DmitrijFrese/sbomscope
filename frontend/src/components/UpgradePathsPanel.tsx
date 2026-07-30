@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { REMEDY_LABELS, continueBump, fetchBumpProgress, fetchUpgradeAdvice, startBump } from '../api/client';
-import type { AdvisoryFix, AdvisoryHit, BumpCandidate, BumpProgress, BumpState, Remedy, UpgradeAdvice } from '../api/client';
+import type { AdvisoryFix, AdvisoryHit, BumpCandidate, BumpProgress, BumpScope, BumpState, Remedy, UpgradeAdvice } from '../api/client';
 import { bandOf, BAND_LABELS } from '../findings/presentation';
 
 const BUMP_POLL_INTERVAL_MS = 1500;
@@ -17,10 +17,42 @@ function inFlight(state: BumpState): boolean {
  *  in name (MEDIUM vs MODERATE), so both are recognised rather than only one. */
 const BAND_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'MODERATE', 'LOW', 'UNSCORED', 'UNRATED'];
 
+/** The severity styling is keyed on the CVSS band names, so GHSA's MODERATE maps onto medium
+ *  rather than getting a colour of its own for the same level. */
+const BAND_STYLE: Record<string, string> = {
+  CRITICAL: 'critical',
+  HIGH: 'high',
+  MEDIUM: 'medium',
+  MODERATE: 'medium',
+  LOW: 'low',
+  UNSCORED: 'none',
+  UNRATED: 'none',
+};
+
+const BAND_TEXT: Record<string, string> = {
+  CRITICAL: 'Critical',
+  HIGH: 'High',
+  MEDIUM: 'Medium',
+  MODERATE: 'Moderate',
+  LOW: 'Low',
+  UNSCORED: 'unscored',
+  UNRATED: 'unrated',
+};
+
 interface AdvisoryRow {
   osvId: string;
   cveId: string | null;
   band: string;
+}
+
+/** Worst first. Anything whose band is not recognised sorts last rather than silently
+ *  ranking as the least severe thing present. */
+function bySeverity(rows: AdvisoryRow[]): AdvisoryRow[] {
+  const rank = (band: string) => {
+    const index = BAND_ORDER.indexOf(band);
+    return index < 0 ? BAND_ORDER.length : index;
+  };
+  return [...rows].sort((a, b) => rank(a.band) - rank(b.band));
 }
 
 /**
@@ -76,6 +108,12 @@ function AdvisorySummary({
   const [expanded, setExpanded] = useState(false);
   if (rows.length === 0) return null;
 
+  // Sorted here rather than at each call site, so every list of advisories in this panel —
+  // the bump rows, both remedy cards, the target's own notice — reads worst first. The order
+  // the backend happened to return them in is an implementation detail of a lookup, not a
+  // ranking, and the first thing anyone wants from such a list is its worst entry.
+  const ordered = bySeverity(rows);
+
   const counts = new Map<string, number>();
   for (const row of rows) {
     counts.set(row.band, (counts.get(row.band) ?? 0) + 1);
@@ -96,7 +134,7 @@ function AdvisorySummary({
       </p>
       {expanded && (
         <ul className="target-advisories">
-          {rows.map((row) => (
+          {ordered.map((row) => (
             <li key={row.osvId}>
               <a href={advisoryUrl(row)} target="_blank" rel="noreferrer" className="mono">
                 {row.cveId ?? row.osvId}
@@ -154,6 +192,17 @@ function RemedyCard({
   );
 }
 
+/** The highest severity a candidate leaves behind, in the same chip the findings table uses. */
+function WorstRemaining({ hits }: { hits: AdvisoryHit[] }) {
+  const worst = bySeverity(rowsFromHits(hits))[0];
+  if (!worst) return null;
+  return (
+    <span className="severity" data-band={BAND_STYLE[worst.band] ?? 'none'}>
+      <span className="severity__label">{BAND_TEXT[worst.band] ?? worst.band.toLowerCase()}</span>
+    </span>
+  );
+}
+
 /**
  * One major line's ranked answer: a label, the version verified, and whatever it still
  * carries — a count by severity first, the full list (CVE-linked where one exists) one click
@@ -172,11 +221,12 @@ function BumpCandidateRow({ candidate }: { candidate: BumpCandidate }) {
       <td>
         {!candidate.probed && <span className="panel__hint">not probed</span>}
         {candidate.probed && candidate.clean && <span className="badge">clean</span>}
-        {candidate.probed && !candidate.clean && (
-          <span className={candidate.clearsCriticalAndHigh ? 'badge' : 'badge badge--warn'}>
-            {candidate.clearsCriticalAndHigh ? 'clears critical/high' : 'still critical/high'}
-          </span>
-        )}
+        {/* The worst band left, stated plainly. It replaces a critical/high binary and is
+            both more informative and one concept fewer — "Moderate" already says critical and
+            high are gone. Derived from the same array the cell beside it lists, so the two
+            cannot disagree. An unrated advisory reads as unrated, never as clean: that is the
+            NONE-versus-CLEAN rule, one level further down. */}
+        {candidate.probed && !candidate.clean && <WorstRemaining hits={candidate.stillCarries} />}
       </td>
       <td>
         <AdvisorySummary verb="Carries" rows={rowsFromHits(candidate.stillCarries)} />
@@ -200,14 +250,81 @@ function BumpCandidateRow({ candidate }: { candidate: BumpCandidate }) {
  * an earlier one is not clean, so every reachable major gets a row rather than the search
  * stopping at the first one that works.
  */
-function BumpCandidateTable({ candidates }: { candidates: BumpCandidate[] }) {
+/**
+ * What the rows below are an answer about: which library is being bumped, and where the answer
+ * holds. Both were previously decided in silence — the panel showed a version with no
+ * indication of what it was a version *of*, and named neither the module nor the competing
+ * declarations that make the choice non-obvious.
+ */
+function BumpScopeCaption({ scope }: { scope: BumpScope }) {
+  return (
+    <div className="bump-scope">
+      <p className="bump-scope__line">
+        Bumping <span className="mono">{scope.ancestor}</span>
+        {scope.ancestorVersion && (
+          <>
+            , currently <span className="mono">{scope.ancestorVersion}</span>
+          </>
+        )}
+        {scope.module && (
+          <>
+            , in <span className="mono">{scope.module}</span>
+          </>
+        )}
+        .
+      </p>
+
+      {/* The sentence that turns an inexplicable "still affected" into an understandable one.
+          Maven resolves through one declaration; bumping any of the others moves nothing, and
+          without saying so the reader reads that result as "upstream has not fixed it". */}
+      {scope.otherAncestors.length > 0 && (
+        <p className="panel__hint">
+          {scope.otherAncestors.length === 1 ? 'It is also pulled in by ' : 'It is also pulled in by '}
+          {scope.otherAncestors.map((other, index) => (
+            <span key={other}>
+              {index > 0 && ', '}
+              <span className="mono">{other}</span>
+            </span>
+          ))}
+          .{' '}
+          {scope.decidedByMaven
+            ? `Maven resolves it through ${scope.ancestor} (nearest wins), so bumping ${
+                scope.otherAncestors.length === 1 ? 'that one' : 'those'
+              } alone would not move it.`
+            : `Which declaration Maven honours could not be read from the resolved tree, so this
+               ranks the shortest route rather than the proven winner — treat it as the likely
+               one, not the verified one.`}
+        </p>
+      )}
+
+      {scope.otherModules.length > 0 && (
+        <p className="panel__hint">
+          Verified against <span className="mono">{scope.module}</span> only.{' '}
+          {scope.otherModules.map((other, index) => (
+            <span key={other}>
+              {index > 0 && ', '}
+              <span className="mono">{other}</span>
+            </span>
+          ))}{' '}
+          also {scope.otherModules.length === 1 ? 'pulls' : 'pull'} this in and{' '}
+          {scope.otherModules.length === 1 ? 'was' : 'were'} not probed — their direct sets
+          differ, so their answer may too.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BumpCandidateTable({ candidates, scope }: { candidates: BumpCandidate[]; scope: BumpScope | null }) {
   return (
     <div className="table-scroll">
+      {scope && <BumpScopeCaption scope={scope} />}
       <table className="data-table">
         <thead>
           <tr>
             <th scope="col">Option</th>
-            <th scope="col">Version</th>
+            {/* Reads as a sentence with the caption above: "Bumping keycloak-core … Bump to 9.0.3". */}
+            <th scope="col">Bump to</th>
             <th scope="col">Status</th>
             <th scope="col">Still carries</th>
             <th scope="col">Snippet</th>
@@ -338,7 +455,9 @@ function BumpAncestorCard({
 
       {!hasResult && remedy.note && <p className="remedy__note">{remedy.note}</p>}
 
-      {candidates.length > 0 && <BumpCandidateTable candidates={candidates} />}
+      {candidates.length > 0 && (
+        <BumpCandidateTable candidates={candidates} scope={progress?.scope ?? null} />
+      )}
 
       {/* Only where the search actually left something unfinished — a run that settled every
           major has nothing to continue, and offering it anyway would imply otherwise. */}

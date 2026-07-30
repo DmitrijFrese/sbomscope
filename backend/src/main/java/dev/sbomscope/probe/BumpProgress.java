@@ -22,7 +22,16 @@ import dev.sbomscope.scanner.UpgradeAdvice.Remedy;
  *                   {@code candidates} is the whole answer
  */
 public record BumpProgress(
-        State state, List<String> verdicts, List<BumpCandidate> candidates, Remedy remedy, String message) {
+        State state,
+        List<String> verdicts,
+        List<BumpCandidate> candidates,
+        Remedy remedy,
+        String message,
+        /**
+         * Which module and which declaring ancestor the rows are an answer about. Null until
+         * calibration has run, since the deciding ancestor is read from that probe's own tree.
+         */
+        BumpScope scope) {
 
     /**
      * {@code QUEUED} exists because the single background thread that runs every probe (see
@@ -35,11 +44,21 @@ public record BumpProgress(
     public enum State { IDLE, QUEUED, RUNNING, COMPLETED, FAILED }
 
     public static BumpProgress idle() {
-        return new BumpProgress(State.IDLE, List.of(), List.of(), null, null);
+        return new BumpProgress(State.IDLE, List.of(), List.of(), null, null, null);
     }
 
     public static BumpProgress starting() {
-        return new BumpProgress(State.RUNNING, List.of(), List.of(), null, null);
+        return new BumpProgress(State.RUNNING, List.of(), List.of(), null, null, null);
+    }
+
+    /**
+     * Records what this run is an answer about, once calibration has read it from the tree.
+     *
+     * <p>Carried on the progress rather than on each candidate because every row of one run
+     * shares it — it is a property of the search, not of a major line.
+     */
+    public BumpProgress withScope(BumpScope scope) {
+        return new BumpProgress(state, verdicts, candidates, remedy, message, scope);
     }
 
     /**
@@ -49,20 +68,20 @@ public record BumpProgress(
      * as having lost them.
      */
     public BumpProgress resuming() {
-        return new BumpProgress(State.RUNNING, verdicts, candidates, null, null);
+        return new BumpProgress(State.RUNNING, verdicts, candidates, null, null, scope);
     }
 
     /** Submitted, but waiting behind another component's probe on the single probe thread. */
     public static BumpProgress queued() {
         return new BumpProgress(State.QUEUED, List.of(), List.of(), null,
                 "Queued — a probe for another component is already running. This one will "
-                        + "start as soon as it finishes.");
+                        + "start as soon as it finishes.", null);
     }
 
     public BumpProgress withVerdict(String verdict) {
         List<String> updated = new ArrayList<>(verdicts);
         updated.add(verdict);
-        return new BumpProgress(State.RUNNING, List.copyOf(updated), candidates, null, null);
+        return new BumpProgress(State.RUNNING, List.copyOf(updated), candidates, null, null, scope);
     }
 
     /** The ordinary completion: a ranked list, and a remedy only when one applies. */
@@ -79,12 +98,12 @@ public record BumpProgress(
      * is the one thing a reader needs to know before deciding whether to press Continue.
      */
     public BumpProgress completed(List<BumpCandidate> candidates, Remedy remedy, String note) {
-        return new BumpProgress(State.COMPLETED, verdicts, candidates, remedy, note);
+        return new BumpProgress(State.COMPLETED, verdicts, candidates, remedy, note, scope);
     }
 
     /** For the failure/unavailable paths that never reach a ranked list at all. */
     public BumpProgress completed(Remedy remedy) {
-        return new BumpProgress(State.COMPLETED, verdicts, List.of(), remedy, null);
+        return new BumpProgress(State.COMPLETED, verdicts, List.of(), remedy, null, scope);
     }
 
     /**
@@ -97,11 +116,11 @@ public record BumpProgress(
      * they were true before the stop and still are.
      */
     public BumpProgress stopped(String note) {
-        return new BumpProgress(State.COMPLETED, verdicts, candidates, null, note);
+        return new BumpProgress(State.COMPLETED, verdicts, candidates, null, note, scope);
     }
 
     public BumpProgress failed(String message) {
-        return new BumpProgress(State.FAILED, verdicts, List.of(), null, message);
+        return new BumpProgress(State.FAILED, verdicts, List.of(), null, message, scope);
     }
 
     /** True for {@code RUNNING} and {@code QUEUED} alike: both mean a probe is already in

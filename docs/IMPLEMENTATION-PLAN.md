@@ -843,6 +843,83 @@ recorded under their own dates below rather than folded in here: the probe budge
 user-configurable, and `BumpProgress` gained a `QUEUED` state distinct from `RUNNING` once the
 single background thread's serialisation became something a reader could actually observe.
 
+#### D — say which library is being bumped, and which declaration decides — **built 2026-07-30**
+
+**Designed and built 2026-07-30**, from three observations after using pass C. None is a coding defect;
+all three are the panel failing to say what it knows or is assuming.
+
+**The diamond question exists at two levels, and the panel is silent on both.**
+
+| Level | Question | Before this pass |
+|---|---|---|
+| Across **modules** | `module-a` and `module-b` both pull this in — which is this answer for? | Probes the most-affected module only, never says so |
+| Within **one module** | `keycloak-core` and `spring-boot-starter-web` both pull it in — which are we bumping? | Ranks `ancestorNodes.getFirst()`, never names it, never mentions the others |
+
+At the second level the choice was not merely unstated, it was **made by the wrong criterion**.
+`distinctAncestorsInPrimaryModule` takes the ancestor on the shortest SBOM route; Maven picks by
+depth in the *resolved* tree. Those usually agree and are not the same thing — and pass B already
+established what follows when they differ: bumping the declaration Maven did not honour changes
+the resolved version by nothing at all, so the reader sees *"Move to 26.x → jackson still 2.9.5 →
+still affected"* with no way to tell that this is Keycloak's declaration losing rather than
+Keycloak failing to ship a fix.
+
+- [x] **Status carries the worst remaining severity**, not a binary. `Critical` / `High` /
+      `Moderate` / `Low` replaces `still critical/high` versus `clears critical/high` — strictly
+      more information *and* one fewer concept, since "Moderate" already says critical and high
+      were cleared. **Stated plainly, without a "still" prefix** (revised on review, same day):
+      the column is headed Status and the row is a candidate, so the word added nothing but
+      hedging. Derived in the frontend from
+      the same `stillCarries` array `AdvisorySummary` renders beside it, so the chip and the list
+      cannot disagree. **An unrated remaining advisory renders as `still carries (unrated)`, never
+      as clean** — the `NONE`-versus-`CLEAN` rule, one more level down.
+      `BumpCandidate.clearsCriticalAndHigh` stays in the model; it stops being a badge.
+- [x] **Name the ancestor being bumped.** Every row of one run shares it, so it belongs in a
+      caption above the table rather than a repeated column: *"Bumping `org.keycloak:keycloak-core`,
+      currently 4.8.3.Final"*. The **Version** column header becomes **Bump to**, which then reads
+      as a sentence with the caption. Today the panel shows a version with no indication of what
+      it is a version *of*.
+- [x] **Read the deciding ancestor out of the tree already on disk.** `dependency:tree` is run
+      with `-DoutputType=text` into `tree.txt`, and `findVersion` scans it line by line —
+      **discarding the indentation, which is exactly the parent chain**. Parsing depth instead
+      names the direct dependency the target actually hangs under, authoritatively, at **zero
+      extra Maven invocations**. Rank that ancestor rather than the shortest-route one.
+- [x] **List the other declaring ancestors with the reason they are not ranked**: *"`spring-boot-starter-web`
+      also pulls this in, but Maven resolves it through `keycloak-core` (nearest wins), so bumping
+      `spring-boot-starter-web` alone would not move it."* The single most useful sentence this
+      panel could add, and it is currently absent. **Decided 2026-07-30: rank the decider only.**
+      Ranking every ancestor splits a fixed budget N ways, so with three ancestors each ranking is
+      budget-truncated — the exact failure `higherReleasesUnchecked` exists to report — and buys
+      nothing, since only one of them can change the outcome. The all-ancestors combination probe
+      stays as the fallback, unchanged.
+- [x] **State the module the answer holds for**: *"Verified against `module-a`. `module-b` also
+      pulls this in and was not probed — its direct set differs, so its answer may too."*
+      **Decided 2026-07-30: state it, do not probe it** — closing the open question carried since
+      pass B. Probing every owning module multiplies the whole budget by the module count, and for
+      a library present in every backend module that is several full runs to answer a question
+      nobody asked; the honesty costs nothing and was the half that was actually missing.
+
+- [x] **Two sort orders, deliberately different.** Advisory *detail* lists sort worst-first —
+      the first thing wanted from such a list is its worst entry — and that is applied inside
+      `AdvisorySummary`, so every list in the panel inherits it. The candidate *rows* stay
+      **version ascending**, because they are a ladder from where you are to where you could go
+      and reordering them by severity would destroy the one axis blast radius varies along.
+
+**What this unblocks at no extra cost.** Two items deferred above become answerable, because both
+were waiting on provenance the probe was throwing away: *"name the component in the chain that is
+holding it"* (deferred as needing "comparing resolved trees across candidates for provenance,
+which the first-pass probe does not retain"), and the honesty half of *"which module the answer
+holds for has to be stated"*.
+
+**Verified live 2026-07-30** against `vuln-multi-module.cdx.json` with a real `mvn`.
+`jackson-databind@2.9.5` is reached through both `keycloak-core` and `spring-boot-starter-web`;
+the provenance read named **`keycloak-core`** as the deciding declaration with
+`decidedByMaven: true`, **independently agreeing with what pass B established by probing** — that
+bumping `spring-boot-starter-web` leaves jackson entirely unchanged. The panel now says so in a
+sentence instead of leaving the reader to infer it from a bump that did nothing. The severity
+change is equally visible: all 23 rows previously read `still critical/high` identically, and now
+show `Critical` up to major 9 and `High` from 10 onward, which is real signal that the binary was
+hiding.
+
 ### Logging
 
 Not a feature of upgrade paths, but this is what made it necessary: a recommendation nobody
@@ -2809,6 +2886,40 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   versions across modules, and comparing exactly those two is a headline reason to want tabs at
   all; two tabs both reading `jackson-databind` would have made the feature useless for its best
   case. Caught by a verification step selecting the wrong tab, not by reading the code.
+- 2026-07-30 — **Tier 2 pass D: the panel must say which library it is bumping, and which
+  declaration decides.** Three observations from real use, and the middle one turned out to be a
+  correctness problem rather than a labelling one.
+
+  **The ancestor was chosen by the wrong criterion.** `distinctAncestorsInPrimaryModule` takes the
+  ancestor on the shortest SBOM route; Maven resolves by depth in the *resolved* tree. Pass B
+  already established the consequence — bumping the declaration Maven did not honour moves
+  nothing — but the search was still picking by route length and the panel never named its choice,
+  so a reader saw a bump that changed nothing and could not tell a losing declaration from an
+  upstream that had not fixed the problem.
+
+  **The fix costs no probes at all, which is why it is worth doing now.** `dependency:tree` already
+  runs with `-DoutputType=text` into a file this code reads; `findVersion` scans it for a matching
+  line and discards the indentation, **which is precisely the parent chain**. Parsing depth names
+  the deciding direct dependency authoritatively from a probe already performed. It also retires
+  the reason two other items were deferred: naming the blocker when nothing resolves, and stating
+  which module an answer holds for, were both waiting on provenance that was being thrown away.
+
+  **Rank the decider only, and name the others.** Ranking every declaring ancestor splits one
+  fixed budget N ways, so each ranking becomes budget-truncated — the failure
+  `higherReleasesUnchecked` exists to report — while buying nothing, since only one declaration can
+  change the outcome. The others are listed with *why* bumping them alone would not help, which is
+  information the panel has never carried. Combination testing stays the coarse fallback it is.
+
+  **Across modules: state it, do not probe it.** This closes the question left open in pass B.
+  Probing every owning module multiplies the budget by the module count, and for a library in
+  every backend module that is several full runs; the missing half was never the coverage, it was
+  saying which module the answer was verified against.
+
+  **Status becomes the worst remaining severity** rather than a critical/high binary — more
+  information and one concept fewer, since "still MODERATE" already says critical and high are
+  clear. Derived in the frontend from the same array rendered beside it, so the chip cannot
+  disagree with the list. An unrated remaining advisory shows as unrated and never as clean, which
+  is the `NONE`-versus-`CLEAN` rule applied one level further down.
 - 2026-07-30 — **An unmapped `/api/…` path answered 500, not 404.** Found in passing while
   checking settings during the B1a work. `NoResourceFoundException` **implements
   `ErrorResponse` but does not extend `ResponseStatusException`**, so the handler that exists

@@ -286,6 +286,17 @@ subset of Central may carry a different one. Blank resets to the shipped default
 is validated against `VERSION_PATTERN` because it is interpolated into a colon-separated goal
 coordinate where a stray colon would change which goal runs.
 
+**The ancestor that is ranked is the one Maven resolves through, read from the tree.**
+`dependency:tree` writes its text output to a file the resolver already reads, and the
+indentation is the parent chain — so `MavenDependencyResolver.declaringDependencyOf` names the
+winning declaration at no extra invocation, where `findVersion` scans the same file and discards
+it. This matters because Maven picks by depth in the *resolved* tree while the SBOM graph orders
+routes by length: where they differ, bumping the shortest-route ancestor moves nothing, and that
+result reads as "upstream has not fixed this" unless the panel can say otherwise. The other
+declaring ancestors are listed with that reason and never ranked — ranking them splits one budget
+N ways for versions that cannot change the outcome. `BumpScope` carries all of it, plus which
+module the answer was verified against and which owning modules were not probed.
+
 **Whole-module, not single-dependency.** A component reached by two routes appears in the SBOM
 as one resolved node with two parents, and the SBOM does not record which declaration Maven
 actually honoured. `MavenDependencyResolver.generatePom` therefore declares the owning
