@@ -29,6 +29,9 @@ public class ActivityLogger {
 
     private static final Logger activity = LoggerFactory.getLogger("dev.sbomscope.activity");
 
+    /** The prose log, for the case where the structured one cannot be written. */
+    private static final Logger log = LoggerFactory.getLogger(ActivityLogger.class);
+
     public enum Category {
         NETWORK,
         PROCESS,
@@ -57,6 +60,15 @@ public class ActivityLogger {
         if (detail != null) {
             entry.put("detail", detail);
         }
-        activity.info(mapper.writeValueAsString(entry));
+
+        try {
+            activity.info(mapper.writeValueAsString(entry));
+        } catch (RuntimeException e) {
+            // Jackson 3's JacksonException is unchecked, so a serialisation failure here would
+            // otherwise propagate into whatever was being recorded — aborting a scan, an upload
+            // or a probe because the note about it could not be written. Recording an action
+            // must never be able to fail the action, so this degrades to the prose log.
+            log.warn("Could not write an activity entry for {}/{}", category, event, e);
+        }
     }
 }

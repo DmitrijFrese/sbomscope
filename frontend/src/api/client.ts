@@ -383,11 +383,26 @@ export interface MavenSettings {
   /** Comma-separated profile IDs passed to every probe as `-P<profiles>`, e.g. `"prod,internal-repo"`.
    *  Null or blank activates no profiles, Maven's own default. */
   profiles: string | null;
+  /**
+   * Versions of the two plugins the probe drives. Pinned rather than resolved by prefix — which
+   * avoids a metadata round-trip and keeps the probe reproducible — but configurable, because
+   * which version exists is a fact about the user's repository: a curated mirror proxying an
+   * approved subset of Central may carry a different one. Blank resets to the shipped default.
+   */
+  dependencyPluginVersion: string;
+  helpPluginVersion: string;
 }
 
 export interface MavenTestResult {
   ok: boolean;
   version: string | null;
+  /**
+   * What the plugin check verified, or null when it failed or was never reached. Reported
+   * separately from `version` because they fail separately: `mvn --version` succeeds on a
+   * machine where every probe will fail for want of the plugins it drives, and a green tick
+   * there would send you looking for the problem everywhere except where it is.
+   */
+  plugins: string | null;
   error: string | null;
 }
 
@@ -438,6 +453,13 @@ export interface BumpCandidate {
   /** Advisories remaining at {@code targetVersion} — never a count. */
   stillCarries: AdvisoryHit[];
   snippet: string | null;
+  /**
+   * The run budget ran out partway through this major, so higher releases within it were never
+   * checked. Distinguishes "the highest 2.x still carries this" from "we got as far as 2.7.18
+   * and stopped" — the first is a verdict on the whole major, the second says nothing about
+   * what sits above it.
+   */
+  higherReleasesUnchecked: boolean;
 }
 
 /**
@@ -460,6 +482,18 @@ export function startBump(sbomId: string, purl: string): Promise<BumpProgress> {
   return request<BumpProgress>(`/sboms/${sbomId}/component/bump?purl=${encodeURIComponent(purl)}`, {
     method: 'POST',
   });
+}
+
+/**
+ * Extends a finished run the budget cut short, keeping the rows it already settled and
+ * spending a fresh budget only on the majors still unfinished. `startBump` deliberately
+ * refuses to re-run a completed probe, so this is the way to ask for more of the same search.
+ */
+export function continueBump(sbomId: string, purl: string): Promise<BumpProgress> {
+  return request<BumpProgress>(
+    `/sboms/${sbomId}/component/bump/continue?purl=${encodeURIComponent(purl)}`,
+    { method: 'POST' },
+  );
 }
 
 export function fetchBumpProgress(sbomId: string, purl: string): Promise<BumpProgress> {
@@ -724,4 +758,54 @@ export function openLogFolder(): Promise<LogStatus> {
 
 export function fetchActivity(limit = 200): Promise<ActivityEvent[]> {
   return request<ActivityEvent[]>(`/logs/activity?limit=${limit}`);
+}
+
+/**
+ * The verbose log, oldest line first — every `mvn` command and everything Maven said back.
+ * A transcript rather than a record of events, so it is read top to bottom.
+ */
+export function fetchLogText(limit = 500): Promise<string[]> {
+  return request<string[]>(`/logs/text?limit=${limit}`);
+}
+
+// --- the probe queue ---------------------------------------------------------
+
+/**
+ * One probe the backend is running or holding.
+ *
+ * Addressed globally rather than per component, because the reader who needs this is the one
+ * who no longer knows which component started it — `sbomId` and `purl` are what get them back.
+ */
+export interface ProbeTask {
+  id: string;
+  sbomId: string;
+  purl: string | null;
+  component: string;
+  /** The owning module the probe is answering for; null when the graph named none. */
+  module: string | null;
+  /**
+   * Finished probes are kept for the session, most recent first, after the live ones —
+   * "did that thing I started actually do anything" is asked right after it stops. STOPPED is
+   * distinct from COMPLETED because a run cut short and one that reached the end of its budget
+   * are different claims about how much of the search happened.
+   */
+  state: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'STOPPED' | 'FAILED';
+  /** ISO-8601 instant. */
+  submittedAt: string;
+  /** ISO-8601 instant, or null while still queued. Elapsed time is derived from these. */
+  startedAt: string | null;
+  /** ISO-8601 instant, or null while queued or running. */
+  finishedAt: string | null;
+}
+
+export const PROBE_FINISHED: readonly ProbeTask['state'][] = ['COMPLETED', 'STOPPED', 'FAILED'];
+
+/** Running, queued, and recently finished — live rows first, then this session's history. */
+export function fetchProbeQueue(): Promise<ProbeTask[]> {
+  return request<ProbeTask[]>('/probes');
+}
+
+/** Stops a probe, running or queued. Settled rows survive; Continue resumes the search. */
+export function cancelProbe(id: string): Promise<void> {
+  return request<void>(`/probes/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

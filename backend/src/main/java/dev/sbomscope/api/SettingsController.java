@@ -170,21 +170,30 @@ class SettingsController {
     // --- Maven probe (Phase 8 Tier 2) -----------------------------------------------------
 
     record MavenSettingsPayload(
-            boolean enabled, String executablePath, int maxProbes, int runBudgetMinutes, String profiles) {
+            boolean enabled, String executablePath, int maxProbes, int runBudgetMinutes, String profiles,
+            String dependencyPluginVersion, String helpPluginVersion) {
 
         MavenToolSettings toDomain() {
-            return new MavenToolSettings(enabled, executablePath, maxProbes, runBudgetMinutes, profiles);
+            return new MavenToolSettings(enabled, executablePath, maxProbes, runBudgetMinutes, profiles,
+                    dependencyPluginVersion, helpPluginVersion);
         }
 
         static MavenSettingsPayload from(MavenToolSettings domain) {
             return new MavenSettingsPayload(
                     domain.enabled(), domain.executablePath(), domain.maxProbes(), domain.runBudgetMinutes(),
-                    domain.profiles());
+                    domain.profiles(), domain.dependencyPluginVersion(), domain.helpPluginVersion());
         }
     }
 
-    /** Mirrors {@link ScannerTestResult}: never throws, so the UI can show it inline. */
-    record MavenTestResult(boolean ok, String version, String error) {}
+    /**
+     * Mirrors {@link ScannerTestResult}: never throws, so the UI can show it inline.
+     *
+     * <p>{@code version} and {@code plugins} are reported separately because they fail
+     * separately and for different reasons — a perfectly good Maven that cannot obtain the
+     * probe's plugins is the exact shape of the air-gapped failure, and collapsing the two
+     * would report it as "Maven is broken".
+     */
+    record MavenTestResult(boolean ok, String version, String plugins, String error) {}
 
     @GetMapping("/maven")
     MavenSettingsPayload mavenSettings() {
@@ -196,16 +205,32 @@ class SettingsController {
         return MavenSettingsPayload.from(settings.updateMavenSettings(payload.toDomain()));
     }
 
+    /**
+     * Two checks, not one: that the binary is Maven, and that the plugins a probe drives can
+     * actually be obtained and run. The second is the one that matters — {@code --version}
+     * succeeds on a machine where every probe will fail, and reporting "Working" there sends
+     * the reader looking for the problem everywhere except where it is.
+     */
     @PostMapping("/maven/test")
     MavenTestResult testMaven() {
         MavenToolSettings current = settings.mavenSettings();
         if (!current.hasExecutable()) {
-            return new MavenTestResult(false, null, "No mvn path configured.");
+            return new MavenTestResult(false, null, null, "No mvn path configured.");
         }
+
+        String version;
         try {
-            return new MavenTestResult(true, maven.version(current.executablePath()), null);
+            version = maven.version(current.executablePath());
         } catch (MavenProbeException e) {
-            return new MavenTestResult(false, null, e.getMessage());
+            return new MavenTestResult(false, null, null, e.getMessage());
+        }
+
+        try {
+            // The version is carried through on failure: "Maven works, its plugins do not" is a
+            // different problem from "that is not Maven", and the reader needs to see which.
+            return new MavenTestResult(true, version, maven.verifyProbePlugins(current), null);
+        } catch (MavenProbeException e) {
+            return new MavenTestResult(false, version, null, e.getMessage());
         }
     }
 }

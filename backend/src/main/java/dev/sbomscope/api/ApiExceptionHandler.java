@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import dev.sbomscope.probe.MavenProbeException;
 import dev.sbomscope.sbom.InvalidSbomException;
@@ -103,6 +104,25 @@ class ApiExceptionHandler {
             status = HttpStatus.INTERNAL_SERVER_ERROR;
         }
         return ResponseEntity.status(status).body(ApiError.of(status, e.getReason()));
+    }
+
+    /**
+     * A path under {@code /api/} that maps to nothing is a 404, not a server failure.
+     *
+     * <p>The same trap as the handler above, one exception further along, and it does not catch
+     * this one: {@link NoResourceFoundException} implements {@code ErrorResponse} but does
+     * <b>not</b> extend {@link ResponseStatusException}, so it fell straight through to the
+     * catch-all and every mistyped API URL was reported as a 500 with a stack trace in the log.
+     *
+     * <p>It also contradicted a stated design property. {@code SpaResourceConfig} forwards
+     * unknown non-API paths to {@code index.html} but deliberately lets {@code /api/} ones fail,
+     * precisely so a mistyped fetch URL fails as a missing endpoint rather than as an HTML parse
+     * error — which only works if the failure it produces is a 404.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    ResponseEntity<ApiError> handleNoResource(NoResourceFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of(HttpStatus.NOT_FOUND, "No such endpoint: " + e.getResourcePath()));
     }
 
     @ExceptionHandler(Exception.class)

@@ -21,13 +21,18 @@ import java.util.List;
  *                           dependency resolves to (an added repository, a property the build
  *                           depends on) has to be active here too, or the probe is answering
  *                           for a build the user does not actually run
+ * @param dependencyTreeGoal the fully qualified, version-pinned {@code dependency:tree} goal,
+ *                           built once by {@code MavenToolSettings}. The version is
+ *                           user-configurable because which one exists is a fact about their
+ *                           repository rather than about SBOMscope
  */
 public record ProbeContext(
         String mvnExecutable,
         String isolatedRepository,
         EffectivePomFragments liftedXml,
         Duration timeout,
-        String profiles) {
+        String profiles,
+        String dependencyTreeGoal) {
 
     public boolean hasWorkspaceLiftIn() {
         return liftedXml != null;

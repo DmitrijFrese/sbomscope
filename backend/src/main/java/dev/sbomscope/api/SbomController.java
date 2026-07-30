@@ -269,6 +269,16 @@ class SbomController {
         return bumpProbes.start(bumpRequestFor(id, purl), settings.mavenSettings());
     }
 
+    /**
+     * Extends a finished run that the budget cut short, rather than re-running it whole.
+     * Separate from {@code POST /bump} because that one deliberately refuses to re-run a
+     * completed probe; this is the sanctioned way to ask for more of the same search.
+     */
+    @PostMapping("/{id}/component/bump/continue")
+    BumpProgress continueBump(@PathVariable UUID id, @RequestParam("purl") String purl) {
+        return bumpProbes.continueRun(bumpRequestFor(id, purl), settings.mavenSettings());
+    }
+
     @GetMapping("/{id}/component/bump")
     BumpProgress bumpProgress(@PathVariable UUID id, @RequestParam("purl") String purl) {
         if (service.findById(id).isEmpty()) {

@@ -31,6 +31,18 @@ import dev.sbomscope.scanner.OsvArchiveMatcher.AdvisoryHit;
  *                             decision this project keeps designing around
  * @param snippet              a paste-able dependency block for {@code version}, or null when
  *                             not probed
+ * @param higherReleasesUnchecked true when the run budget ran out partway through this major,
+ *                             leaving higher releases within it never looked at. Without this,
+ *                             a row reading <em>"highest is 2.7.18, still carries X"</em> is
+ *                             indistinguishable from <em>"we got as far as 2.7.18 and
+ *                             stopped"</em> — the first claims every 2.x was checked, the
+ *                             second claims nothing about the ones above. That is the same
+ *                             unproven-versus-disproven distinction the feasibility
+ *                             short-circuit was removed for, one level down; a reader deciding
+ *                             not to stay on 2.x deserves to know which of the two they are
+ *                             looking at. Never true where the walk stopped because it found
+ *                             its earliest clean release: ascending order makes that a complete
+ *                             answer, since nothing above it would be preferred anyway.
  */
 public record BumpCandidate(
         String label,
@@ -42,9 +54,11 @@ public record BumpCandidate(
         boolean clean,
         boolean clearsCriticalAndHigh,
         List<AdvisoryHit> stillCarries,
-        String snippet) {
+        String snippet,
+        boolean higherReleasesUnchecked) {
 
     static BumpCandidate notProbed(String label, String ancestorCoordinates, long major) {
-        return new BumpCandidate(label, ancestorCoordinates, major, null, null, false, false, false, List.of(), null);
+        return new BumpCandidate(
+                label, ancestorCoordinates, major, null, null, false, false, false, List.of(), null, false);
     }
 }

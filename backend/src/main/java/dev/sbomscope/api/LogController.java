@@ -16,6 +16,7 @@ import dev.sbomscope.logging.LogService;
 class LogController {
 
     private static final int MAX_LIMIT = 1000;
+    private static final int MAX_TEXT_LINES = 5000;
 
     private final LogService logs;
 
@@ -40,5 +41,17 @@ class LogController {
     @GetMapping("/activity")
     List<ActivityEvent> activity(@RequestParam(value = "limit", defaultValue = "200") int limit) {
         return logs.tail(Math.min(Math.max(limit, 1), MAX_LIMIT));
+    }
+
+    /**
+     * The verbose text log, oldest line first.
+     *
+     * <p>A higher ceiling than the activity tail: this is where a probe's whole Maven output
+     * lands, and one failed invocation alone can run to a few hundred lines, so 200 of them
+     * would not reach the start of the failure being read.
+     */
+    @GetMapping("/text")
+    List<String> text(@RequestParam(value = "limit", defaultValue = "500") int limit) {
+        return logs.text(Math.min(Math.max(limit, 1), MAX_TEXT_LINES));
     }
 }

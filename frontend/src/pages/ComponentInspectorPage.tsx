@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { SCOPE_LABELS, fetchComponentDetail } from '../api/client';
+import { ApiError, SCOPE_LABELS, fetchComponentDetail } from '../api/client';
 import type { ComponentDetail, FindingRow } from '../api/client';
 import { ComponentFinder } from '../components/ComponentFinder';
 import { DependencyGraphPanel } from '../components/DependencyGraphPanel';
 import { UpgradePathsPanel } from '../components/UpgradePathsPanel';
+import { describePurl, shortNameOf } from '../components/purl';
 import { SeverityCell, formatAdvisoryDate, formatTimestamp } from '../findings/presentation';
-import { useSboms } from '../sboms/SbomProvider';
+import { neighbourAfterClosing, useSboms } from '../sboms/SbomProvider';
+import type { InspectorTabs } from '../sboms/SbomProvider';
 import { usePersistentState } from '../state/persisted';
 
 function messageOf(error: unknown): string {
@@ -112,6 +114,128 @@ function Planned({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * The components open in this session, browser-style.
+ *
+ * <p>Deliberately not a `tablist`, though it looks like one. ARIA reserves that pattern for
+ * a set of panels one of which is shown, and the panels below it are already that — nesting
+ * a second tablist whose "panel" is the whole page, with a close button inside each tab,
+ * would be a worse description of this than a list of links to the same page.
+ */
+function OpenComponents({
+  tabs,
+  current,
+  contentLoading,
+  onSelect,
+  onClose,
+}: {
+  tabs: InspectorTabs;
+  current: string | null;
+  /**
+   * Whether the panel below is still fetching. Not used to render anything — it is the one
+   * reflow this strip can be told about directly rather than having to observe, and the
+   * observer that would otherwise catch it cannot be relied on alone. See the effect below.
+   */
+  contentLoading: boolean;
+  onSelect: (purl: string) => void;
+  onClose: (purl: string) => void;
+}) {
+  // The strip is one non-wrapping row, so an activation driven from anywhere but a click on
+  // the tab itself — a row's Inspect link, a close activating its neighbour, restoring the
+  // active tab after a route change — can land on a tab that is scrolled out of sight.
+  //
+  // Deliberately not scrollIntoView: it scrolls every scrollable ancestor, so on a long
+  // dependency tree it can yank the page as well as the strip. Adjusting the strip's own
+  // scroll by the overshoot touches nothing else.
+  //
+  // useLayoutEffect, and not a requestAnimationFrame inside a plain effect, which was the
+  // first attempt. rAF does not fire while the page is hidden — measured, `visibilityState`
+  // 'hidden' and the callback never ran — so a tab opened in a background browser tab stayed
+  // scrolled out of view until something else moved it. useLayoutEffect runs synchronously
+  // after the DOM is updated whatever the page's visibility, and reading a rect inside it
+  // flushes layout, so the measurement is of the arrangement being corrected.
+  const activeRef = useRef<HTMLLIElement>(null);
+  useLayoutEffect(() => {
+    const tab = activeRef.current;
+    const strip = tab?.parentElement;
+    if (!tab || !strip) return;
+
+    const reveal = () => {
+      const tabBox = tab.getBoundingClientRect();
+      const stripBox = strip.getBoundingClientRect();
+      if (tabBox.left < stripBox.left) {
+        strip.scrollLeft -= stripBox.left - tabBox.left;
+      } else if (tabBox.right > stripBox.right) {
+        strip.scrollLeft += tabBox.right - stripBox.right;
+      }
+    };
+
+    reveal();
+
+    // Once is not enough, and the case that proves it is not window resizing. Arriving back
+    // on this page renders the strip before the panel below has loaded, so the page has no
+    // vertical scrollbar yet; when the panel arrives the scrollbar takes ~15px off this
+    // column, and the tab that was flush against the right edge is clipped by exactly that.
+    // Measured. `contentLoading` in the deps is that specific reflow, told rather than
+    // observed; the observer covers the ones nothing can announce — the window resizing, the
+    // SBOM sidebar collapsing — without either of them needing to know this exists.
+    const observer = new ResizeObserver(reveal);
+    observer.observe(strip);
+    return () => observer.disconnect();
+    // `tabs.open` and not `current` alone: a tab that is not already open is appended only
+    // once its component has loaded, so at the moment the active purl changes there is no
+    // element to reveal yet — the list changing is the event that matters, and it is also
+    // what shifts every other tab's position when one is evicted.
+  }, [current, tabs.open, contentLoading]);
+
+  if (tabs.open.length === 0) return null;
+
+  return (
+    <ul className="component-tabs" aria-label="Open components">
+      {tabs.open.map((purl) => {
+        const name = shortNameOf(purl);
+        const { version } = describePurl(purl);
+        return (
+          <li
+            key={purl}
+            ref={purl === current ? activeRef : undefined}
+            className="component-tab"
+            data-active={purl === current}
+          >
+            <button
+              type="button"
+              className="component-tab__label"
+              /* The full purl on hover: the label drops the group, and two artifacts can
+                 share a name across groups. */
+              title={purl}
+              aria-current={purl === current ? 'true' : undefined}
+              onClick={() => onSelect(purl)}
+            >
+              <span className="component-tab__name">{name}</span>
+              {/* The version is not decoration here. An SBOM routinely carries the same
+                  library at two versions across modules — that is precisely the case the
+                  Inspector is for — and two tabs both reading "jackson-databind" would be
+                  indistinguishable. Muted and second, as the finder already renders it. */}
+              {version && <span className="component-tab__version mono">{version}</span>}
+            </button>
+            <button
+              type="button"
+              className="component-tab__close"
+              aria-label={`Close ${name} ${version}`.trim()}
+              onClick={() => onClose(purl)}
+            >
+              ×
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Stable, so an SBOM with nothing open does not re-render the page on every pass. */
+const NO_TABS: InspectorTabs = { open: [], active: null, recent: [] };
+
+/**
  * The panels, as tabs.
  *
  * <p>Stacked, four panels made the page a scroll where only one of them is ever the reason
@@ -145,7 +269,7 @@ const TAB_IDS: readonly string[] = TABS.map((tab) => tab.id);
  * one row, so a row identifies a purl, not a component record.
  */
 export function ComponentInspectorPage() {
-  const { selected } = useSboms();
+  const { selected, inspectorTabs, openInspectorTab, closeInspectorTab } = useSboms();
   const [params, setParams] = useSearchParams();
   const purl = params.get('purl');
 
@@ -157,17 +281,6 @@ export function ComponentInspectorPage() {
   // panel across several libraries is the workflow the finder exists for.
   const [tab, setTab] = usePersistentState<TabId>('inspector.tab', 'advisories', (stored) =>
     TAB_IDS.includes(stored) ? stored : 'advisories',
-  );
-
-  // The last component looked at, per SBOM — restored below when this page is reached with
-  // no purl in the query string, which is what the top-nav link does. Without this, a trip
-  // to another tab (the Activity log, say) and back landed on a blank "No component selected"
-  // panel, discarding the whole inspector rather than the one thing that page navigation
-  // should not touch.
-  const [lastPurlBySbom, setLastPurlBySbom] = usePersistentState<Record<string, string>>(
-    'inspector.lastPurl',
-    {},
-    (stored) => (stored && typeof stored === 'object' ? stored : {}),
   );
 
   const advisoryCount = detail?.findings.filter((row) => row.osvId).length ?? 0;
@@ -182,19 +295,39 @@ export function ComponentInspectorPage() {
   );
 
   const sbomId = selected?.id ?? null;
+  const tabs = (sbomId ? inspectorTabs[sbomId] : null) ?? NO_TABS;
 
+  // The patch this design supersedes kept a last-purl-per-SBOM map in localStorage. Nothing
+  // reads it now, and leaving it behind would strand state in every browser that ran that
+  // build — the kind of orphan that costs someone an hour when they next go looking.
   useEffect(() => {
-    if (!sbomId || purl) return;
-    const remembered = lastPurlBySbom[sbomId];
-    if (remembered) setParams({ purl: remembered }, { replace: true });
-  }, [sbomId, purl, lastPurlBySbom, setParams]);
+    try {
+      window.localStorage.removeItem('sbomscope.inspector.lastPurl');
+    } catch {
+      // Private browsing. Not being able to tidy up is not a reason to fail a render.
+    }
+  }, []);
 
+  // The URL names the active tab, so a refresh and every plain "Inspect" link elsewhere in
+  // the app keep working unchanged. Reaching this page without one — the top-nav item, which
+  // carries no purl — restores whatever this SBOM had active instead of landing on a blank
+  // panel, which is the bug this whole item exists for.
   useEffect(() => {
-    if (!sbomId || !purl) return;
-    setLastPurlBySbom((current) =>
-      current[sbomId] === purl ? current : { ...current, [sbomId]: purl },
-    );
-  }, [sbomId, purl, setLastPurlBySbom]);
+    if (!sbomId || purl || !tabs.active) return;
+    setParams({ purl: tabs.active }, { replace: true });
+  }, [sbomId, purl, tabs.active, setParams]);
+
+  const closeTab = useCallback(
+    (closing: string) => {
+      if (!sbomId) return;
+      closeInspectorTab(sbomId, closing);
+      // Only the active tab moves the URL; closing any other one leaves you where you are.
+      if (closing !== purl) return;
+      const neighbour = neighbourAfterClosing(tabs.open, closing);
+      setParams(neighbour ? { purl: neighbour } : {}, { replace: true });
+    },
+    [sbomId, purl, tabs.open, closeInspectorTab, setParams],
+  );
 
   useEffect(() => {
     if (!sbomId || !purl) {
@@ -209,13 +342,26 @@ export function ComponentInspectorPage() {
 
     fetchComponentDetail(sbomId, purl)
       .then((result) => {
-        if (!cancelled) setDetail(result);
+        if (cancelled) return;
+        setDetail(result);
+        // Opened only once the component is known to be in this document, so a stale purl
+        // in the URL can never put a tab there that cannot be opened.
+        openInspectorTab(sbomId, purl);
       })
       .catch((e: unknown) => {
-        if (!cancelled) {
-          setDetail(null);
-          setError(messageOf(e));
+        if (cancelled) return;
+        setDetail(null);
+
+        // A component that is not in this SBOM is a different document, not a failure —
+        // the normal way to hit it is switching SBOMs with a purl still in the URL. Drop
+        // it and fall back to this SBOM's own tabs, rather than showing the raw 404.
+        if (e instanceof ApiError && e.status === 404) {
+          closeInspectorTab(sbomId, purl);
+          setParams({}, { replace: true });
+          return;
         }
+
+        setError(messageOf(e));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -224,7 +370,7 @@ export function ComponentInspectorPage() {
     return () => {
       cancelled = true;
     };
-  }, [sbomId, purl]);
+  }, [sbomId, purl, openInspectorTab, closeInspectorTab, setParams]);
 
   if (!selected) {
     return (
@@ -306,6 +452,20 @@ export function ComponentInspectorPage() {
         </div>
 
         <div className="inspector__main">
+          {/* Above the panel tabs rather than beside the finder: a strip of browser-style
+              tabs needs the width, and the 280px side column has none to give. It also
+              sits directly above the content it switches, which is what makes it read as
+              tabs at all. Only the active tab's panel is mounted — the bump probe runs
+              server-side and hydrates from the backend's cached progress when its tab
+              comes back, so rendering the others would only multiply the polling. */}
+          <OpenComponents
+            tabs={tabs}
+            current={purl}
+            contentLoading={loading}
+            onSelect={select}
+            onClose={closeTab}
+          />
+
           {error && (
             <p className="form-error" role="alert">
               {error}

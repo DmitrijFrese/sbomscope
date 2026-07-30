@@ -42,6 +42,16 @@ public record BumpProgress(
         return new BumpProgress(State.RUNNING, List.of(), List.of(), null, null);
     }
 
+    /**
+     * Back to RUNNING for a continued search, <b>keeping the rows already established</b>.
+     * {@link #starting()} would blank them, and a reader who pressed "continue" is watching a
+     * table they already have answers in — emptying it to re-derive the same rows would read
+     * as having lost them.
+     */
+    public BumpProgress resuming() {
+        return new BumpProgress(State.RUNNING, verdicts, candidates, null, null);
+    }
+
     /** Submitted, but waiting behind another component's probe on the single probe thread. */
     public static BumpProgress queued() {
         return new BumpProgress(State.QUEUED, List.of(), List.of(), null,
@@ -57,12 +67,37 @@ public record BumpProgress(
 
     /** The ordinary completion: a ranked list, and a remedy only when one applies. */
     public BumpProgress completed(List<BumpCandidate> candidates, Remedy remedy) {
-        return new BumpProgress(State.COMPLETED, verdicts, candidates, remedy, null);
+        return completed(candidates, remedy, null);
+    }
+
+    /**
+     * As above, with a note saying why the run is shorter than a full one.
+     *
+     * <p>A stopped run is {@code COMPLETED}, not a state of its own, and that is deliberate: it
+     * is a cut-short run, exactly as budget exhaustion produces, and every row already reports
+     * what it did not reach. What the rows cannot say is <em>why</em> the search stopped, which
+     * is the one thing a reader needs to know before deciding whether to press Continue.
+     */
+    public BumpProgress completed(List<BumpCandidate> candidates, Remedy remedy, String note) {
+        return new BumpProgress(State.COMPLETED, verdicts, candidates, remedy, note);
     }
 
     /** For the failure/unavailable paths that never reach a ranked list at all. */
     public BumpProgress completed(Remedy remedy) {
         return new BumpProgress(State.COMPLETED, verdicts, List.of(), remedy, null);
+    }
+
+    /**
+     * The run was stopped, keeping whatever it had settled and discarding any remedy.
+     *
+     * <p>The discard is the point. Killing the {@code mvn} in flight makes that invocation fail,
+     * so a run stopped during calibration ends on the "could not resolve" path and would
+     * otherwise report the kill as a real dependency problem — a confidently wrong answer
+     * produced by the act of asking it to stop. Verdicts and settled candidates survive because
+     * they were true before the stop and still are.
+     */
+    public BumpProgress stopped(String note) {
+        return new BumpProgress(State.COMPLETED, verdicts, candidates, null, note);
     }
 
     public BumpProgress failed(String message) {

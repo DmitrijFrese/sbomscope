@@ -6,9 +6,11 @@ Upload a CycloneDX SBOM, find out which of your dependencies have known
 vulnerabilities, whether your code actually uses them, what upgrade would fix them —
 and get all of it into a spreadsheet your security team can actually read.
 
-> **Status: working, in active development.** Upload, offline vulnerability scanning,
-> the findings view and the Excel export all work today. The Component Inspector — upgrade
-> paths, the dependency graph and workspace usage — is not built yet. See
+> **Status: working, in active development.** Upload, offline vulnerability scanning, the
+> findings view, the Excel export, the Component Inspector, the dependency graph, and upgrade
+> paths (offline advisory-derived fixes, plus driving your own `mvn` for the questions that
+> need it) all work today. Workspace usage detection and the exploitation-signal columns
+> (CISA KEV, EPSS) are not built yet. See
 > [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for exactly what is done.
 
 ---
@@ -67,7 +69,7 @@ written to a log you can read inside the application.
 | **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. |
 | **Workspace usage detection** | Optionally supply a path to your source tree. SBOMscope scans it for imports/references to vulnerable libraries and reports the total hit count, the full list of affected files with fully-qualified paths, and a ±5-line preview of any selected hit with language-aware syntax highlighting. |
 | **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below). |
-| **Upgrade paths** | For a vulnerable `1.2.3`: the latest patch on its line, the latest within its major, the latest overall, and the earliest version that clears every known critical and high. Each candidate lists the vulnerabilities it would still carry — not a count, since which one remains is the decision. |
+| **Upgrade paths** | Offline, from the advisory data alone: pin, upgrade, or exclude, with the exact fix version an advisory names. For a transitive dependency Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — SBOMscope drives your own `mvn` to check, ranking every major line as its own candidate rather than guessing at one winner. Each candidate lists the vulnerabilities it would still carry — not a count, since which one remains is the decision. |
 | **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves, within the scope of your SBOM. |
 | **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD and library cells hyperlinked to Maven Central or npmjs.com. |
 
@@ -83,9 +85,9 @@ because it can run fully offline against locally-cached data.
 | Excel export | Built in-house (Apache POI) | working |
 | Actively-exploited flag | [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | planned |
 | Exploitation probability | [EPSS](https://www.first.org/epss/) (FIRST.org) | planned |
-| Dependency graph | The SBOM's own CycloneDX `dependencies` graph | planned |
+| Dependency graph | The SBOM's own CycloneDX `dependencies` graph | working |
 | Workspace usage detection | Built in-house | planned |
-| Upgrade paths | Registry version lists, evaluated against the local OSV data. Guided remediation was the obvious route and does not fit: it needs `pom.xml` / lockfiles, which the reader of a handed-over SBOM does not have | planned |
+| Upgrade paths | Local OSV data for the offline tier; your own `mvn`, driven as an external process, for the questions offline data cannot answer | working |
 
 CVE cells link to [NVD](https://nvd.nist.gov/), but the NVD **API** is deliberately not
 used — it contributes to none of the columns shown, and the link is derivable from the
@@ -225,6 +227,20 @@ long as it is set before SBOMscope starts. A probe failing with something like
 `NoPluginFoundForPrefixException` on a fresh install of the probe's isolated repository
 almost always means this, not a real dependency problem.
 
+**Check this first: press "Test Maven" in Settings.** It verifies both that the path is Maven
+*and* that the plugins the probe drives can actually be fetched and run — the second is the one
+that fails in a restricted network, and `mvn --version` alone would report success there.
+
+**The probe reports "could not obtain the plugin".** The probe resolves into its own repository
+(`~/.sbomscope/probe-repo`), never your `~/.m2`, so that a failed probe can never leave markers
+that make a later real build refuse to retry a download. That isolation has a cost: the probe
+must be able to fetch `maven-dependency-plugin` itself. On a machine with no route to any
+repository — proxied or otherwise — it cannot, and no setting will change that. Every `mvn`
+command the probe runs, and everything Maven said back, is written to
+`~/.sbomscope/logs/sbomscope.log`, so the actual failure is readable rather than inferred. If
+your mirror carries different plugin versions than the ones SBOMscope pins, set them under
+**Settings → Maven probe**.
+
 ## Scope
 
 SBOMscope is currently built for **a single developer running it on their own machine**
@@ -240,7 +256,7 @@ future version. Version 1 does simpler import/symbol-level usage detection.
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — data model, key flows, and the
-  osv-scanner integration contract.
+  osv-scanner and Maven-probe integration contracts.
 - [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — phased build plan,
   working action list, and the decision log explaining why the architecture is the way
   it is.

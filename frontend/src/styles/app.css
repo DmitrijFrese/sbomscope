@@ -1592,8 +1592,144 @@ body {
   }
 }
 
-/* Now the first thing in the main column, so no leading margin: the tab strip should line
-   up with the top of the identity block beside it. */
+/* ------------------------------------------------------- monitoring ---- */
+
+/* A button that has to read as a link, because what it does is navigate — it is only a button
+   because it has to select the SBOM on the way, which an href cannot do. */
+.linklike {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.linklike:hover {
+  text-decoration: underline;
+}
+
+/* Finished runs stay in the table as history, quieted so the live rows above them still read
+   as the thing happening now. */
+.data-table tr[data-finished='true'] td {
+  color: var(--text-muted);
+}
+
+/* A transcript, so it keeps Maven's own line breaks and indentation and scrolls in both
+   directions rather than wrapping them into something that never existed. */
+.log-text {
+  max-height: 60vh;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3);
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* The components open this session. Chips rather than the underlined panel tabs below,
+   because two rows of identical-looking tabs would read as one confused control: these
+   choose the subject, those choose the question about it. */
+/* One row that never wraps. Wrapping was the first shape and it was wrong: a second and
+   third row of tabs eats the height the panel needs, and a dependency tree is long — the
+   same argument that moved the identity block out of this column. Tabs shrink to a floor
+   and then the row scrolls, which is what every browser does. */
+.component-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-3);
+  padding: 0 0 var(--space-1);
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.component-tab {
+  display: flex;
+  align-items: stretch;
+  /* Shrinks from its natural width down to the floor, then the strip scrolls rather than
+     letting a tab become an unreadable sliver. Capped at the top end so one long artifact
+     name cannot push the rest out of sight. */
+  flex: 0 1 auto;
+  min-width: 118px;
+  max-width: 240px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.component-tab[data-active='true'] {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
+.component-tab__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition);
+}
+
+/* The name gives way first: a truncated version is unreadable as an identifier, where a
+   truncated name still reads next to its neighbours. */
+.component-tab__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.component-tab__version {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.component-tab__label:hover {
+  color: var(--text-primary);
+}
+
+.component-tab[data-active='true'] .component-tab__label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.component-tab__close {
+  flex: none;
+  padding: 0 var(--space-2);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color var(--transition);
+}
+
+.component-tab__close:hover {
+  color: var(--text-primary);
+}
+
+/* Now the first thing in the main column when nothing is open, so no leading margin: the
+   tab strip should line up with the top of the identity block beside it. With components
+   open, .component-tabs above takes that position and carries its own spacing. */
 .tabs {
   display: flex;
   flex-wrap: wrap;

@@ -3,13 +3,16 @@ package dev.sbomscope.probe;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -111,6 +114,157 @@ public class BumpProbeService {
      */
     private final AtomicReference<String> activeKey = new AtomicReference<>();
 
+    /**
+     * Every probe submitted and not yet finished — the queue as a whole, rather than one
+     * component's view of it.
+     *
+     * <p>A probe deliberately outlives the tab it was started from: the Inspector is a view of
+     * this state, not its owner. But that means a tab closed by the reader — or evicted by the
+     * tab cap — leaves a probe holding the single probe thread with no way to reach it, because
+     * the only other route in is {@code progress(component, graph)}, which requires already
+     * knowing which component to ask about. That is exactly what somebody who has lost track of
+     * it does not know.
+     */
+    private final Map<String, ProbeTask> tasks = new ConcurrentHashMap<>();
+
+    /**
+     * One submitted probe, from the queue's point of view rather than the component's.
+     *
+     * <p>Everything mutable here is written by the probe thread and read by request threads
+     * listing or cancelling, hence {@code volatile} throughout. None of it needs to be
+     * consistent as a set: a listing that catches a task mid-start shows it a poll early or
+     * late, which is what polling already means.
+     */
+    private static final class ProbeTask {
+        private final String id = UUID.randomUUID().toString();
+        private final String key;
+        private final UUID sbomId;
+        private final String purl;
+        private final String component;
+        private final String module;
+        private final Instant submittedAt = Instant.now();
+
+        private volatile Instant startedAt;
+        private volatile Instant finishedAt;
+        private volatile ProbeTaskView.State outcome;
+        private volatile Thread thread;
+        private volatile SearchBudget budget;
+        private volatile Future<?> future;
+
+        /**
+         * Checked at the top of the run as well as acted on immediately, because
+         * {@code executor.submit} can begin executing before the returned {@link Future} has
+         * been assigned — so a cancellation arriving in that window has nothing to cancel and
+         * has to be able to leave a note instead.
+         */
+        private volatile boolean cancelled;
+
+        ProbeTask(String key, BumpRequest request) {
+            this.key = key;
+            this.sbomId = request.sbomId();
+            this.purl = request.component().purl();
+            this.component = request.component().coordinates()
+                    + (request.component().version() == null ? "" : "@" + request.component().version());
+            this.module = request.graph().reachedFrom().isEmpty()
+                    ? null
+                    : request.graph().reachedFrom().getFirst().module().coordinates();
+        }
+
+        ProbeTaskView view() {
+            ProbeTaskView.State current = outcome != null
+                    ? outcome
+                    : startedAt == null ? ProbeTaskView.State.QUEUED : ProbeTaskView.State.RUNNING;
+            return new ProbeTaskView(id, sbomId, purl, component, module, current,
+                    submittedAt, startedAt, finishedAt);
+        }
+    }
+
+    /**
+     * How many finished probes are kept before the oldest is dropped.
+     *
+     * <p>A bound rather than a full history: this is a session-scoped record of what just
+     * happened, not an audit trail — {@code activity.jsonl} is that, and it survives restarts,
+     * which this deliberately does not.
+     */
+    private static final int REMEMBERED_FINISHED = 25;
+
+    /**
+     * Running, queued, and recently finished.
+     *
+     * <p>Live rows first in submission order — which is the order they will execute in — then
+     * finished ones, most recent first. Two orderings in one list because they answer different
+     * questions: the queue is about what happens next, the history about what just happened.
+     */
+    public List<ProbeTaskView> probes() {
+        List<ProbeTaskView> live = tasks.values().stream()
+                .filter(task -> task.outcome == null)
+                .sorted(Comparator.comparing(task -> task.submittedAt))
+                .map(ProbeTask::view)
+                .toList();
+
+        List<ProbeTaskView> finished = tasks.values().stream()
+                .filter(task -> task.outcome != null)
+                .sorted(Comparator.comparing((ProbeTask task) -> task.finishedAt).reversed())
+                .map(ProbeTask::view)
+                .toList();
+
+        List<ProbeTaskView> all = new ArrayList<>(live);
+        all.addAll(finished);
+        return List.copyOf(all);
+    }
+
+    /**
+     * Stops a probe, whether it is running or still waiting.
+     *
+     * <p>A running probe stops at the next checkpoint the search already consults, keeping every
+     * row it had settled — see {@link SearchBudget#cancelled}. Killing the {@code mvn} in flight
+     * is what makes that prompt rather than up to a full probe timeout away, and it is also the
+     * only thing that works: the probe thread is blocked reading that process's output, which no
+     * interrupt will end.
+     *
+     * <p>A queued probe simply never starts, and its progress record is dropped so the component
+     * reads as never probed rather than as permanently pending.
+     *
+     * @return whether a task with this id was found to stop
+     */
+    public boolean cancel(String taskId) {
+        ProbeTask task = tasks.get(taskId);
+        if (task == null || task.outcome != null) {
+            // Already finished — it is still in the list, as history, but there is nothing left
+            // to stop. Reported as a miss rather than a success, since claiming to have stopped
+            // something that ended on its own would be a small lie about what just happened.
+            return false;
+        }
+
+        task.cancelled = true;
+        SearchBudget budget = task.budget;
+        if (budget != null) {
+            budget.cancel();
+        }
+
+        Thread thread = task.thread;
+        if (thread != null) {
+            MavenInvocation.cancelRunningOn(thread);
+            activityLog.record(ActivityLogger.Category.PROCESS, "MAVEN_PROBE",
+                    "Stopped on request: the running probe for " + task.component);
+            return true;
+        }
+
+        Future<?> future = task.future;
+        if (future != null) {
+            future.cancel(false);
+        }
+        // The component reads as never probed rather than permanently pending, but the row
+        // stays as history: "I queued that and then stopped it" is worth being able to see.
+        progressByKey.remove(task.key);
+        task.finishedAt = Instant.now();
+        task.outcome = ProbeTaskView.State.STOPPED;
+        forgetOldestFinished();
+        activityLog.record(ActivityLogger.Category.PROCESS, "MAVEN_PROBE",
+                "Stopped on request before it started: the queued probe for " + task.component);
+        return true;
+    }
+
     BumpProbeService(DependencyResolver resolver, EffectivePomCache effectivePoms, ActivityLogger activityLog) {
         this.resolver = resolver;
         this.effectivePoms = effectivePoms;
@@ -164,8 +318,68 @@ public class BumpProbeService {
         // of execution itself wrong.
         BumpProgress initial = activeKey.get() == null ? BumpProgress.starting() : BumpProgress.queued();
         progressByKey.put(key, initial);
-        executor.submit(() -> runProbe(key, request, mavenSettings));
+        ProbeTask task = new ProbeTask(key, request);
+        tasks.put(task.id, task);
+        task.future = executor.submit(() -> runProbe(key, request, mavenSettings, task));
         return progressByKey.get(key);
+    }
+
+    /**
+     * Extends a finished run that the budget cut short, keeping every row already settled.
+     *
+     * <p>Without this the only way to look further was to change the Maven settings — which
+     * clears the cache as a side effect — and pay for the whole search again from calibration.
+     * A row marked "not probed" or "checked up to here" is a question the reader can now
+     * answer directly, and answering it costs only the majors that are actually unfinished.
+     *
+     * <p>Each press takes a <b>fresh</b> budget rather than what was left of the old one, so it
+     * means "spend another run's worth on this" and can be pressed again. Calibration and the
+     * feasibility probe are not repeated: the model was validated on the first run, settings
+     * cannot have changed without clearing this cache, and the existing rows already enumerate
+     * every major, which is the only thing feasibility established that is still needed.
+     */
+    public BumpProgress continueRun(BumpRequest request, MavenToolSettings mavenSettings) {
+        String key = cacheKeyFor(request.graph(), request.component());
+        if (key == null) {
+            return BumpProgress.idle().failed("Nothing in this SBOM declares this component.");
+        }
+        if (!mavenSettings.usable()) {
+            return BumpProgress.idle().failed(
+                    "Configure the Maven probe in Settings, and enable it, before checking here.");
+        }
+
+        BumpProgress existing = progressByKey.get(key);
+        if (existing == null || existing.state() != BumpProgress.State.COMPLETED) {
+            // Nothing finished to continue from. A run already going will report its own
+            // progress; anything else has to start from the beginning.
+            return existing != null ? existing : start(request, mavenSettings);
+        }
+        if (existing.candidates().isEmpty()) {
+            // The run never ranked anything — it failed at calibration, or feasibility, or the
+            // archive was not indexed. There is nothing to carry forward, so "continue" here
+            // means run it again now that whatever blocked it may have been put right. Without
+            // this, a cached unavailable result was a dead end: start() returns the cached
+            // COMPLETED forever, and the only way out was changing a Maven setting to clear the
+            // cache as a side effect, or restarting the application.
+            progressByKey.remove(key);
+            return start(request, mavenSettings);
+        }
+        if (existing.candidates().stream().noneMatch(BumpProbeService::unfinished)) {
+            return existing;
+        }
+
+        BumpProgress resumed = existing.resuming();
+        progressByKey.put(key, activeKey.get() == null ? resumed : BumpProgress.queued());
+        ProbeTask task = new ProbeTask(key, request);
+        tasks.put(task.id, task);
+        task.future = executor.submit(
+                () -> runContinue(key, request, mavenSettings, existing.candidates(), existing.remedy(), task));
+        return progressByKey.get(key);
+    }
+
+    /** A row the search never settled: a major it never reached, or one it stopped partway. */
+    private static boolean unfinished(BumpCandidate candidate) {
+        return !candidate.probed() || candidate.higherReleasesUnchecked();
     }
 
     private String cacheKeyFor(ComponentGraph graph, StoredComponent component) {
@@ -193,9 +407,20 @@ public class BumpProbeService {
         return List.copyOf(byCoordinates.values());
     }
 
+    private List<ModuleDependency> moduleDependenciesOf(BumpRequest request) {
+        return request.moduleDirectDependencies().stream()
+                .filter(node -> node.purl() != null && node.purl().startsWith("pkg:maven/"))
+                .map(node -> new ModuleDependency(MavenArtifact.fromCoordinates(node.coordinates()), node.version()))
+                .toList();
+    }
+
     // --- the probe itself ------------------------------------------------------------------
 
-    private void runProbe(String key, BumpRequest request, MavenToolSettings mavenSettings) {
+    private void runProbe(String key, BumpRequest request, MavenToolSettings mavenSettings, ProbeTask task) {
+        if (!claim(task)) {
+            progressByKey.remove(key);
+            return;
+        }
         activeKey.set(key);
         // Overwrites a QUEUED record with RUNNING now that this key has actually reached the
         // front of the single background thread — without this, a queued probe would still
@@ -213,6 +438,7 @@ public class BumpProbeService {
             SearchBudget budget = new SearchBudget(
                     Instant.now().plus(Duration.ofMinutes(mavenSettings.runBudgetMinutes())),
                     mavenSettings.maxProbes());
+            task.budget = budget;
 
             // Nothing below can be trusted if Tier 1b cannot say whether a candidate is clean
             // at all. Checked against the target's own current version, since the evaluator is
@@ -225,10 +451,7 @@ public class BumpProbeService {
                 return;
             }
 
-            List<ModuleDependency> moduleDeps = request.moduleDirectDependencies().stream()
-                    .filter(node -> node.purl() != null && node.purl().startsWith("pkg:maven/"))
-                    .map(node -> new ModuleDependency(MavenArtifact.fromCoordinates(node.coordinates()), node.version()))
-                    .toList();
+            List<ModuleDependency> moduleDeps = moduleDependenciesOf(request);
 
             // Step 0 — whole-module calibration: does resolving the module's own declared set,
             // untouched, reproduce what the SBOM actually reports? This is a stronger claim
@@ -290,12 +513,15 @@ public class BumpProbeService {
                 String names = ancestorNodes.stream().map(GraphNode::coordinates).collect(Collectors.joining(", "));
                 completeWithCandidates(key, candidates, unavailable(
                         ("No single ancestor, and no combination of %s, resolves this cleanly. The ranked "
-                                + "candidates show what each still carries.").formatted(names)));
+                                + "candidates show what each still carries.").formatted(names)),
+                        budget.cancelled() ? STOPPED_NOTE : null);
                 return;
             }
 
-            completeWithCandidates(key, candidates, null);
+            completeWithCandidates(key, candidates, null, budget.cancelled() ? STOPPED_NOTE : null);
 
+        } catch (ProbeUnavailable e) {
+            complete(key, unavailable(e.getMessage()));
         } catch (Throwable t) {
             // Deliberately Throwable, not RuntimeException: this runs on the single background
             // thread with nothing else watching it, so anything this does not catch leaves the
@@ -306,7 +532,162 @@ public class BumpProbeService {
             complete(key, unavailable("The probe failed unexpectedly: " + t.getMessage()));
         } finally {
             activeKey.compareAndSet(key, null);
+            release(task);
         }
+    }
+
+    /**
+     * Marks a task as the one now executing, or declines it because it was cancelled while it
+     * sat in the queue.
+     *
+     * <p>Both halves matter. Recording the thread is what lets {@link #cancel} reach the
+     * {@code mvn} this run is blocked on; checking {@code cancelled} closes the window where a
+     * cancellation arrives after the executor has picked the task up but before
+     * {@code executor.submit} has handed back the {@link Future} there was to cancel.
+     */
+    private boolean claim(ProbeTask task) {
+        if (task.cancelled) {
+            task.finishedAt = Instant.now();
+            task.outcome = ProbeTaskView.State.STOPPED;
+            forgetOldestFinished();
+            return false;
+        }
+        task.thread = Thread.currentThread();
+        task.startedAt = Instant.now();
+        return true;
+    }
+
+    /**
+     * Moves a task from live to finished, keeping it in the list.
+     *
+     * <p>The outcome is read from the progress record the run just wrote rather than tracked
+     * separately, so the row and the component's own panel can never disagree about how it
+     * ended. A run stopped on request is {@code STOPPED} even though its progress record says
+     * {@code COMPLETED} — which is correct there, since a cut-short run keeps its settled rows —
+     * because here the question is how much of the search happened, not what it found.
+     */
+    private void release(ProbeTask task) {
+        task.thread = null;
+        task.budget = null;
+        task.finishedAt = Instant.now();
+
+        BumpProgress finalProgress = progressByKey.get(task.key);
+        if (task.cancelled) {
+            task.outcome = ProbeTaskView.State.STOPPED;
+            // Applied here rather than at each completion point because a stop lands on
+            // whichever path the run happened to be on. Stopping during calibration kills the
+            // mvn mid-invocation, so the run ends by reporting *that* failure — "nothing in
+            // this SBOM resolves cleanly" — which is a confidently wrong answer manufactured by
+            // the act of stopping it. This is the one place every exit path passes through.
+            progressByKey.computeIfPresent(task.key, (k, current) -> current.stopped(STOPPED_NOTE));
+        } else if (finalProgress != null && finalProgress.state() == BumpProgress.State.FAILED) {
+            task.outcome = ProbeTaskView.State.FAILED;
+        } else {
+            task.outcome = ProbeTaskView.State.COMPLETED;
+        }
+
+        forgetOldestFinished();
+    }
+
+    /** Keeps the remembered history bounded; the oldest to finish is the first to go. */
+    private void forgetOldestFinished() {
+        List<ProbeTask> finished = tasks.values().stream()
+                .filter(task -> task.outcome != null && task.finishedAt != null)
+                .sorted(Comparator.comparing(task -> task.finishedAt))
+                .toList();
+        for (int i = 0; i < finished.size() - REMEMBERED_FINISHED; i++) {
+            tasks.remove(finished.get(i).id);
+        }
+    }
+
+    /**
+     * A stopped run is a cut-short run, and says so where the reader is looking.
+     *
+     * <p>The rows themselves already carry the truth — a major never reached is {@code
+     * probed: false}, one walked partway is {@code higherReleasesUnchecked} — so nothing here
+     * has to reinterpret them. What the message adds is <em>why</em> the run is short, which
+     * budget exhaustion and a deliberate stop would otherwise be unable to tell apart.
+     */
+    private static final String STOPPED_NOTE =
+            "Stopped on request. Everything already settled is kept — Continue resumes from where it stopped.";
+
+    /**
+     * Re-ranks only the unfinished majors, in place, leaving settled rows untouched.
+     *
+     * <p>A cut-short row resumes <em>above</em> the version it stopped at — that is exactly what
+     * {@code rankMajor}'s {@code startAfterMinor} already expresses, so continuing needed no new
+     * search logic, only a different starting point per row.
+     */
+    private void runContinue(String key, BumpRequest request, MavenToolSettings mavenSettings,
+                              List<BumpCandidate> existing, Remedy previousRemedy, ProbeTask task) {
+        if (!claim(task)) {
+            // Nothing to roll back to but the rows it was going to extend, which is exactly
+            // what a continue that never started should leave behind.
+            completeWithCandidates(key, existing, previousRemedy, STOPPED_NOTE);
+            return;
+        }
+        activeKey.set(key);
+        progressByKey.compute(key, (k, current) ->
+                current == null ? BumpProgress.starting() : current.resuming());
+        try {
+            StoredComponent component = request.component();
+            MavenArtifact target = MavenArtifact.fromCoordinates(component.coordinates());
+            ProbeContext context = buildContext(mavenSettings, request.workspacePath());
+            SearchBudget budget = new SearchBudget(
+                    Instant.now().plus(Duration.ofMinutes(mavenSettings.runBudgetMinutes())),
+                    mavenSettings.maxProbes());
+            task.budget = budget;
+
+            List<ModuleDependency> moduleDeps = moduleDependenciesOf(request);
+            List<GraphNode> ancestorNodes = distinctAncestorsInPrimaryModule(request.graph());
+            if (ancestorNodes.isEmpty()) {
+                complete(key, unavailable("Nothing in this SBOM declares this component."));
+                return;
+            }
+            GraphNode primary = ancestorNodes.getFirst();
+            MavenArtifact ancestor = MavenArtifact.fromCoordinates(primary.coordinates());
+            MajorMinor current = MajorMinor.parse(primary.version());
+            List<String> knownVersions = resolver.knownVersions(ancestor, context);
+
+            List<BumpCandidate> merged = new ArrayList<>();
+            for (BumpCandidate candidate : existing) {
+                if (!unfinished(candidate) || budget.exhausted()) {
+                    merged.add(candidate);
+                    continue;
+                }
+                merged.add(rankMajor(key, moduleDeps, ancestor, candidate.ancestorCoordinates(), target,
+                        request.targetEvaluator(), context, budget, candidate.major(),
+                        resumePointFor(candidate, current), knownVersions, candidate.label()));
+            }
+
+            // A clean row found on this pass retires any "nothing resolves this" note the first
+            // run left behind — that verdict was true of what had been probed then, and is not
+            // true of what has been probed now.
+            boolean anyClean = merged.stream().anyMatch(BumpCandidate::clean);
+            completeWithCandidates(key, merged, anyClean ? null : previousRemedy,
+                    budget.cancelled() ? STOPPED_NOTE : null);
+
+        } catch (ProbeUnavailable e) {
+            complete(key, unavailable(e.getMessage()));
+        } catch (Throwable t) {
+            log.warn("Continued bump probe failed unexpectedly for {}", key, t);
+            complete(key, unavailable("The probe failed unexpectedly: " + t.getMessage()));
+        } finally {
+            activeKey.compareAndSet(key, null);
+            release(task);
+        }
+    }
+
+    /**
+     * Where a resumed walk picks up: above the last version actually probed for a cut-short
+     * major, and from the start for one never reached — except the currently-declared major,
+     * which still skips the minor lines below the version in use, exactly as the first pass did.
+     */
+    private long resumePointFor(BumpCandidate candidate, MajorMinor current) {
+        if (candidate.higherReleasesUnchecked() && candidate.version() != null) {
+            return MajorMinor.parse(candidate.version()).minor();
+        }
+        return candidate.major() == current.major() ? current.minor() - 1 : -1;
     }
 
     /**
@@ -334,8 +715,11 @@ public class BumpProbeService {
         ProbeAttempt feasibility = probeOne(moduleDeps, ancestor, "[" + currentVersion + ",)", target,
                 context, evaluator, key, budget);
         if (!feasibility.outcome().resolved()) {
-            // Not even a ranked list can be built without knowing what exists.
-            return List.of();
+            // Not even a ranked list can be built without knowing what exists. The reason is
+            // carried out rather than swallowed: an empty list alone completed the run showing
+            // nothing at all — no rows, no remedy, no error — which reads as "the probe found
+            // no upgrade" when what happened is that it never got to look.
+            throw new ProbeUnavailable(failureNote(feasibility.outcome()));
         }
         String globalLatest = feasibility.outcome().resolvedVersions().get(ancestor);
         List<String> knownVersions = resolver.knownVersions(ancestor, context);
@@ -373,9 +757,10 @@ public class BumpProbeService {
      * earlier release being affected proves nothing about a later one and vice versa, so the
      * only way to find the earliest clean line is to look, not to infer it from one probe.
      *
-     * <p>When nothing in the major is clean, the last release actually probed — which, walked
-     * ascending to the end, is the major's own highest known release — becomes the row's
-     * reported version, carrying whatever it still carries.
+     * <p>When nothing in the major is clean, the last release actually probed becomes the row's
+     * reported version, carrying whatever it still carries. Walked to the end that is the
+     * major's own highest known release; stopped early by the budget it is not, and the row is
+     * marked {@code higherReleasesUnchecked} so the two cannot be read as the same claim.
      */
     private BumpCandidate rankMajor(String key, List<ModuleDependency> moduleDeps, MavenArtifact ancestor,
                                      String ancestorCoordinates, MavenArtifact target,
@@ -393,9 +778,14 @@ public class BumpProbeService {
 
         String lastVersion = null;
         ProbeAttempt lastAttempt = null;
+        // Set only where the budget stopped the walk with minor lines still unexamined. A walk
+        // that ran to the end, or stopped because it found its earliest clean release, is a
+        // complete answer for this major and must not be marked.
+        boolean higherReleasesUnchecked = false;
 
         for (long minor : minors) {
             if (budget.exhausted()) {
+                higherReleasesUnchecked = true;
                 break;
             }
             String version = highestWithin(knownVersions, major, minor);
@@ -411,6 +801,9 @@ public class BumpProbeService {
         }
 
         if (lastAttempt == null) {
+            // Nothing in this major was probed at all, whether the budget ran out on the first
+            // step or the major has no releases to look at — "not probed" already says that
+            // without needing the partial marker too.
             return BumpCandidate.notProbed(label, ancestorCoordinates, major);
         }
 
@@ -420,7 +813,8 @@ public class BumpProbeService {
         boolean clearsCriticalAndHigh = hits.stream().noneMatch(BumpProbeService::isCriticalOrHigh);
 
         return new BumpCandidate(label, ancestorCoordinates, major, lastVersion, targetVersion, true,
-                clean, clearsCriticalAndHigh, hits, dependencySnippet(ancestor, lastVersion));
+                clean, clearsCriticalAndHigh, hits, dependencySnippet(ancestor, lastVersion),
+                higherReleasesUnchecked);
     }
 
     private static boolean isCriticalOrHigh(AdvisoryHit hit) {
@@ -472,11 +866,23 @@ public class BumpProbeService {
         if (workspacePath != null && !workspacePath.isBlank()) {
             lifted = effectivePoms.forWorkspace(
                     workspacePath, mavenSettings.executablePath(), isolatedRepository, PROBE_TIMEOUT,
-                    mavenSettings.profiles())
+                    mavenSettings.profiles(), mavenSettings.effectivePomGoal())
                     .orElse(null);
         }
         return new ProbeContext(mavenSettings.executablePath(), isolatedRepository, lifted, PROBE_TIMEOUT,
-                mavenSettings.profiles());
+                mavenSettings.profiles(), mavenSettings.dependencyTreeGoal());
+    }
+
+    /**
+     * The search cannot proceed, and the reason is the reader's answer rather than an error to
+     * log. Unchecked and caught in {@link #runProbe}, so the failure surfaces as an
+     * "unavailable, here is why" remedy in the panel — the same shape every other probe
+     * failure already takes.
+     */
+    private static final class ProbeUnavailable extends RuntimeException {
+        ProbeUnavailable(String note) {
+            super(note);
+        }
     }
 
     private enum CleanCheck { CLEAN, STILL_AFFECTED, UNKNOWN }
@@ -501,13 +907,31 @@ public class BumpProbeService {
         private final Instant deadline;
         private int remaining;
 
+        /**
+         * Set when the user stops the run. Deliberately expressed as exhaustion rather than as
+         * its own concept: every level of the search already consults {@link #exhausted()} and
+         * already reports what it did not reach — a major it never got to is {@code
+         * probed: false}, one it walked partway is {@code higherReleasesUnchecked}. A stopped
+         * run is a cut-short run, so it inherits all of that honesty, and {@code continueRun}
+         * resumes it with no new resume logic at all.
+         */
+        private volatile boolean cancelled;
+
         SearchBudget(Instant deadline, int probes) {
             this.deadline = deadline;
             this.remaining = probes;
         }
 
         boolean exhausted() {
-            return remaining <= 0 || Instant.now().isAfter(deadline);
+            return cancelled || remaining <= 0 || Instant.now().isAfter(deadline);
+        }
+
+        void cancel() {
+            cancelled = true;
+        }
+
+        boolean cancelled() {
+            return cancelled;
         }
 
         void spend() {
@@ -546,6 +970,10 @@ public class BumpProbeService {
             case NOT_FOUND -> "Not found in any configured repository.";
             case AUTHENTICATION -> "Authentication failed against a configured repository.";
             case NOT_RUNNABLE -> "mvn could not be started at the configured path.";
+            case PLUGIN_UNAVAILABLE -> ("Maven ran, but could not obtain the plugin the probe needs. "
+                    + "The probe resolves into its own repository (%s), never your ~/.m2, so on a "
+                    + "machine that cannot reach a repository it has no way to obtain that plugin. "
+                    + "The full Maven output is in sbomscope.log.").formatted(defaultProbeRepository());
             case TIMEOUT -> "mvn did not finish within the probe timeout.";
             case OTHER -> "The probe failed.";
         };
@@ -598,8 +1026,12 @@ public class BumpProbeService {
     }
 
     private void completeWithCandidates(String key, List<BumpCandidate> candidates, Remedy remedy) {
+        completeWithCandidates(key, candidates, remedy, null);
+    }
+
+    private void completeWithCandidates(String key, List<BumpCandidate> candidates, Remedy remedy, String note) {
         progressByKey.compute(key, (k, current) ->
-                (current == null ? BumpProgress.starting() : current).completed(candidates, remedy));
+                (current == null ? BumpProgress.starting() : current).completed(candidates, remedy, note));
     }
 
     private void complete(String key, Remedy remedy) {

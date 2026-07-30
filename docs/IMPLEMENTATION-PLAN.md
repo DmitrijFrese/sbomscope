@@ -7,9 +7,13 @@ land. Add newly-discovered work as you go. Record design decisions in the decisi
 at the bottom — including reversals, with the reasoning.
 
 Last updated: 2026-07-30 · Status: **Phases 0–2, 4–7 complete. Phase 8 Tier 1 complete; Tier 2
-passes A, B and C built and verified against a real `mvn`, plus the configurable probe
-budget, Maven profiles setting, and queued-vs-running probe status. Now starting the B-items
-(B1, the session-tabs redesign, onward) — then Phase 3 and Phase 9**
+passes A, B and C built and verified against a real `mvn`, plus the configurable probe budget,
+Maven profiles, configurable plugin versions, queued-vs-running status, full `mvn` command and
+output logging, continuable searches, and honest reporting of a budget-truncated major. One
+open question carried forward: the isolated probe repository cannot work on a fully air-gapped
+machine — see the decision log. B-items started: **B1 (session-scoped per-SBOM component tabs)
+is built and verified live**, and B1a (Monitoring: the probe queue, stopping it, and the full log)
+with it; B2 onward next — then Phase 3 and Phase 9**
 
 ---
 
@@ -28,6 +32,7 @@ budget, Maven profiles setting, and queued-vs-running probe status. Now starting
 | 8 | Upgrade paths | **Tier 1 done; Tier 2 works, second pass planned** |
 | 9 | Workspace usage detection | Not started |
 | 10 | Packaging and distribution | Not started |
+| 11 | VEX — read a supplier's "not affected" | Not started |
 
 Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
 Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
@@ -789,41 +794,54 @@ carries, and A threw that away the moment it was not perfectly clean.
 | Move to 3.x | earliest clean in major 3 → 3.5.16 |
 | Move to 4.x (latest) | earliest clean in major 4 |
 
-- [ ] **One candidate per major, enumerated from `knownVersions` — never a "next major"
+- [x] **One candidate per major, enumerated from `knownVersions` — never a "next major"
       shorthand.** Picking "the next major" is the same arbitrary-boundary mistake as
       `[3.0.0,4.0.0)`: at 1.x with latest 5.x it names 2.x and silently skips 3 and 4.
-- [ ] **Major is the axis blast radius varies along**, which is why rows split there. Spring Boot
+- [x] **Major is the axis blast radius varies along**, which is why rows split there. Spring Boot
       2 → 3 is the Jakarta namespace migration; 3.0 → 3.5 is a weekend.
-- [ ] **The patch tier disappears as a concept.** The current-major row *is* the patch or minor
+- [x] **The patch tier disappears as a concept.** The current-major row *is* the patch or minor
       answer whenever the fix is nearby — if 2.1.18 were clean, "Stay on 2.x → 2.1.18". One
       fewer concept and a more accurate one.
-- [ ] **Every row carries what it still carries**, as advisories with their GHSA ratings and
+- [x] **Every row carries what it still carries**, as advisories with their GHSA ratings and
       **not a count** — the existing rule that *"clears 3 of 4" cannot be acted on; which one
       remains decides*. A row is additionally marked when it clears every critical and high,
-      since that is the bar an upgrade is usually judged against.
-- [ ] **This subsumes the partial-fix idea** raised the same day: a row whose highest release
+      since that is the bar an upgrade is usually judged against. **Revised 2026-07-30, later the
+      same day, on live user feedback**: the inline list grew unusably long for a heavily-carried
+      component (65 advisories on one row). `AdvisorySummary` now leads with a **count by
+      severity band**, CVE-linked and clickable, with the full list behind a details toggle — the
+      "not a count" rule survives as "never *only* a count", not as "never a count at all".
+- [x] **This subsumes the partial-fix idea** raised the same day: a row whose highest release
       still carries two criticals against a baseline of twelve is visible and comparable without
       any separate "best candidate so far" mechanism.
-- [ ] **The feasibility probe keeps its other two jobs and loses the short-circuit.** It is the
+- [x] **The feasibility probe keeps its other two jobs and loses the short-circuit.** It is the
       metadata primer — `knownVersions` reads the local repository and nothing is there until a
       range probe makes Maven fetch it — and it establishes the upper bound. Its verdict becomes
       one data point among the rows.
-- [ ] **Nearest-major-first, on one shared budget.** Ranking wants ascending majors anyway, so
+- [x] **Nearest-major-first, on one shared budget.** Ranking wants ascending majors anyway, so
       budget exhaustion lands on the far majors — precisely where precision matters least. No
       special-casing needed. Unprobed majors are reported as **not probed**, never as "no fix".
-- [ ] **Budgets: 20 probes, 8 minutes.** The measured spring-boot case is ~11 probes, ~50s warm
-      and ~4 minutes cold for twelve. **Flagged as a UX judgement rather than a measurement**:
-      verdicts stream live and the useful rows land first, but eight minutes is a long time to
-      watch a panel, and keeping five with more "not probed" rows is a defensible alternative.
-- [ ] **Scope: ranked candidates for the single-ancestor search only.** Combination testing stays
+- [x] **Budgets: 20 probes, 8 minutes**, as the shipped defaults (`MavenToolSettings.DEFAULT_MAX_PROBES`
+      / `DEFAULT_RUN_BUDGET_MINUTES`). **Made user-configurable 2026-07-30**, later the same day,
+      per the "the run budget is the only sound lever" decision below — the UX judgement this
+      bullet flagged did not need resolving centrally once the user can set it themselves, with a
+      link from the Bump section straight to Settings.
+- [x] **Scope: ranked candidates for the single-ancestor search only.** Combination testing stays
       the one coarse fallback probe it is now; ranking combinations as well is a combinatorial
       step up not worth taking in the same pass.
-- [ ] **`BumpProgress` gains `List<BumpCandidate>`** — `(label, major, version, targetVersion,
+- [x] **`BumpProgress` gains `List<BumpCandidate>`** — `(label, major, version, targetVersion,
       clean, stillCarries, snippet)` — while `remedy` stays for the failure and unavailable
       paths, so none of the failure-classification work is disturbed. The panel renders the rows
       as a table, closer to how `advice.advisories` already renders than to a `RemedyCard`.
-- [ ] **No suggestion is emitted.** A bump cannot be *suggested* until route completeness exists,
+- [x] **No suggestion is emitted.** A bump cannot be *suggested* until route completeness exists,
       which is still open under B.
+
+**Built and verified live 2026-07-30.** `jackson-databind@2.9.5` (via `keycloak-core`) ranked one
+row per major from 4 through 23, each carrying its own still-affected advisories; the
+`feasibilityBeingAffectedDoesNotStopTheSearchOfIntermediateMajors` regression test pins the
+non-monotonicity fix directly. Same day, two follow-on items landed in the same area and are
+recorded under their own dates below rather than folded in here: the probe budget became
+user-configurable, and `BumpProgress` gained a `QUEUED` state distinct from `RUNNING` once the
+single background thread's serialisation became something a reader could actually observe.
 
 ### Logging
 
@@ -840,9 +858,13 @@ reasoning worth showing.
       `sbomscope.data-directory` property `SbomFileStore` uses, so the existing test override
       isolates logs too rather than needing a second one
 - [x] **The UI tails `activity.jsonl`.** Structured by construction, so the viewer never
-      parses prose. Polled every 3s from a panel on the Settings page; re-reads the file
-      from scratch each time rather than tracking a cursor, since the file is size-capped and
-      re-reading is naturally robust to rotation
+      parses prose. Polled every 3s from its own top-level Log tab (moved there from Settings
+      on 2026-07-30). **Keeps no cursor** — every call seeks from the file's current end, which
+      is what makes it robust to rotation where a stored byte offset would not be — but reads
+      only a bounded window off the end rather than the whole file. The original "re-read it
+      all, it is size-capped" reasoning did not survive contact with the cap: 10 MB read and
+      parsed twenty times a minute to return 200 rows is a cost with nothing on the other side
+      of it. Corrected 2026-07-30
 - [x] Notable = anything touching the network, anything running an external process, anything
       changing stored data, and every probe result with its verdict. Network, process and data
       covered (OSV database download/index, osv-scanner invocations, SBOM upload/delete, purge,
@@ -936,6 +958,115 @@ imported in source from one that is only present transitively.
       move them to a restricted one
 - [ ] Sample SBOMs and a quickstart
 
+## Phase 11 — VEX
+
+Goal: a finding can carry **someone's assertion that it does not apply**, from a document
+rather than from a text box.
+
+Raised 2026-07-30. Scheduled after Phase 3 and after B2, for reasons given under *Order*
+below. Nothing here is started.
+
+### What VEX is, and the one fact that shapes the whole phase
+
+VEX (Vulnerability Exploitability eXchange) is a statement about **one product** and **one
+vulnerability**, carrying a status — `not_affected`, `affected`, `fixed` or
+`under_investigation` — and, for `not_affected`, a justification from a closed set:
+`component_not_present`, `vulnerable_code_not_present`, `vulnerable_code_not_in_execute_path`,
+`vulnerable_code_cannot_be_controlled_by_adversary`, `inline_mitigations_already_exist`.
+
+Three encodings, all live: **CSAF 2.0 VEX** (OASIS, what vendors publish), **OpenVEX**
+(OpenSSF, minimal JSON-LD, what tools emit), and **CycloneDX VEX** (alongside or inside a BOM).
+Read all three, emit none in the first pass.
+
+**The fact that decides everything below: there is no OSV-shaped universal VEX archive, and
+there structurally cannot be one.** OSV can be downloaded whole because an advisory is a fact
+about a *package* — true for everyone who has it. A VEX statement is a supplier's assertion
+about *their own build*: "our appliance ships log4j 2.14, but the vulnerable path is not
+reachable in it". Upstream open-source projects almost never publish VEX about themselves, so
+for an ordinary Maven or npm dependency tree there is nothing to fetch. Anyone offering "all
+the VEX data" is offering a vendor's product catalogue, which is a different thing.
+
+So the phase splits in two, and **the smaller half is the more valuable one**.
+
+### Tier A — consume a VEX the user was handed
+
+Needs no feed, no network, and no new policy. A VEX document arrives the way an SBOM does:
+somebody produced it and gave it to you — a supplier shipping software, or your own security
+team recording a triage decision once so it is not re-made every month.
+
+- [ ] Attach one or more VEX documents to an SBOM, uploaded exactly as the SBOM is
+- [ ] Parse CSAF VEX, OpenVEX and CycloneDX VEX into one internal statement shape:
+      (vulnerability id, product identity, status, justification, statement author, timestamp)
+- [ ] Match a statement to findings by **purl first**, falling back to the same
+      `PackageKey`-style normalisation the report parser already needs. A statement that
+      matches nothing is reported, never dropped — the count of unmatched statements is exactly
+      the kind of silent loss recorded under *Optional enhancements* for scanner results
+- [ ] Findings carry their statement in the view, the Inspector and the export
+- [ ] Filter by VEX status, defaulting to showing everything
+
+**This does not breach constraint 6, and the reason is worth stating because it looks like it
+does.** Constraint 6 forbids *manual judgment fields* — a comment box, a "mitigated?" tick —
+because those need an annotation store and make SBOMscope the system of record for opinions it
+cannot check. Reading a VEX document is the opposite: it is a standard-format artefact from a
+real source, carrying its own author and timestamp, no different in kind from an OSV advisory.
+The boundary is sharp and must stay so: **SBOMscope reads VEX; it never offers a UI for
+authoring one.** The moment a user can type a justification into our screen, constraint 6 has
+been broken and the argument above stops being available.
+
+### Tier B — Red Hat's CSAF VEX as a real feed
+
+The one bulk corpus that earns its place, because it answers a question OSV structurally
+cannot.
+
+Red Hat publishes CSAF VEX for every CVE touching their portfolio, as individual documents
+plus a **weekly bulk archive with a published checksum and signature** — one fixed URL, no
+credentials, downloaded whole. That is constraint 1 category 2 exactly, the same shape as
+`all.zip`, and it can be carried across on a USB stick.
+
+**Why this one and not a general "VEX feed" setting.** It lands directly on **B2**. Red Hat's
+Maven rebuilds are the `a.b.c.d` vendor-patched versions carrying
+`?repository_url=https://maven.repository.redhat.com/...` — the ones whose registry links B2 is
+fixing. For an SBOM containing those, OSV is describing the *upstream* artifact and Red Hat's
+VEX is the authority on **their rebuild**, which is the artifact actually installed. That is a
+real gap closed, not a second opinion.
+
+- [ ] Download and index the archive, per the OSV archive's own pattern: explicit user action,
+      exact URL shown, `.partial` then atomic move, identity by size and modification time
+- [ ] Verify the published checksum. The OSV archive is unsigned and we accept that; this one
+      is signed, so declining to check would be a choice rather than a limitation
+- [ ] Match by Red Hat's own product identifiers and by purl where the document carries one
+- [ ] **Measure before committing**: archive size, parse time, retained memory and the disk cost
+      of the index — the four numbers taken for OSV under *Index cost for the local matcher*.
+      This plan does not carry unmeasured numbers, and the npm index is already an open item for
+      exactly that reason
+
+### Suppression discipline — the part that decides whether this is safe
+
+VEX **hides findings**. A security tool that conceals something because a document said so
+needs the same rules this project applies everywhere else:
+
+- [ ] **Never delete, only mark.** A suppressed finding stays in the database and stays
+      exportable. The default view may hide it; nothing may lose it
+- [ ] **Always show the count.** *"12 findings suppressed by VEX"* is visible wherever the
+      suppression applies, and one click shows them
+- [ ] **Always name the author.** `not_affected` / `vulnerable_code_not_present` is a claim with
+      somebody's name on it, not a fact. The statement's source document and timestamp travel
+      with it into the view and the export
+- [ ] **Staleness is visible.** A statement made against version 2.14 says nothing about 2.17.
+      Same reasoning as the version-list cache in R4: the absence of a safe default
+- [ ] **Never suppress silently on import.** Attaching a VEX changes what a security tool shows
+      and is therefore a deliberate act, like every other one here
+
+**Done when**: a finding a supplier has declared `not_affected` shows that status, its
+justification and its author, is filterable and exportable, and is never quietly absent.
+
+### Order, and what would change it
+
+Below Phase 3 and below B2. Phase 3 (KEV, EPSS) sharpens *every* finding; VEX sharpens the
+subset somebody has written a document about. B2 comes first because Tier B's value rests on
+vendor-patched artifacts being handled properly, which is B2's job. Tier A can move up on its
+own the moment a real VEX document turns up to test against — it needs nothing from the rest.
+
 ---
 
 ## From using it — 2026-07-29
@@ -967,7 +1098,7 @@ analysing does not need asking, because it sends nothing anywhere.
 - **The manual re-scan stays.** Filling a gap and deliberately re-running analysis against a
   refreshed archive are different needs, and only the first is automatic.
 
-### B1 — Component selection is global, should be per SBOM, and should be session-persistent tabs
+### B1 — Component selection is global, should be per SBOM, and should be session-persistent tabs — **built 2026-07-30**
 
 Merged 2026-07-30 from two items that turned out to be the same underlying gap approached from
 different angles: component selection does not survive navigation the way it should. Originally
@@ -1026,8 +1157,98 @@ anything backed by localStorage.
 - **Interacts directly with the queued-probe work built the same day.** With several tabs open,
   starting a bump probe on more than one is a realistic thing to do in one sitting, not a
   hypothetical — this is the scenario QUEUED exists to describe honestly.
-- Not in scope here: reordering tabs by drag, a maximum tab count, or restoring tabs after a
-  full reload — left for a later pass if the plain version proves not to be enough.
+- Not in scope here: reordering tabs by drag, or restoring tabs after a full reload — left for
+  a later pass if the plain version proves not to be enough. **A maximum tab count was also
+  listed here and was brought in the same day** — see *Crowding* below.
+
+**Crowding — added 2026-07-30**, on the question of what happens with too many tabs open.
+
+The performance half of that worry does not apply: only the active tab's panel is mounted, so
+ten tabs are ten list items and nothing else. Navigation and vertical space are the real costs,
+and the established answers are the ones IDEs and browsers already converged on.
+
+- [x] **One row that never wraps.** Wrapping was the first shape and it was wrong: a second and
+      third row of tabs takes height from the panel, which is the same argument that moved the
+      identity block out of this column. Tabs shrink to a 118px floor and then the strip
+      scrolls, as every browser does. Measured: constant 44px whether one tab is open or ten.
+- [x] **A cap of ten, evicting the least recently *active*** — IntelliJ's tab limit and VS
+      Code's `workbench.editor.limit`, at their usual default. Least recently active rather
+      than oldest-opened, or the tab you have been returning to all session is the one that
+      goes. Display order stays the order things were opened in.
+- [x] **Eviction is silent, and that is defensible here specifically.** A tab holds no state:
+      advisories and the graph are re-fetched per (sbom, purl), and a probe's progress lives on
+      the backend keyed by module and target, so closing a tab neither stops a probe nor
+      discards its result. A dropped tab costs two keystrokes in the finder. That is why this
+      does not get the "report it, never disguise it" treatment budget exhaustion gets — there,
+      something genuinely was not done.
+- [x] **The active tab is always revealed**, since activation arrives from four places that are
+      not a click on the tab itself: a row's Inspect link, a close activating its neighbour,
+      the restore after a route change, and opening a component that is not yet a tab.
+- [ ] Revisit only if ten proves wrong in use. A user-configurable limit is deliberately not
+      offered — the probe budget earned that because it trades completeness for cost, and this
+      trades nothing.
+
+**Built and verified live 2026-07-30**, against both fixtures in one session. `SbomProvider`
+holds `Record<sbomId, {open, active}>` in plain `useState`; `ComponentInspectorPage` renders
+the strip and the superseded `inspector.lastPurl` map is gone, its localStorage key removed on
+mount so it does not sit orphaned in browsers that ran that build. Verified in the browser
+rather than asserted:
+
+| Behaviour | Result |
+|---|---|
+| Top-nav round trip (Inspector → Activity log → Inspector) | three tabs intact, active one restored into the URL |
+| Switch to an SBOM not containing the URL's purl | purl dropped, finder shown, **no 404 rendered** |
+| Two SBOMs, two tabs each | fully independent lists *and* active tabs, in both directions, over two round trips |
+| Close active tab with a right neighbour | neighbour activated, URL follows |
+| Close an inactive tab | URL and active tab untouched |
+| Close the last tab | placeholder returns, purl cleared |
+| Per-row "Inspect" link from the vulnerability view | still a plain link; appends a tab and activates it |
+| Probe started on one tab, another tab active | kept running server-side, hydrated with its accumulated verdicts on return |
+| Full page reload | tabs gone by design, the URL's purl reopens as one tab, no error |
+
+Two things the item did not anticipate, both settled during the build:
+
+- **The label needs the version.** "the artifact name, not the full coordinates" is right
+  about the group and wrong about the version: `vuln-multi-module.cdx.json` carries
+  `jackson-databind`, `keycloak-core` and `netty-all` each at two versions, and opening two of
+  them produced two tabs reading `jackson-databind` with nothing to tell them apart. Found by
+  a verification step picking the wrong tab. The version now follows the name, muted and
+  monospaced, exactly as the finder already renders it.
+- **The strip is in the main column**, not beside the finder. B1 said "between the finder and
+  the identity panel", which assumed a side column ordered finder-then-identity; the shipped
+  order is the reverse, deliberately. A 280px column cannot hold browser-style tabs anyway.
+  In the main column the strip aligns with the top of the identity block (measured: both at
+  y=155) and sits directly above the content it switches.
+
+### B1a — Monitoring: the running queue, and stopping it — **built 2026-07-30**
+
+Raised straight after B1, and by it: a probe outlives the tab it was started from, so closing
+that tab — or having the ten-tab cap evict it — left a real `mvn` running with no way to reach
+it. Not an orphan in the leaked sense (it is tracked, it finishes, its result is cached), but
+invisible, holding the only probe thread, and unstoppable.
+
+**The Activity Log tab becomes Monitoring, with three sub-tabs.** `/log` redirects, as
+`/workspace` already precedents.
+
+- [x] **Processes** — running, queued and recently finished probes, with elapsed time and a
+      Stop control. Each row opens the component it was answering for; a plain link would not
+      do, because the Inspector reads the purl from the URL but the SBOM from the selection, so
+      it selects the SBOM on the way.
+- [x] **Activity log** — the existing `activity.jsonl` tail, unchanged.
+- [x] **Full log** — a tail of `sbomscope.log`, which nothing surfaced before. The last session
+      made the probe diagnosable by writing every `mvn` command and its whole output there, and
+      then left the only route to it an "Open folder" button — no route at all on a machine
+      where the browser and the file manager are not both to hand.
+- [x] **Stopping kills the process tree, not the wrapper.** The pre-existing timeout watchdog
+      destroyed only the direct child; on Windows that is `mvn.cmd` and the real Maven JVM is
+      its grandchild. Fixed at every kill site, since implementing Stop on top of it would have
+      manufactured exactly the orphan this item is about.
+- [x] **Finished runs stay listed for the session**, bounded at 25.
+- [ ] **Persistence across a restart** — deliberately deferred (see the backlog). Nothing here
+      survives a restart today, consistent with probe progress itself.
+- [ ] Extend the list to osv-scanner runs and OSV downloads. Both already have their own
+      progress surfaces, so folding all three into one honest "what is this application doing"
+      is a reconciliation job rather than an addition.
 
 ### B2 — Registry links break on vendor-patched versions
 
@@ -1165,8 +1386,17 @@ currently a bare wordmark.
       back. It has. A data-model question before it is a screen — findings are keyed by purl
       and shared across SBOMs, so "how did this project change" needs a notion of *this
       project* that does not currently exist
+- [ ] **Persist the probe history across restarts.** Monitoring's Processes tab keeps finished
+      runs for the session only, matching probe progress itself, which is deliberately
+      session-scoped so a restart re-validates against whatever Maven configuration is current.
+      Persisting the *history* is a different claim from persisting the *results* and could be
+      done without disturbing that — a small table of (component, module, outcome, timings). Not
+      needed yet; raised 2026-07-30 when the history was added
 - [ ] More themes, including a high-contrast one for visually impaired readers. `tokens.css`
       already holds every colour in one place, which is what makes this cheap
+- **VEX** was raised here on 2026-07-30 and promoted straight to [Phase 11](#phase-11--vex)
+      rather than left as a backlog line: the interesting part is not "support VEX" but the
+      constraint-6 boundary and the suppression rules, and neither fits in a bullet
 
 ---
 
@@ -2453,3 +2683,263 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   "queued behind another probe" message. Became directly relevant once B1's session-tabs
   redesign was in view: several tabs open at once makes starting more than one probe in a
   sitting the normal case, not a corner one.
+- 2026-07-30 — **Every `mvn` invocation is captured in full and written to the main log**
+  (`MavenInvocation`). Prompted by a report of the probe producing nothing usable on an
+  air-gapped machine, with the activity log's one-line-per-probe summary too coarse to diagnose
+  from. The command line is logged verbatim so it can be pasted into a terminal and reproduced;
+  the whole output is logged at WARN on any failure and at DEBUG on success, so a working setup
+  does not write a probe's worth of Maven chatter per candidate. `EffectivePomCache` previously
+  discarded its output outright (`Redirect.DISCARD`) and failed silently — the workspace lift-in
+  is what makes a supplier's own repository reachable, so losing it is the difference between
+  probes that resolve and probes that cannot, and was never something to discover by inference.
+- 2026-07-30 — **The probe could hang forever, with the timeout unable to fire.** The old runner
+  read stdout to EOF, then stderr, then called `waitFor`. A child that fills the stderr pipe
+  buffer (4–64 KB) blocks writing to it, so it never closes stdout, so the read never returns and
+  `waitFor` is never reached — and because probes are serialised on one thread, one hang stalls
+  every later probe for the life of the process. An air-gapped Maven emits a "Could not transfer
+  artifact" block per artifact and reaches that buffer easily, so this is a prime suspect for the
+  original report. Fixed by merging stderr into stdout (nothing distinguished them — both call
+  sites concatenated them before looking) and enforcing the timeout with a watchdog that destroys
+  the process, since killing the child is what actually unblocks the read.
+- 2026-07-30 — **Plugin goals are version-pinned rather than invoked by prefix.**
+  `dependency:tree` made Maven fetch the plugin group's `maven-metadata.xml` to resolve the
+  prefix, then take the plugin's *latest* version: an avoidable round-trip, the literal source of
+  `NoPluginFoundForPrefixException`, and a probe whose behaviour could change month to month with
+  nothing changed locally — unacceptable for a tool whose output is meant to be reproducible. Now
+  `maven-dependency-plugin:3.6.1:tree` and `maven-help-plugin:3.4.0:effective-pom`. **This does
+  not make the plugin obtainable where it is not already.** A further argument that only surfaced
+  afterwards: a pinned version makes the probe's plugin requirements a *finite, knowable set*,
+  which is what makes seeding `probe-repo` from a connected machine possible at all — with
+  "latest" you cannot pre-seed, because you do not know what it will ask for.
+- 2026-07-30 — **The pinned plugin versions are user-configurable**, after the risk above was
+  raised: a curated mirror proxying an approved subset of Central may not carry the pinned
+  version, and on such a machine the feature would be unusable with no way to say so. Which
+  version exists is a fact about the user's repository, not about SBOMscope — the same reasoning
+  as pointing at your own `mvn` and naming your own profiles. Blank resets to the shipped default
+  rather than being rejected, so clearing the field is a safe undo, and the panel shows the
+  concrete version in use so there is something to change *from*. Validated against
+  `VERSION_PATTERN`: the value is interpolated into a colon-separated goal coordinate, so a stray
+  colon or space would not merely be invalid, it would change which goal Maven runs.
+- 2026-07-30 — **`PLUGIN_UNAVAILABLE` split out of `NOT_FOUND`.** Maven failing to obtain its own
+  plugin says nothing about the component being probed, and reporting it as "not found in any
+  configured repository" sent the reader to fix the wrong thing.
+- 2026-07-30 — **A cut-short major says so** (`BumpCandidate.higherReleasesUnchecked`). Budget
+  exhaustion partway through a major used to report `probed=true` with whatever version it
+  stopped at, making *"the highest 2.x still carries this"* indistinguishable from *"we got as
+  far as 2.7.18 and stopped"* — the first is a verdict on the whole major, the second says
+  nothing about what sits above it. The same unproven-versus-disproven distinction the
+  feasibility short-circuit was removed for, one level down. Never set where the walk stopped on
+  finding its earliest clean release: ascending order makes that a complete answer.
+- 2026-07-30 — **An incomplete search can be continued rather than re-run.** Needed no new search
+  logic: `rankMajor` already takes a `startAfterMinor`, which is exactly a resume point, so a
+  cut-short major picks up above the version it stopped at and an unreached one starts from
+  scratch. Settled rows cost nothing, and calibration and feasibility are not repeated — the
+  model was validated on the first run, settings cannot have changed without clearing this cache,
+  and the existing rows already enumerate every major. Each press takes a **fresh** budget, so it
+  means "spend another run's worth on this" and can be pressed repeatedly.
+- 2026-07-30 — **Two dead ends in the bump panel, both reported live.** With Maven unconfigured
+  the probe is refused, and the panel hid its button as soon as any result existed — so someone
+  who followed the Settings link, configured Maven and came back could not ask again short of
+  restarting the application. Separately, a run that completed with no rows was returned from
+  cache forever, escapable only by changing a setting to clear the cache as a side effect. Fixed
+  together: the button is offered whenever there is nothing actionable (never started, refused,
+  or completed without ranking anything), and continuing a run that ranked nothing starts it over
+  rather than replaying it, since there is nothing to preserve.
+- 2026-07-30 — **Recording an action must never be able to fail the action.** `ActivityLogger`
+  called `mapper.writeValueAsString` unguarded, and Jackson 3's `JacksonException` is unchecked —
+  so a serialisation failure would have propagated into whatever was being recorded, aborting a
+  scan, an upload or a probe because the *note about it* could not be written. Now caught and
+  degraded to the prose log. Found while reviewing the commit rather than by failing.
+- 2026-07-30 — **"Test Maven" verifies the plugins, not just the binary.** It ran `mvn --version`,
+  which on the air-gapped machine reported a perfectly good *Apache Maven 3.9.16* while every
+  probe failed — a green tick that sends the reader looking for the problem everywhere except
+  where it is. It now also runs both configured goals against a throwaway empty project in the
+  real `probe-repo`, so green means the exact invocations a probe makes have been made once and
+  worked. The Maven version is still reported when the plugin check fails, because "Maven runs
+  but its plugins cannot be obtained" and "that is not Maven" need different fixes.
+- 2026-07-30 — **Measured, on the maintainer's own Maven 3.9.16**, while answering "won't a
+  correctly configured Maven just use `~/.m2`?": **no.** `-Dmaven.repo.local` *overrides* the
+  local repository, so `settings.xml` still supplies mirrors and credentials but `~/.m2`'s
+  contents are not consulted at all. With a reachable mirror the plugin downloads into
+  `probe-repo` — which is why this works on an ordinary machine and fails air-gapped.
+  A candidate fix was tested directly, offline, with an empty local repository:
+
+  | Case | Result |
+  |---|---|
+  | no tail | `PluginResolutionException` |
+  | `-Dmaven.repo.local.tail=~/.m2/repository -Dmaven.repo.local.tail.ignoreAvailability=true` | exit 0 |
+  | files written into `~/.m2` by the tail run | **none** |
+
+  So the tail reads through to `~/.m2` without writing to it, which preserves the entire reason
+  the isolation exists — no `.lastUpdated` poisoning of a real build. **It is not a complete
+  answer on its own**: it only surfaces artifacts genuinely present in `~/.m2`, and the
+  maintainer's own `~/.m2` had *no* `maven-dependency-plugin` jar, only a failed-download
+  marker — unsurprising, since the plugin is not part of an ordinary build lifecycle. A working
+  air-gapped setup therefore needs the tail *and* a one-time seed of the pinned plugins while
+  connected. Both halves are now cheap: pinning made the required set knowable, and "Test Maven"
+  performs exactly the invocation that would seed it.
+- 2026-07-30 — **The Inspector's open components are session state above the router, not a
+  preference** (B1). Three candidate homes, and the choice follows from the bug rather than
+  from taste: inside the page it cannot survive its own unmount, which *is* the bug; in
+  localStorage it outlives a restart, and which libraries you had open is where you were in a
+  session, not how you like to work — reopening yesterday's tabs is clutter, not a courtesy.
+  `useState` in `SbomProvider` is above the router, so it survives every route change, and
+  loses everything on restart, which is correct. It is also the simplest of the three.
+
+  **Keyed per SBOM, `Record<sbomId, {open, active}>`.** This is what makes "switching to an
+  SBOM that does not contain the selected component" stop being a case at all: that SBOM's own
+  tabs are what you see, empty for one never opened this session. The former patch's
+  single-purl map is removed rather than kept underneath, and its localStorage key is deleted
+  on mount so it does not sit orphaned in every browser that ran that build.
+
+  **The URL still names the active tab.** `?purl=` stays the source of truth for what is shown,
+  so a refresh works and every "Inspect" link elsewhere stays a plain link; the tab list is
+  what remembers, and the two are reconciled in one direction only — the list feeds the URL
+  when the page is reached without one, never the reverse. A purl the SBOM does not contain is
+  a 404 the page swallows deliberately: it clears the parameter and falls back to that SBOM's
+  tabs, because "not in this document" is a different document, not a failure worth rendering.
+
+  **A tab is opened only after its component loads.** Opening on navigation would let a stale
+  purl put a tab in the strip that cannot be opened — the strip would then be advertising
+  something the document does not have, which is the failure mode this item exists to remove.
+- 2026-07-30 — **Tab labels carry the version, reversing B1's "the artifact name" wording.**
+  The item's reasoning — the identity panel already carries the full purl, so the strip does
+  not need the group — is right about the group and wrong about the version. This project's own
+  adversarial fixture exists *because* one aggregate BOM routinely holds the same library at two
+  versions across modules, and comparing exactly those two is a headline reason to want tabs at
+  all; two tabs both reading `jackson-databind` would have made the feature useless for its best
+  case. Caught by a verification step selecting the wrong tab, not by reading the code.
+- 2026-07-30 — **An unmapped `/api/…` path answered 500, not 404.** Found in passing while
+  checking settings during the B1a work. `NoResourceFoundException` **implements
+  `ErrorResponse` but does not extend `ResponseStatusException`**, so the handler that exists
+  precisely to stop deliberate 404s becoming 500s did not cover it, and every mistyped API URL
+  produced a server error with a stack trace in the log.
+
+  It also contradicted a property ARCHITECTURE.md states outright: unknown non-API paths are
+  forwarded to `index.html` so a deep link survives a refresh, while `/api/` ones deliberately
+  still fail — *so that a mistyped fetch URL fails as a missing endpoint rather than as an HTML
+  parse error*. That only holds if the failure is a 404, and it was not.
+
+  Now handled explicitly and covered by `ApiExceptionHandlerTest`, which also pins the older
+  `ResponseStatusException` case and the SPA fallback's non-API behaviour. The test exists
+  rather than a line in an existing one because this is the **second** exception type to fall
+  through the same gap; the lesson recorded in AGENTS.md is to check what an exception extends
+  rather than what its name suggests.
+- 2026-07-30 — **The probe queue becomes visible and stoppable, and the Log tab becomes
+  Monitoring** (B1a). Raised by B1: a probe outlives its tab by design, and the tab cap means the
+  application can now close one, so a run could be left holding the single probe thread with no
+  route back to it. The premise needed sharpening first — it was never an *orphan*: it is
+  tracked, it finishes, its result is cached, and reopening the component rehydrates it. What was
+  missing was an address and a stop.
+
+  **Three sub-tabs rather than a fourth nav item**: processes, activity log, full log. The full
+  log had never been surfaced at all — the previous session made the probe diagnosable by writing
+  every `mvn` command and its whole output to `sbomscope.log`, then left the only route to it an
+  "Open folder" button, which is no route on a machine where the browser and the file manager are
+  not both to hand.
+
+  **Stopping is expressed as budget exhaustion.** `SearchBudget.exhausted()` is the one checkpoint
+  every level of the search consults, and every level already reports what it did not reach, so a
+  stopped run is a cut-short run and `continueRun` resumes it with no new logic. Two corrections
+  fell out of building it. Killing the `mvn` in flight makes *that invocation* fail, so a run
+  stopped during calibration ended by reporting its own kill as "nothing resolves this cleanly" —
+  a confidently wrong answer manufactured by the act of stopping it; `BumpProgress.stopped()` now
+  discards that remedy and keeps the verdicts and settled rows, which were true before the stop.
+  And the note has to be applied where every exit path passes through, not at each completion
+  point, because a stop lands on whichever path the run happened to be on.
+
+  **Auto-cancelling on tab close was considered and rejected.** B1 deliberately made the tab a
+  view of backend state rather than its owner; auto-cancel would discard minutes of real Maven
+  work because somebody tidied their tabs, or because the cap evicted one. Explicit only.
+
+  **Finished runs are kept for the session, bounded at 25** (added on request, same day).
+  "Did that thing I started actually do anything" is asked immediately after a run ends, and a
+  list that empties itself at that moment answers with silence. `STOPPED` is distinct from
+  `COMPLETED`: a run cut short and one that reached the end of its budget are different claims
+  about how much of the search happened. Persistence across restarts is in the backlog, not here.
+- 2026-07-30 — **`destroyForcibly()` was killing the wrapper and leaving Maven running**, and
+  this was a live defect in the timeout watchdog before cancellation existed to expose it. On
+  Windows the configured executable is `mvn.cmd`, a batch wrapper whose real work is a `java`
+  grandchild; `Process.destroyForcibly()` terminates the named process and nothing beneath it.
+  Confirmed by observation rather than inference — the live tree during a probe is `sbomscope
+  java.exe → cmd.exe → java.exe`, and after a stop both the wrapper and the grandchild were gone
+  while the next queued probe started its own. Descendants must be taken **first**: destroying
+  the parent reparents them and the handle to walk from is gone. Implementing Stop without this
+  would have manufactured precisely the orphaned process the feature was asked for to prevent.
+- 2026-07-30 — **The Inspector's tab strip is capped at ten with LRU eviction, and scrolls
+  rather than wraps.** Asked as "will too many tabs make it slow"; the performance half of that
+  is not real — only the active tab's panel is mounted, so the others are list items — and
+  saying so was worth more than agreeing. What *is* real is height and navigation.
+
+  Wrapping was the original shape and had to go: rows two and three take height from the panel,
+  which is precisely why the identity block was moved out of that column. One non-wrapping row,
+  tabs shrinking to a floor and then scrolling, is what browsers do and it holds the strip at a
+  measured constant 44px. The cap is IntelliJ's and VS Code's, at their usual default of ten,
+  evicting the **least recently active** rather than the oldest opened — otherwise the tab you
+  keep coming back to is the one that goes.
+
+  **Eviction is silent, which needs the justification it does not obviously deserve** in a
+  project that reports budget exhaustion rather than disguising it. The difference is that a tab
+  holds nothing: panels re-fetch per (sbom, purl) and a probe's progress is backend state keyed
+  by module and target, so closing a tab neither stops a probe nor loses its answer. Nothing
+  went undone, so there is nothing to report.
+
+  **Three attempts at revealing the active tab, and the first two were wrong in ways only
+  measurement showed.** `scrollIntoView` left the tab 15px clipped *and* can scroll every
+  ancestor, which on a long dependency tree means yanking the page. Moving the arithmetic into a
+  `requestAnimationFrame` fixed the clipping and introduced a worse fault: rAF does not fire
+  while the page is hidden — verified directly, `visibilityState` 'hidden' and the callback
+  never ran — so a tab opened in a background browser tab stayed out of view. `useLayoutEffect`
+  runs whatever the visibility. Two further faults came out of the same testing: the effect must
+  depend on the **tab list**, not the active purl, because a not-yet-open component is appended
+  only after it loads and the purl has stopped changing by then; and the strip must re-check
+  when the panel below finishes loading, since the page gaining a vertical scrollbar takes
+  ~15px off the column and clips the tab that was flush a moment earlier. A `ResizeObserver`
+  covers reflows nothing announces, but it is **not** the fix for that one — it does not fire
+  while hidden either, so the load is passed in as an explicit dependency and the observer is
+  left to cover the window resizing and the sidebar collapsing.
+- 2026-07-30 — **VEX becomes Phase 11, and is deliberately not "download the VEX database".**
+  Raised from outside the plan. The research answer that shaped it: **there is no OSV-shaped
+  universal VEX corpus and there structurally cannot be one.** OSV downloads whole because an
+  advisory is a fact about a package, true for everyone holding it; a VEX statement is a
+  supplier's assertion about their own build, and upstream OSS projects almost never publish one
+  about themselves. For an ordinary Maven or npm tree there is simply nothing to fetch, so a
+  "VEX feed" setting modelled on the OSV one would be a feature with no data behind it.
+
+  Two halves, and **the smaller one is the more valuable**. Tier A reads a VEX document the user
+  was handed — no feed, no network, no new policy — and is the common case: a supplier ships
+  one, or a security team records a triage decision once instead of re-making it monthly. Tier B
+  is Red Hat's CSAF VEX, the one genuinely bulk corpus worth having, and it earns its place by
+  landing on B2 rather than by being large: Red Hat's Maven rebuilds are exactly B2's
+  vendor-patched `a.b.c.d` artifacts, and for those OSV describes the *upstream* artifact while
+  Red Hat's VEX describes the one actually installed.
+
+  **Constraint 6 was checked and does not forbid this, which is worth recording because it looks
+  like it does.** The constraint bans manual judgment *fields* — a comment box, a "mitigated?"
+  tick — because those make SBOMscope the system of record for opinions it cannot check and
+  drag in an annotation store. A VEX document is a standard-format artefact carrying its own
+  author and timestamp, no different in kind from an OSV advisory. The boundary is sharp and
+  must stay so: **SBOMscope reads VEX and never offers a UI for authoring one.** The moment a
+  user can type a justification into our screen, constraint 6 is broken and this argument is no
+  longer available.
+
+  **The suppression rules are the reason it is a phase and not a bullet.** VEX hides findings,
+  and a security tool that conceals something because a document said so needs the discipline
+  applied everywhere else here: never delete, only mark; always show the suppressed count;
+  always name the author, because `not_affected` is a claim and not a fact; and treat a
+  statement made against an older version as stale rather than as an answer. Ordered below
+  Phase 3 and B2; Tier A can move up alone the moment a real VEX document exists to test with.
+- 2026-07-30 — **Open, needs a decision: the isolated probe repository cannot work air-gapped.**
+  `~/.sbomscope/probe-repo` starts empty and `dependency:tree` needs the dependency plugin and
+  its transitive dependencies from somewhere; the user's own `~/.m2` has them, and the isolation
+  deliberately never touches it. On a machine with no route to any repository there is nowhere
+  for them to come from, so *every* probe fails at plugin resolution regardless of anything else.
+  The `NoPluginFoundForPrefixException` note in AGENTS.md documents the networked version of this
+  and blames TLS interception. **Not decided — the isolation was a deliberate choice and changing
+  it is the maintainer's call.** Given the tail measurement above, the leading candidate is now
+  *tail-to-`~/.m2` plus a one-time seed of the pinned plugins while connected*, which keeps the
+  isolation intact rather than reversing it; the alternatives (copying into `probe-repo`, or
+  simply using `~/.m2` and accepting the poisoning risk) remain open. What is still unknown is
+  whether the reporting machine is truly network-isolated or merely has no route to Central while
+  reaching an internal mirror — the latter needs no change at all, and the new "Test Maven"
+  plugin check answers that in one click.

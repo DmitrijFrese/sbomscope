@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { REMEDY_LABELS, fetchBumpProgress, fetchUpgradeAdvice, startBump } from '../api/client';
+import { REMEDY_LABELS, continueBump, fetchBumpProgress, fetchUpgradeAdvice, startBump } from '../api/client';
 import type { AdvisoryFix, AdvisoryHit, BumpCandidate, BumpProgress, BumpState, Remedy, UpgradeAdvice } from '../api/client';
 import { bandOf, BAND_LABELS } from '../findings/presentation';
 
@@ -163,7 +163,12 @@ function BumpCandidateRow({ candidate }: { candidate: BumpCandidate }) {
   return (
     <tr>
       <td>{candidate.label}</td>
-      <td className="mono">{candidate.probed ? candidate.version : '—'}</td>
+      <td className="mono">
+        {candidate.probed ? candidate.version : '—'}
+        {/* Qualifies the version itself, because the version is what would otherwise be
+            misread: it looks like this major's highest when it is only where we stopped. */}
+        {candidate.higherReleasesUnchecked && <span className="badge badge--warn">checked up to here</span>}
+      </td>
       <td>
         {!candidate.probed && <span className="panel__hint">not probed</span>}
         {candidate.probed && candidate.clean && <span className="badge">clean</span>}
@@ -175,6 +180,13 @@ function BumpCandidateRow({ candidate }: { candidate: BumpCandidate }) {
       </td>
       <td>
         <AdvisorySummary verb="Carries" rows={rowsFromHits(candidate.stillCarries)} />
+        {candidate.higherReleasesUnchecked && (
+          <p className="panel__hint">
+            The run budget ran out partway through {candidate.major}.x, so releases above{' '}
+            <span className="mono">{candidate.version}</span> were not checked — one of them may
+            well be clean.
+          </p>
+        )}
       </td>
       <td>{candidate.probed && candidate.clean && candidate.snippet && <Snippet code={candidate.snippet} />}</td>
     </tr>
@@ -284,10 +296,10 @@ function BumpAncestorCard({
     }, BUMP_POLL_INTERVAL_MS);
   }
 
-  async function check() {
+  async function run(start: () => Promise<BumpProgress>) {
     setChecking(true);
     try {
-      const current = await startBump(sbomId, purl);
+      const current = await start();
       setProgress(current);
       if (inFlight(current.state)) {
         pollUntilDone();
@@ -299,6 +311,9 @@ function BumpAncestorCard({
     }
   }
 
+  const check = () => run(() => startBump(sbomId, purl));
+  const resume = () => run(() => continueBump(sbomId, purl));
+
   // A completed probe reports ranked candidates and/or a remedy (the combination result, or a
   // failure). Before that, the static Tier-1 placeholder is shown — it is always unavailable,
   // since Tier 1 can only explain why this remedy needs a probe, never compute it.
@@ -306,6 +321,10 @@ function BumpAncestorCard({
   const candidates = completed ? progress.candidates : [];
   const completionRemedy = completed ? progress.remedy : null;
   const hasResult = candidates.length > 0 || completionRemedy !== null;
+  // Nothing running, and nothing the reader can act on: either it never started (no button
+  // pressed yet), it was refused outright, or it completed without ranking a single version.
+  const retryable =
+    !progress || progress.state === 'FAILED' || (completed && candidates.length === 0);
   const dataAvailable = hasResult
     ? candidates.some((candidate) => candidate.clean) || completionRemedy?.available === true
     : remedy.available;
@@ -321,6 +340,21 @@ function BumpAncestorCard({
 
       {candidates.length > 0 && <BumpCandidateTable candidates={candidates} />}
 
+      {/* Only where the search actually left something unfinished — a run that settled every
+          major has nothing to continue, and offering it anyway would imply otherwise. */}
+      {completed && candidates.some((candidate) => !candidate.probed || candidate.higherReleasesUnchecked) && (
+        <p>
+          <button type="button" className="button button--small" onClick={resume} disabled={checking}>
+            {checking ? 'Checking…' : 'Continue the search'}
+          </button>{' '}
+          <span className="panel__hint">
+            Spends another {' '}
+            <Link to="/settings#settings-maven">budget's worth</Link> on the majors above, keeping
+            what is already answered.
+          </span>
+        </p>
+      )}
+
       {completionRemedy && (
         <>
           {completionRemedy.note && <p className="remedy__note">{completionRemedy.note}</p>}
@@ -331,10 +365,20 @@ function BumpAncestorCard({
         </>
       )}
 
-      {checkable && !progress && (
+      {/* Also offered after a failure, and after a run that produced no rows at all. Both were
+          dead ends: the panel hid the button as soon as any result existed, so someone who
+          followed the Settings link, configured Maven and came back had no way to ask again
+          without restarting the application. A result the reader cannot act on is exactly when
+          they most need to retry. */}
+      {checkable && retryable && (
         <p>
-          <button type="button" className="button button--small" onClick={check} disabled={checking}>
-            {checking ? 'Checking…' : 'Check for a bump'}
+          <button
+            type="button"
+            className="button button--small"
+            onClick={progress ? resume : check}
+            disabled={checking}
+          >
+            {checking ? 'Checking…' : progress ? 'Try again' : 'Check for a bump'}
           </button>{' '}
           <Link to="/settings#settings-maven">Maven settings</Link>
         </p>
@@ -354,6 +398,16 @@ function BumpAncestorCard({
 
       {progress?.state === 'FAILED' && (
         <p className="form-error" role="alert">
+          {progress.message}
+        </p>
+      )}
+
+      {/* A completed run carries a message only when it is shorter than a full one — today
+          that means it was stopped from Monitoring. Without this the run would look like an
+          ordinary completion, and "no candidates" would read as "nothing works" rather than
+          as "nobody looked". */}
+      {completed && progress.message && (
+        <p className="notice notice--warn" role="status">
           {progress.message}
         </p>
       )}

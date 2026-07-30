@@ -14,7 +14,7 @@ Start here, in this order:
 |---|---|
 | [README.md](README.md) | What the product is, and how to build and run it |
 | **This file** | Constraints you must not break, conventions, and the working loop |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, key flows, and the osv-scanner contract |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, key flows, and the osv-scanner and Maven-probe contracts |
 | [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) | What is built, what is next, and the decision log explaining why |
 
 The decision log is the important one. Several designs in this codebase look
@@ -38,6 +38,10 @@ so a rejected idea does not get re-proposed.
 - **Vulnerability data**: OSV, via the osv-scanner binary invoked as an external
   process, reading a locally-downloaded OSV database. CISA KEV and EPSS are planned;
   the NVD API is deliberately not used (constraint 4).
+- **Upgrade paths, Tier 2**: for a question the offline OSV data cannot answer, the user's
+  own `mvn` is invoked as an external process (never downloaded) to resolve a real
+  dependency tree. See "External tool contract: the Maven probe" in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Hard constraints
 
@@ -167,7 +171,12 @@ frontend/               React + Vite UI
     api/client.ts       fetch wrapper, response types, query/export URL building
     components/         shell pieces, settings panel, purl display helpers
     pages/              one component per route
-    sboms/              SbomProvider: uploaded SBOMs and the current selection
+    sboms/              SbomProvider: uploaded SBOMs, the current selection, and the
+                        Component Inspector's open tabs per SBOM — in-memory above the
+                        router, so they survive navigation but deliberately not a restart
+    findings/           severity-band and CVE-link presentation shared by several views
+    state/              usePersistentState/usePersistentToggle: localStorage-backed state
+                        that survives navigation and reload (tab selection, sidebar width)
     theme/              ThemeProvider: light/dark/system resolution
     styles/             tokens.css holds every colour; app.css holds layout
 backend/                Spring Boot application, produces the runnable jar
@@ -177,7 +186,11 @@ backend/                Spring Boot application, produces the runnable jar
     export/             Excel writing and public registry links
     sbom/               CycloneDX parsing, storage, uploaded-document store
     scanner/            osv-scanner integration, OSV database, findings
+    probe/              the Maven probe (Phase 8 Tier 2) — see ARCHITECTURE.md
     settings/           user-editable settings
+    logging/            the activity log (~/.sbomscope/logs/activity.jsonl) and the
+                        bounded, rotation-safe tails the Monitoring page reads
+    maintenance/        the purge/erase-local-data feature
   src/main/resources/
     application.yml     committed config
     db/migration/       Flyway migrations, V<n>__<description>.sql
@@ -311,6 +324,14 @@ the severity summary went through two designs before the numbers showed which on
   500. `ApiExceptionHandler` declares handlers for that, `HttpMessageNotReadableException`
   (malformed JSON is a 400, not a 500) and `IllegalStateException` (409). Keep them.
 
+  **`NoResourceFoundException` is not covered by the `ResponseStatusException` handler**, which
+  is the trap: it implements `ErrorResponse` without extending it, so it fell to the catch-all
+  and every unmapped `/api/…` path answered 500 with a stack trace in the log. Found live on
+  `/api/settings` — a near-miss for the real `/api/settings/scanner`. It has its own handler now,
+  and `ApiExceptionHandlerTest` pins all of it, because the same mistake has now been made twice
+  with two different exception types. Before adding a handler, check what the exception actually
+  extends rather than what its name suggests.
+
 - **osv-scanner exits 1 when it finds vulnerabilities.** Only 0 and 1 are success.
   Its errors also appear on the *last* line of stderr, after progress output — and it
   picks its parser from the **filename**, which is why uploads are stored as
@@ -348,4 +369,38 @@ the severity summary went through two designs before the numbers showed which on
   the README), the probe's `mvn` needs that same setting in its own environment, which
   means it must be present in the environment SBOMscope itself was launched from. A fresh,
   empty `probe-repo` cannot resolve *any* plugin without it, so the first probe on such a
-  machine fails with `NoPluginFoundForPrefixException` until this is set.
+  machine fails until this is set.
+
+- **The probe cannot resolve a plugin it has no route to, and that is not a bug in the
+  component being probed.** `probe-repo` starts empty and is deliberately never `~/.m2`, so on
+  a machine that cannot reach a repository *every* probe fails at plugin resolution. This is
+  reported as `ProbeFailureReason.PLUGIN_UNAVAILABLE`, kept distinct from `NOT_FOUND` for
+  exactly that reason. **Unresolved design question** — see the 2026-07-30 decision log entry
+  before changing anything here.
+
+- **Never invoke a Maven plugin by prefix (`dependency:tree`) from the probe.** A prefix costs
+  a `maven-metadata.xml` lookup to resolve it and then takes the plugin's *latest* version, so
+  the probe's behaviour could change with nothing changed locally, and the required artifacts
+  stop being a knowable set that a disconnected machine could pre-seed. Goals are fully
+  qualified and version-pinned, with the versions user-configurable in Settings.
+
+- **`Process.destroyForcibly()` kills the process you name and nothing it started.** On Windows
+  the configured Maven is `mvn.cmd`, a batch wrapper whose real work is a `java` grandchild, so
+  destroying the wrapper leaves the actual Maven JVM running — holding the repository, the
+  network connection and the CPU, with nothing tracking it. Confirmed live: the tree is
+  `sbomscope java.exe → cmd.exe → java.exe`. `MavenInvocation.destroyTree` walks
+  `descendants()` **first** (destroying the parent reparents them and the handle to walk from is
+  gone) and every kill site goes through it — the timeout watchdog included, which had the bug
+  before cancellation existed to expose it.
+
+- **Cancelling a probe means killing its child, not interrupting its thread.** The probe thread
+  is blocked reading the child's merged output stream, and a stream read does not answer an
+  interrupt — the same fact the stderr-deadlock note above turns on. `MavenInvocation` publishes
+  the live process per thread so `BumpProbeService.cancel` can reach it.
+
+- **`.formatted()` binds to the last literal in a concatenation, not the whole expression.**
+  `"a %s" + "b %s".formatted(x, y)` leaves the first placeholder literal and silently drops the
+  extra argument — no compiler warning, no exception, just a broken message that only shows up
+  when someone reads it. Parenthesise the whole string: `("a %s" + "b %s").formatted(x, y)`.
+  Introduced twice in one session, once in a diagnostic message meant to be read on the machine
+  that was failing.

@@ -25,6 +25,8 @@ export function MavenSettingsPanel() {
   const [maxProbes, setMaxProbes] = useState(20);
   const [runBudgetMinutes, setRunBudgetMinutes] = useState(8);
   const [profiles, setProfiles] = useState('');
+  const [dependencyPluginVersion, setDependencyPluginVersion] = useState('');
+  const [helpPluginVersion, setHelpPluginVersion] = useState('');
 
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -37,6 +39,8 @@ export function MavenSettingsPanel() {
     setMaxProbes(next.maxProbes);
     setRunBudgetMinutes(next.runBudgetMinutes);
     setProfiles(next.profiles ?? '');
+    setDependencyPluginVersion(next.dependencyPluginVersion ?? '');
+    setHelpPluginVersion(next.helpPluginVersion ?? '');
   }
 
   useEffect(() => {
@@ -57,6 +61,8 @@ export function MavenSettingsPanel() {
           maxProbes,
           runBudgetMinutes,
           profiles: profiles.trim() || null,
+          dependencyPluginVersion: dependencyPluginVersion.trim(),
+          helpPluginVersion: helpPluginVersion.trim(),
         }),
       );
       setSaved(true);
@@ -171,6 +177,38 @@ export function MavenSettingsPanel() {
           </label>
         </div>
 
+        {/* Last, and framed as a fix for a specific environment rather than a knob to try:
+            almost nobody needs to change these, and someone who does needs to know why. */}
+        <div className="field-row" style={{ marginTop: 'var(--space-4)' }}>
+          <label className="field">
+            <span className="field__label">Dependency plugin version</span>
+            <input
+              type="text"
+              value={dependencyPluginVersion}
+              onChange={(event) => setDependencyPluginVersion(event.target.value)}
+            />
+            <span className="field__hint">
+              The probe runs <span className="mono">maven-dependency-plugin</span> at this exact
+              version rather than resolving the newest, so a run is reproducible and its
+              requirements are a known set you can pre-populate offline. Change it only if your
+              mirror carries a different version. Blank resets to the default.
+            </span>
+          </label>
+
+          <label className="field">
+            <span className="field__label">Help plugin version</span>
+            <input
+              type="text"
+              value={helpPluginVersion}
+              onChange={(event) => setHelpPluginVersion(event.target.value)}
+            />
+            <span className="field__hint">
+              Same, for <span className="mono">maven-help-plugin</span>, which reads your
+              project's own repositories and managed versions when a workspace path is set.
+            </span>
+          </label>
+        </div>
+
         <div className="upload-form__actions">
           <button type="submit" className="button button--primary" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
@@ -181,7 +219,7 @@ export function MavenSettingsPanel() {
             onClick={runTest}
             disabled={busy || !executablePath.trim()}
           >
-            Test Maven
+            {busy ? 'Testing…' : 'Test Maven'}
           </button>
         </div>
       </form>
@@ -189,13 +227,20 @@ export function MavenSettingsPanel() {
       {saved && <p className="notice" style={{ marginTop: 'var(--space-4)' }}>Settings saved.</p>}
 
       {test && (
-        <p
-          className={test.ok ? 'notice' : 'form-error'}
-          style={{ marginTop: 'var(--space-4)' }}
-          role="status"
-        >
-          {test.ok ? `Working: ${test.version}` : test.error}
-        </p>
+        <div style={{ marginTop: 'var(--space-4)' }} role="status">
+          {/* The version is shown even on failure. "Maven works, but its plugins cannot be
+              obtained" is the air-gapped shape of this, and it is a different problem from
+              "that is not Maven" — showing only the error would hide which one you have. */}
+          {test.version && (
+            <p className={test.ok ? 'notice' : 'form-error'}>
+              {test.ok ? `Working: ${test.version}` : `Maven runs (${test.version}), but the probe cannot.`}
+            </p>
+          )}
+          {test.ok && test.plugins && (
+            <p className="panel__hint">Probe plugins verified — {test.plugins}.</p>
+          )}
+          {!test.ok && <p className="form-error">{test.error}</p>}
+        </div>
       )}
 
       {error && (

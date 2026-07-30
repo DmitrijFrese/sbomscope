@@ -235,6 +235,168 @@ degrade the finding, it discards it.
 
 ---
 
+## External tool contract: the Maven probe (Phase 8 Tier 2)
+
+For a transitive finding, the offline advisory data (Tier 1) can pin the affected component
+directly but cannot say whether a newer version of what *pulls it in* already ships the fix —
+that needs resolving a dependency tree at a version nobody has installed yet, which no SBOM or
+advisory database records. `BumpProbeService` answers this by driving the user's own `mvn` as
+an external process, never downloaded by SBOMscope, exactly like osv-scanner above. Configured
+by `MavenToolSettings` (`enabled`, `executablePath`, `maxProbes`, `runBudgetMinutes`,
+`profiles`) in Settings.
+
+**Isolated repository, never `~/.m2`.** Every probe resolves into
+`~/.sbomscope/probe-repo` (`SettingsService.defaultProbeRepository`). A failed probe's
+`.lastUpdated` markers must not be able to make a later real build refuse to retry a download,
+so the user's own local repository is never touched.
+
+> **Known limitation — this cannot work fully air-gapped.** `-Dmaven.repo.local` *overrides* the
+> local repository, so a correctly configured Maven gives the probe the user's mirrors and
+> credentials from `settings.xml` but **not** the contents of their `~/.m2`. With a reachable
+> mirror the plugin simply downloads into `probe-repo`, which is why this works on an ordinary
+> machine. With no reachable repository there is nowhere for it to come from, so every probe
+> fails at plugin resolution (`ProbeFailureReason.PLUGIN_UNAVAILABLE`) while a full `~/.m2` sits
+> unused. Pinning the plugin versions below makes the required set finite and knowable, so
+> seeding is possible in principle. **Unresolved** — see the 2026-07-30 entry in the plan's
+> decision log, which records a measured candidate fix (`maven.repo.local.tail`) and why it is
+> not a complete answer on its own.
+
+**Every `mvn` invocation goes through `MavenInvocation`**, which captures the command line and
+the complete output into `sbomscope.log`: the command at INFO so it can be pasted into a
+terminal and reproduced, the full output at WARN on failure and at DEBUG on success. Raise
+`logging.level.dev.sbomscope.probe` to DEBUG for successful runs too.
+
+Two things there are load-bearing rather than incidental. **stderr is merged into stdout**: the
+earlier shape read stdout to EOF, then stderr, then called `waitFor`, and a child that fills the
+stderr pipe buffer (4–64 KB) blocks writing to it, never closes stdout, and so hangs the read
+with the timeout unreachable — fatal here, because probes are serialised on one thread and one
+hang stalls every later probe for the life of the process. **The timeout is enforced by a
+watchdog that destroys the process**, not by a bounded read, because killing the child is what
+actually closes the stream and unblocks the read.
+
+**Plugin goals are fully qualified and version-pinned**, never the `dependency:tree` prefix. A
+prefix costs a `maven-metadata.xml` lookup to resolve which artifact `dependency` means — the
+source of `NoPluginFoundForPrefixException` — and then takes the plugin's *latest* version, so a
+probe could behave differently month to month with nothing changed locally. Pinning also makes
+the probe's plugin requirements a finite, knowable set, which is what makes pre-seeding a
+repository possible at all. The versions are user-configurable
+(`MavenToolSettings.dependencyTreeGoal()` / `effectivePomGoal()`) because which version exists is
+a fact about the user's repository, not about SBOMscope: a curated mirror proxying an approved
+subset of Central may carry a different one. Blank resets to the shipped default, and the value
+is validated against `VERSION_PATTERN` because it is interpolated into a colon-separated goal
+coordinate where a stray colon would change which goal runs.
+
+**Whole-module, not single-dependency.** A component reached by two routes appears in the SBOM
+as one resolved node with two parents, and the SBOM does not record which declaration Maven
+actually honoured. `MavenDependencyResolver.generatePom` therefore declares the owning
+module's *entire* direct dependency set — every one at its current version, except the
+artifact(s) under test — so Maven's own nearest-wins resolution, not an approximation of it,
+decides what the target resolves to. **Calibration** (resolving the untouched module and
+comparing against the SBOM's own reported version) runs first and must match before anything
+else is trusted; a mismatch means something outside SBOMscope's view overrides it — most often
+a parent POM's `dependencyManagement` — and the answer is "pin it", not a guessed bump.
+
+**Every probe past the initial feasibility check targets an exact known release, never a
+numeric range.** Found live: a bounded range such as `[3.0.0,4.0.0)` resolved to `4.0.0-RC2` —
+Maven compares major version before qualifier, so a pre-release of the *next* major outranks
+every real release of the one being asked about and can win the range outright, silently
+skipping the entire major rather than merely offering a milestone. The fix: every candidate
+comes from `MavenDependencyResolver.knownVersions` (reads local `maven-metadata*.xml`,
+pre-release-filtered) and is probed as an exact version (`[x.y.z]`), never a range standing in
+for more than one release.
+
+**One ranked candidate per major line, never a single winner.** A later major being affected
+does not prove an earlier one is not clean — the same non-monotonicity that rules out ranges
+above also rules out stopping at the first major that fails, or trusting a single
+feasibility probe (`[current,)`) as proof nothing works. `rankCandidates` walks every major
+from the currently-declared one up to the latest that exists, and within each major walks
+minor lines ascending rather than bisecting — a version being clean or affected says nothing
+about a neighbouring one, so there is no shortcut that does not risk reporting the wrong
+answer. Combination testing (bumping every declaring ancestor to its own latest at once) is a
+single coarse fallback, tried only when no single ancestor's ranking finds anything clean.
+
+**The run budget is the only sound lever for trading completeness for cost.** `maxProbes` and
+`runBudgetMinutes` (user-configurable in Settings) bound how much of the search completes
+before a major degrades to "not probed" — narrowing the search space itself (a range standing
+in for several minors, say) is the exact class of bug the paragraph above exists to prevent.
+
+**Every probe is serialised on a single background thread**, since the isolated repository
+cannot safely take concurrent writes. `BumpProgress` distinguishes `QUEUED` (submitted, waiting
+behind another component's probe) from `RUNNING` (actually executing) for this reason —
+reporting a queued probe as running would claim Maven is being invoked right now for something
+that has not started. `BumpProbeService` tracks the executing key in an `AtomicReference`,
+read only to decide what a newly-submitted probe should report about itself; the executor's own
+FIFO queue is what actually decides execution order.
+
+**An exhausted budget is reported, never disguised.** A major the run never reached is `probed:
+false`; a major it walked partway is `higherReleasesUnchecked: true`, so *"the highest 2.x still
+carries this"* cannot be confused with *"we got as far as 2.7.18 and stopped"* — the first is a
+verdict on the whole major, the second says nothing about what sits above it. That is the same
+unproven-versus-disproven distinction the feasibility short-circuit was removed for, one level
+down. It is never set where the walk stopped on finding its earliest clean release, since
+ascending order makes that a complete answer.
+
+**`continueRun` extends a cut-short run rather than repeating it.** It needed no new search
+logic: `rankMajor` already takes a `startAfterMinor`, which is exactly a resume point, so a
+cut-short major picks up above the version it stopped at and an unreached one starts from
+scratch. Settled rows cost nothing, and calibration and feasibility are not repeated — the model
+was validated on the first run, settings cannot have changed without clearing this cache, and
+the existing rows already enumerate every major. Each call takes a fresh budget. A run that
+ranked *nothing* has nothing to preserve, so continuing it discards the cached entry and starts
+over — which is also what keeps a cached failure from being a permanent dead end.
+
+**`profiles` is passed through verbatim as `-P<profiles>`** to every `mvn` invocation the probe
+makes (`dependency:tree` and, when a workspace path is attached, `help:effective-pom`) — not to
+the plain `--version` check, which needs no build context. A profile that adds a repository or
+changes a property the real build depends on has to be active here too, or the probe resolves
+against a build the user does not actually have.
+
+**Workspace lift-in, when a workspace path is attached.** `EffectivePomCache` runs
+`mvn help:effective-pom` once per (workspace path, profiles) pair per process lifetime and
+lifts `<dependencyManagement>` and `<repositories>` verbatim into the generated POM — the
+actual fix for probes failing on supplier artifacts, since a project's own `pom.xml` routinely
+declares a supplier's Nexus that no `settings.xml` mirror covers. Without a workspace, or when
+the lift fails, the probe stays isolated rather than guessing.
+
+**"Test Maven" checks the plugins, not just the binary.** `mvn --version` proves the path points
+at Maven and nothing more; it succeeds on a machine where every probe will fail. The test
+therefore also runs both configured goals against a throwaway empty project, in the real
+`probe-repo`, so a green result means the exact invocations a probe makes have been made once and
+worked. The version is reported even when the plugin check fails, because "Maven runs but its
+plugins cannot be obtained" and "that is not Maven" need different fixes.
+
+**The queue is addressable and stoppable, from Monitoring rather than from the component.** A
+probe deliberately outlives the Inspector tab that started it — the tab is a view of this state,
+not its owner — and a tab can be closed by the reader or evicted by the ten-tab cap. That left a
+run holding the only probe thread with no way to reach it, since `progress(component, graph)`
+requires already knowing which component to ask about, which is exactly what somebody who has
+lost track of it does not. `BumpProbeService.probes()` lists running, queued and recently
+finished runs (`GET /api/probes`); `cancel(id)` stops one (`DELETE /api/probes/{id}`).
+
+**Stopping is expressed as budget exhaustion, not as a state of its own.** `SearchBudget.exhausted()`
+is the one checkpoint every level of the search already consults, and every level already reports
+what it did not reach — `probed: false` for a major never visited, `higherReleasesUnchecked` for
+one walked partway. A stopped run is a cut-short run, so it inherits all of that, and `continueRun`
+resumes it with no new logic. Two things follow that are easy to get wrong. Killing the `mvn` in
+flight makes that invocation fail, so a run stopped during calibration would otherwise end by
+reporting *its own kill* as "nothing resolves this cleanly" — `BumpProgress.stopped()` discards
+that manufactured remedy and keeps the verdicts and settled candidates, which were true before the
+stop and still are. And each run builds its **own** `SearchBudget` from current settings, so
+Continue after a stop is a full fresh budget rather than the remainder of the one that was cut.
+
+**Finished runs stay listed for the session**, bounded at 25, most recent first below the live
+ones. "Did that thing I started actually do anything" is asked immediately after a run ends, and a
+list that empties itself at that moment answers it with silence. `STOPPED` is kept distinct from
+`COMPLETED` because a run the user cut short and one that reached the end of its budget are
+different claims about how much of the search happened.
+
+**Probe progress is session-scoped, not persisted**, keyed by `moduleBomRef -> targetCoordinates`
+in `BumpProbeService.progressByKey` — cleared on Maven settings change (a stale answer against
+an old configuration is worse than a re-probe) and on process restart. `POST
+/component/bump` starts or returns the existing run; `GET /component/bump` polls it.
+
+---
+
 ## The OSV database
 
 Public OSV.dev data, downloaded per ecosystem on explicit request only:
@@ -320,6 +482,12 @@ disagree about a version actually present, the scanner is right by definition. V
 semantics live in `AffectedVersions`, read by both this and the report parser, because two
 implementations would drift in the direction of "this upgrade is clean" against "it is not".
 
+**Bump probe** — `SbomController.startBump` / `.bumpProgress` → `BumpProbeService.start` /
+`.progress`. `start` returns immediately (`RUNNING` or `QUEUED`) and the actual probe runs on
+the single background thread described above; the UI polls `GET .../component/bump` until the
+state leaves `RUNNING`/`QUEUED`. See "External tool contract: the Maven probe" above for the
+search strategy.
+
 ---
 
 ## Settings
@@ -332,3 +500,10 @@ belongs in an environment variable or git-ignored config, never in the database.
 scanning switched off SBOMscope is a working SBOM inventory, not a broken installation —
 that is a supported mode, and the UI says so rather than showing an empty table that
 looks like a failure.
+
+`MavenToolSettings` carries `enabled`, `executablePath`, `maxProbes`, `runBudgetMinutes`,
+`profiles`, `dependencyPluginVersion` and `helpPluginVersion` for the Tier 2 bump probe above. Same shape and same reasoning as `ScannerSettings`:
+a path the user supplies and never one SBOMscope downloads, off by default since probing is a
+real external process that can take real wall-clock time. Changing any of it publishes
+`MavenSettingsChangedEvent`, which clears both `BumpProbeService.progressByKey` (a cached
+answer against an old configuration is worse than a re-probe) and `EffectivePomCache`.

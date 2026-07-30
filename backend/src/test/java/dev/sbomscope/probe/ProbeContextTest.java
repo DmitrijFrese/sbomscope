@@ -9,7 +9,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProbeContextTest {
 
     private ProbeContext contextWith(String profiles) {
-        return new ProbeContext("/usr/bin/mvn", "/tmp/probe-repo", null, Duration.ofSeconds(60), profiles);
+        return new ProbeContext("/usr/bin/mvn", "/tmp/probe-repo", null, Duration.ofSeconds(60), profiles,
+                "org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree");
     }
 
     @Test

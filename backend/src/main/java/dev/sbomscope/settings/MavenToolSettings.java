@@ -1,5 +1,7 @@
 package dev.sbomscope.settings;
 
+import java.util.regex.Pattern;
+
 /**
  * How SBOMscope drives the user's own Maven for the Tier 2 bump probe.
  *
@@ -32,7 +34,8 @@ package dev.sbomscope.settings;
  *                         probe resolves against a build the user does not actually have
  */
 public record MavenToolSettings(
-        boolean enabled, String executablePath, int maxProbes, int runBudgetMinutes, String profiles) {
+        boolean enabled, String executablePath, int maxProbes, int runBudgetMinutes, String profiles,
+        String dependencyPluginVersion, String helpPluginVersion) {
 
     public static final int DEFAULT_MAX_PROBES = 20;
     public static final int DEFAULT_RUN_BUDGET_MINUTES = 8;
@@ -40,6 +43,26 @@ public record MavenToolSettings(
     public static final int MAX_PROBES = 200;
     public static final int MIN_RUN_BUDGET_MINUTES = 1;
     public static final int MAX_RUN_BUDGET_MINUTES = 60;
+
+    /**
+     * The probe drives these two plugins, pinned rather than invoked by prefix.
+     *
+     * <p>Configurable because the version that exists is a fact about the user's repository, not
+     * about SBOMscope: a curated mirror that proxies an approved subset of Central rather than
+     * all of it may carry a different one, and on such a machine the feature would otherwise be
+     * unusable with no way to say so. The same reasoning as pointing at your own {@code mvn} and
+     * naming your own profiles — the environment is the authority.
+     */
+    public static final String DEFAULT_DEPENDENCY_PLUGIN_VERSION = "3.6.1";
+    public static final String DEFAULT_HELP_PLUGIN_VERSION = "3.4.0";
+
+    /**
+     * Interpolated into a goal coordinate such as
+     * {@code org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree}, so a colon or a space
+     * would not merely be invalid — it would change which goal Maven runs. Validated on the way
+     * in rather than escaped at each use.
+     */
+    public static final Pattern VERSION_PATTERN = Pattern.compile("[A-Za-z0-9._-]+");
 
     public boolean hasExecutable() {
         return executablePath != null && !executablePath.isBlank();
@@ -51,5 +74,30 @@ public record MavenToolSettings(
 
     public boolean hasProfiles() {
         return profiles != null && !profiles.isBlank();
+    }
+
+    /**
+     * {@code org.apache.maven.plugins:maven-dependency-plugin:<version>:tree} — the fully
+     * qualified goal, never the {@code dependency:tree} prefix. A prefix costs an extra
+     * {@code maven-metadata.xml} lookup to learn which artifact {@code dependency} means (the
+     * source of {@code NoPluginFoundForPrefixException}) and then resolves the plugin's
+     * <em>latest</em> version, so a probe could behave differently month to month with nothing
+     * changed locally. Pinning also makes the probe's plugin requirements a known, finite set —
+     * which is what makes seeding a repository on a disconnected machine possible at all.
+     */
+    public String dependencyTreeGoal() {
+        return "org.apache.maven.plugins:maven-dependency-plugin:%s:tree"
+                .formatted(versionOr(dependencyPluginVersion, DEFAULT_DEPENDENCY_PLUGIN_VERSION));
+    }
+
+    /** {@code org.apache.maven.plugins:maven-help-plugin:<version>:effective-pom}. */
+    public String effectivePomGoal() {
+        return "org.apache.maven.plugins:maven-help-plugin:%s:effective-pom"
+                .formatted(versionOr(helpPluginVersion, DEFAULT_HELP_PLUGIN_VERSION));
+    }
+
+    /** Blank means "whatever SBOMscope ships with", so clearing the field cannot break a probe. */
+    private static String versionOr(String configured, String fallback) {
+        return configured == null || configured.isBlank() ? fallback : configured.trim();
     }
 }

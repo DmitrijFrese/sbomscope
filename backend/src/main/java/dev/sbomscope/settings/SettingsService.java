@@ -23,6 +23,8 @@ public class SettingsService {
     static final String MAVEN_MAX_PROBES = "maven.maxProbes";
     static final String MAVEN_RUN_BUDGET_MINUTES = "maven.runBudgetMinutes";
     static final String MAVEN_PROFILES = "maven.profiles";
+    static final String MAVEN_DEPENDENCY_PLUGIN_VERSION = "maven.dependencyPluginVersion";
+    static final String MAVEN_HELP_PLUGIN_VERSION = "maven.helpPluginVersion";
 
     private final SettingsRepository repository;
     private final ActivityLogger activityLog;
@@ -88,7 +90,13 @@ public class SettingsService {
                         .orElse(MavenToolSettings.DEFAULT_MAX_PROBES),
                 repository.find(MAVEN_RUN_BUDGET_MINUTES).map(Integer::parseInt)
                         .orElse(MavenToolSettings.DEFAULT_RUN_BUDGET_MINUTES),
-                repository.find(MAVEN_PROFILES).filter(value -> !value.isBlank()).orElse(null));
+                repository.find(MAVEN_PROFILES).filter(value -> !value.isBlank()).orElse(null),
+                // Reported as the concrete version in use rather than as null-means-default, so
+                // the panel shows what to change *from* instead of an empty box.
+                repository.find(MAVEN_DEPENDENCY_PLUGIN_VERSION).filter(value -> !value.isBlank())
+                        .orElse(MavenToolSettings.DEFAULT_DEPENDENCY_PLUGIN_VERSION),
+                repository.find(MAVEN_HELP_PLUGIN_VERSION).filter(value -> !value.isBlank())
+                        .orElse(MavenToolSettings.DEFAULT_HELP_PLUGIN_VERSION));
     }
 
     @Transactional
@@ -109,16 +117,27 @@ public class SettingsService {
         requireInRange(requested.runBudgetMinutes(), MavenToolSettings.MIN_RUN_BUDGET_MINUTES,
                 MavenToolSettings.MAX_RUN_BUDGET_MINUTES, "Run budget");
 
+        // Blank resets to the shipped default rather than being rejected: clearing the field is
+        // the natural way to undo a change, and must not be a way to break the probe.
+        String dependencyPluginVersion = normalisePluginVersion(requested.dependencyPluginVersion(),
+                MavenToolSettings.DEFAULT_DEPENDENCY_PLUGIN_VERSION, "Dependency plugin version");
+        String helpPluginVersion = normalisePluginVersion(requested.helpPluginVersion(),
+                MavenToolSettings.DEFAULT_HELP_PLUGIN_VERSION, "Help plugin version");
+
         repository.put(MAVEN_ENABLED, Boolean.toString(requested.enabled()));
         repository.put(MAVEN_PATH, path == null ? "" : path);
         repository.put(MAVEN_MAX_PROBES, Integer.toString(requested.maxProbes()));
         repository.put(MAVEN_RUN_BUDGET_MINUTES, Integer.toString(requested.runBudgetMinutes()));
         repository.put(MAVEN_PROFILES, profiles == null ? "" : profiles);
+        repository.put(MAVEN_DEPENDENCY_PLUGIN_VERSION, dependencyPluginVersion);
+        repository.put(MAVEN_HELP_PLUGIN_VERSION, helpPluginVersion);
 
         activityLog.record(ActivityLogger.Category.DATA, "SETTINGS_CHANGED",
-                "maven: enabled=%s, path=%s, maxProbes=%d, runBudgetMinutes=%d, profiles=%s"
+                ("maven: enabled=%s, path=%s, maxProbes=%d, runBudgetMinutes=%d, profiles=%s, "
+                        + "dependencyPlugin=%s, helpPlugin=%s")
                         .formatted(requested.enabled(), path != null, requested.maxProbes(),
-                                requested.runBudgetMinutes(), profiles == null ? "(none)" : profiles));
+                                requested.runBudgetMinutes(), profiles == null ? "(none)" : profiles,
+                                dependencyPluginVersion, helpPluginVersion));
         // Anything caching a result against "the current Maven config" — the probe's
         // negative-result cache, the lifted effective-pom fragments — must not go on
         // answering from a configuration that no longer applies.
@@ -150,6 +169,29 @@ public class SettingsService {
         } catch (InvalidPathException e) {
             throw new IllegalArgumentException("%s is not a valid path: %s".formatted(label, value), e);
         }
+    }
+
+    /**
+     * Blank resets to {@code fallback}; anything else must be a plain Maven version.
+     *
+     * <p>The value is interpolated into a goal coordinate such as
+     * {@code org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree}, so a colon or a space
+     * would not merely be invalid — it would change which goal Maven runs. Rejected here rather
+     * than escaped at each use.
+     */
+    private String normalisePluginVersion(String value, String fallback, String label) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String trimmed = value.trim();
+        if (!MavenToolSettings.VERSION_PATTERN.matcher(trimmed).matches()) {
+            // Parenthesised: .formatted() binds to the last literal in a concatenation, not to
+            // the whole expression, so without these the leading placeholders stay literal.
+            throw new IllegalArgumentException(
+                    ("%s must be a plain version such as %s — letters, digits, dots, hyphens and "
+                            + "underscores only. Was: %s").formatted(label, fallback, value));
+        }
+        return trimmed;
     }
 
     private void requireInRange(int value, int min, int max, String label) {

@@ -33,7 +33,8 @@ class BumpProbeServiceTest {
 
     private static final MavenToolSettings MAVEN_SETTINGS = new MavenToolSettings(
             true, "/usr/bin/mvn", MavenToolSettings.DEFAULT_MAX_PROBES, MavenToolSettings.DEFAULT_RUN_BUDGET_MINUTES,
-            null);
+            null, MavenToolSettings.DEFAULT_DEPENDENCY_PLUGIN_VERSION,
+            MavenToolSettings.DEFAULT_HELP_PLUGIN_VERSION);
     private static final MavenArtifact TARGET = new MavenArtifact("com.example", "target-lib");
 
     private BumpProbeService service(DependencyResolver resolver) {
@@ -232,6 +233,8 @@ class BumpProbeServiceTest {
         assertThat(stay.label()).isEqualTo("Stay on 4.x");
         assertThat(stay.version()).isEqualTo("4.1.9");
         assertThat(stay.clean()).isTrue();
+        // The counterpart to the cut-short test below: a walk that finished is never marked.
+        assertThat(stay.higherReleasesUnchecked()).isFalse();
 
         BumpCandidate move = result.candidates().get(1);
         assertThat(move.label()).isEqualTo("Move to 5.x (latest)");
@@ -428,6 +431,167 @@ class BumpProbeServiceTest {
         BumpProgress finishedB = awaitCompletion(service, componentB, graphB);
 
         assertThat(finishedB.state()).isEqualTo(BumpProgress.State.COMPLETED);
+    }
+
+    /**
+     * A major whose walk the budget cut short must not read as a verdict on that major.
+     * "Highest is 1.1.0, still carries X" and "we got as far as 1.1.0 and stopped" are
+     * different claims — the second says nothing about the releases above it, one of which may
+     * be clean — and the row has to say which one it is.
+     */
+    @Test
+    void aMajorCutShortByTheBudgetSaysSoRatherThanReadingAsItsHighest() throws InterruptedException {
+        MavenArtifact ancestor = new MavenArtifact("com.acme", "module-a");
+        Map<String, ProbeOutcome> responses = Map.of(
+                "calibration", ProbeOutcome.resolved(Map.of(), "3.1.4"),
+                "com.acme:module-a@[1.0.0,)", ProbeOutcome.resolved(Map.of(ancestor, "1.3.0"), "3.1.4"),
+                "com.acme:module-a@[1.0.0]", ProbeOutcome.resolved(Map.of(ancestor, "1.0.0"), "3.1.4"),
+                "com.acme:module-a@[1.1.0]", ProbeOutcome.resolved(Map.of(ancestor, "1.1.0"), "3.1.4"));
+
+        // Four minor lines, but only enough budget for calibration, feasibility and two of them.
+        List<String> knownVersions = List.of("1.0.0", "1.1.0", "1.2.0", "1.3.0");
+        MavenToolSettings tightBudget = new MavenToolSettings(
+                true, "/usr/bin/mvn", 4, MavenToolSettings.DEFAULT_RUN_BUDGET_MINUTES, null,
+                MavenToolSettings.DEFAULT_DEPENDENCY_PLUGIN_VERSION, MavenToolSettings.DEFAULT_HELP_PLUGIN_VERSION);
+
+        BumpProbeService service = service(fakeResolver(responses, knownVersions));
+        ComponentGraph graph = singleAncestorGraph("com.acme:module-a", "1.0.0");
+        StoredComponent target = transitiveTarget("3.1.4");
+        BumpRequest request = request(target, graph, evaluatorWhereCleanVersionsAre("3.1.9"));
+
+        service.start(request, tightBudget);
+        BumpProgress result = awaitCompletion(service, target, graph);
+
+        assertThat(result.candidates()).hasSize(1);
+        assertThat(result.candidates().getFirst()).satisfies(candidate -> {
+            assertThat(candidate.probed()).isTrue();
+            assertThat(candidate.version()).isEqualTo("1.1.0");
+            assertThat(candidate.clean()).isFalse();
+            // 1.2.0 and 1.3.0 were never looked at, and the row must not imply otherwise.
+            assertThat(candidate.higherReleasesUnchecked()).isTrue();
+        });
+    }
+
+    /**
+     * A cached run that produced no rows must not be a dead end. Reported live: with Maven
+     * unconfigured the probe is refused, and after configuring it from the linked Settings page
+     * the component it was started from could not be asked again short of restarting the
+     * application — {@code start} keeps returning the cached COMPLETED. Continuing a run that
+     * ranked nothing has nothing to preserve, so it starts over.
+     */
+    @Test
+    void continuingARunThatRankedNothingStartsItOverRatherThanReturningTheDeadEnd()
+            throws InterruptedException {
+        ComponentGraph graph = singleAncestorGraph("com.acme:module-a", "1.0.0");
+        StoredComponent target = transitiveTarget("3.1.4");
+
+        Map<String, ProbeOutcome> responses = new java.util.HashMap<>(Map.of(
+                "calibration", ProbeOutcome.failed(ProbeFailureReason.NOT_RUNNABLE, "mvn is not where you said")));
+        BumpProbeService service = service(fakeResolver(responses, List.of("1.0.0")));
+        BumpRequest request = request(target, graph, evaluatorWhereCleanVersionsAre("3.1.9"));
+
+        service.start(request, MAVEN_SETTINGS);
+        BumpProgress deadEnd = awaitCompletion(service, target, graph);
+        assertThat(deadEnd.candidates()).isEmpty();
+        assertThat(deadEnd.remedy().available()).isFalse();
+
+        // start() alone still refuses — the cached result is what it is meant to return.
+        assertThat(service.start(request, MAVEN_SETTINGS).remedy()).isNotNull();
+
+        // Whatever was wrong is now fixed; continuing runs it again rather than replaying it.
+        responses.clear();
+        responses.putAll(Map.of(
+                "calibration", ProbeOutcome.resolved(Map.of(), "3.1.4"),
+                "com.acme:module-a@[1.0.0,)",
+                ProbeOutcome.resolved(Map.of(new MavenArtifact("com.acme", "module-a"), "1.0.0"), "3.1.9"),
+                "com.acme:module-a@[1.0.0]",
+                ProbeOutcome.resolved(Map.of(new MavenArtifact("com.acme", "module-a"), "1.0.0"), "3.1.9")));
+
+        service.continueRun(request, MAVEN_SETTINGS);
+        BumpProgress retried = awaitCompletion(service, target, graph);
+
+        assertThat(retried.candidates()).hasSize(1);
+        assertThat(retried.candidates().getFirst().clean()).isTrue();
+    }
+
+    /**
+     * Continuing picks up above where the budget stopped, keeps rows already settled, and does
+     * not repeat calibration or feasibility. The fake resolver throws on any probe it was not
+     * told to expect, so "1.0.0 and the two setup probes are not re-run" is enforced by the
+     * absence of those keys rather than by counting.
+     */
+    @Test
+    void continuingResumesAboveTheStopPointInsteadOfStartingOver() throws InterruptedException {
+        MavenArtifact ancestor = new MavenArtifact("com.acme", "module-a");
+        Map<String, ProbeOutcome> firstPass = Map.of(
+                "calibration", ProbeOutcome.resolved(Map.of(), "3.1.4"),
+                "com.acme:module-a@[1.0.0,)", ProbeOutcome.resolved(Map.of(ancestor, "1.3.0"), "3.1.4"),
+                "com.acme:module-a@[1.0.0]", ProbeOutcome.resolved(Map.of(ancestor, "1.0.0"), "3.1.4"),
+                "com.acme:module-a@[1.1.0]", ProbeOutcome.resolved(Map.of(ancestor, "1.1.0"), "3.1.4"));
+
+        List<String> knownVersions = List.of("1.0.0", "1.1.0", "1.2.0", "1.3.0");
+        ComponentGraph graph = singleAncestorGraph("com.acme:module-a", "1.0.0");
+        StoredComponent target = transitiveTarget("3.1.4");
+        BumpRequest request = request(target, graph, evaluatorWhereCleanVersionsAre("3.1.9"));
+
+        // Mutable so the continue pass can be given a different, deliberately narrower map.
+        Map<String, ProbeOutcome> responses = new java.util.HashMap<>(firstPass);
+        BumpProbeService service = service(fakeResolver(responses, knownVersions));
+
+        service.start(request, new MavenToolSettings(
+                true, "/usr/bin/mvn", 4, MavenToolSettings.DEFAULT_RUN_BUDGET_MINUTES, null,
+                MavenToolSettings.DEFAULT_DEPENDENCY_PLUGIN_VERSION, MavenToolSettings.DEFAULT_HELP_PLUGIN_VERSION));
+        BumpProgress cutShort = awaitCompletion(service, target, graph);
+        assertThat(cutShort.candidates().getFirst().higherReleasesUnchecked()).isTrue();
+        assertThat(cutShort.candidates().getFirst().version()).isEqualTo("1.1.0");
+
+        // Only the releases above 1.1.0 may be probed now. Calibration, [1.0.0,) and [1.0.0]
+        // are removed, so re-running any of them fails the test rather than passing quietly.
+        responses.clear();
+        responses.put("com.acme:module-a@[1.2.0]", ProbeOutcome.resolved(Map.of(ancestor, "1.2.0"), "3.1.9"));
+
+        service.continueRun(request, MAVEN_SETTINGS);
+        BumpProgress resumed = awaitCompletion(service, target, graph);
+
+        assertThat(resumed.candidates()).hasSize(1);
+        assertThat(resumed.candidates().getFirst()).satisfies(candidate -> {
+            assertThat(candidate.version()).isEqualTo("1.2.0");
+            assertThat(candidate.clean()).isTrue();
+            // The walk found its earliest clean release, so nothing is left dangling.
+            assertThat(candidate.higherReleasesUnchecked()).isFalse();
+        });
+    }
+
+    /**
+     * Calibration can succeed while the very next probe fails — the isolated repository has
+     * enough cached to resolve the module as declared, but not to resolve a version range.
+     * That path used to return an empty candidate list, which completed the run showing
+     * nothing whatsoever: no rows, no remedy, no error, indistinguishable in the panel from
+     * "probed everything, found no upgrade". Reported live from an air-gapped machine as
+     * "does not produce usable probes"; the reason must reach the reader.
+     */
+    @Test
+    void aFailedFeasibilityProbeReportsWhyRatherThanCompletingEmpty() throws InterruptedException {
+        Map<String, ProbeOutcome> responses = Map.of(
+                "calibration", ProbeOutcome.resolved(Map.of(), "3.1.4"),
+                "com.acme:module-a@[1.0.0,)", ProbeOutcome.failed(ProbeFailureReason.PLUGIN_UNAVAILABLE,
+                        "No plugin found for prefix 'dependency'"));
+
+        BumpProbeService service = service(fakeResolver(responses, List.of()));
+        ComponentGraph graph = singleAncestorGraph("com.acme:module-a", "1.0.0");
+        StoredComponent target = transitiveTarget("3.1.4");
+        BumpRequest request = request(target, graph, evaluatorWhereCleanVersionsAre("3.1.9"));
+
+        service.start(request, MAVEN_SETTINGS);
+        BumpProgress result = awaitCompletion(service, target, graph);
+
+        assertThat(result.candidates()).isEmpty();
+        assertThat(result.remedy()).isNotNull();
+        assertThat(result.remedy().available()).isFalse();
+        // Names the actual obstacle and where to read more, rather than blaming the component.
+        assertThat(result.remedy().note())
+                .contains("could not obtain the plugin")
+                .contains("sbomscope.log");
     }
 
     @Test

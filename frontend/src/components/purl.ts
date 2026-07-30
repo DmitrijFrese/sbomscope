@@ -36,6 +36,20 @@ export function describePurl(purl: string): PurlParts {
   return { coordinates, version, ecosystem };
 }
 
+/**
+ * The shortest label that still identifies a component, for places with no room for the
+ * coordinates — the Inspector's tab strip, where the identity panel carries the full purl.
+ *
+ * <p>Maven drops the group, which is a reversed domain nobody reads to tell two artifacts
+ * apart. npm keeps the whole name, because there the scope is half of it: `@angular/core`
+ * and `@babel/core` are not the same library and `core` would claim they were.
+ */
+export function shortNameOf(purl: string): string {
+  const { coordinates, ecosystem } = describePurl(purl);
+  if (ecosystem !== 'maven') return coordinates;
+  return coordinates.split(':').pop() || coordinates;
+}
+
 function decodeSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);

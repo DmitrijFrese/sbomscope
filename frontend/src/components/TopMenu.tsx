@@ -8,7 +8,7 @@ import { BookIcon, ComponentIcon, LogIcon, SettingsIcon, ShieldIcon } from './ic
 const NAV_ITEMS = [
   { to: '/vulnerabilities', label: 'Vulnerabilities', Icon: ShieldIcon },
   { to: '/component-inspector', label: 'Component Inspector', Icon: ComponentIcon },
-  { to: '/log', label: 'Activity Log', Icon: LogIcon },
+  { to: '/monitoring', label: 'Monitoring', Icon: LogIcon },
   { to: '/glossary', label: 'Glossary', Icon: BookIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
 ] as const;

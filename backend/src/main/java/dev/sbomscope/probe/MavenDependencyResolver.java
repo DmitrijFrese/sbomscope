@@ -1,8 +1,6 @@
 package dev.sbomscope.probe;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -14,7 +12,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -27,6 +24,9 @@ import org.w3c.dom.NodeList;
 
 import dev.sbomscope.logging.ActivityLogger;
 import dev.sbomscope.scanner.VersionOrder;
+import dev.sbomscope.settings.MavenToolSettings;
+
+import static dev.sbomscope.settings.SettingsService.defaultProbeRepository;
 
 /**
  * Drives the user's own {@code mvn} to answer "if I bump A to version V, what does C resolve
@@ -51,30 +51,130 @@ public class MavenDependencyResolver implements DependencyResolver {
 
     private static final Duration VERSION_TIMEOUT = Duration.ofSeconds(20);
 
+    /** Generous: the first run downloads the plugin and its dependencies into an empty repo. */
+    private static final Duration PLUGIN_CHECK_TIMEOUT = Duration.ofSeconds(120);
+
+    // The goal itself, version and all, comes in on the ProbeContext — see
+    // MavenToolSettings.dependencyTreeGoal() for why it is pinned and why that is configurable.
+
     private final ActivityLogger activityLog;
 
     /** Runs {@code mvn --version}, both to confirm the path works and to record what ran. */
     public String version(String executablePath) {
-        ProcessResult result = run(List.of(executablePath, "--version"), null, VERSION_TIMEOUT);
+        MavenInvocation.Result result =
+                MavenInvocation.run("--version", List.of(executablePath, "--version"), null, VERSION_TIMEOUT);
         if (result.startFailed()) {
-            throw new MavenProbeException("Could not start mvn at " + executablePath + ": " + result.stderr());
+            throw new MavenProbeException("Could not start mvn at " + executablePath + ": " + result.startError());
         }
         if (result.timedOut() || result.exitCode() != 0) {
             throw new MavenProbeException(
-                    "That file did not respond to --version. " + lastMeaningfulLine(result));
+                    "That file did not respond to --version. " + result.lastMeaningfulLine());
         }
-        // mvn.cmd writes CRLF on Windows; strip() on the whole string only trims the ends,
-        // not the line boundary the split introduces, so the \r must be stripped per line too.
-        String firstLine = result.stdout().isBlank() ? "" : result.stdout().strip().split("\n")[0].strip();
-        if (!firstLine.toLowerCase(Locale.ROOT).contains("apache maven")) {
-            throw new MavenProbeException("That binary does not identify itself as Maven. It reported: " + firstLine);
+        // The banner line, not necessarily the first line: a JVM that prints something of its
+        // own first — "Picked up JAVA_TOOL_OPTIONS", common where a corporate agent is
+        // installed — would otherwise make a perfectly good Maven look like the wrong binary.
+        // mvn.cmd writes CRLF on Windows, so the \r is stripped per line, not just at the ends.
+        String banner = result.output().lines()
+                .map(String::strip)
+                .filter(line -> line.toLowerCase(Locale.ROOT).contains("apache maven"))
+                .findFirst()
+                .orElse(null);
+        if (banner == null) {
+            throw new MavenProbeException("That binary does not identify itself as Maven. It reported: "
+                    + result.lastMeaningfulLine());
         }
-        return firstLine;
+        return banner;
     }
 
     MavenDependencyResolver(ActivityLogger activityLog) {
         this.activityLog = activityLog;
     }
+
+    /**
+     * Resolves and runs the plugins the probe drives, against a throwaway empty project.
+     *
+     * <p>{@link #version} proves the binary is Maven; it proves nothing about whether a probe
+     * can work. Those are different questions with different answers: on a machine that cannot
+     * reach a repository, {@code --version} succeeds and reports a perfectly good Maven while
+     * every probe fails, because the isolated probe repository has no copy of
+     * {@code maven-dependency-plugin} and no route to one. Reporting "Working" there is worse
+     * than useless — it sends the reader looking for the problem everywhere except where it is.
+     *
+     * <p>Deliberately run against the <em>configured</em> goals and the <em>real</em> probe
+     * repository, so a green result means the exact invocations a probe makes have been made
+     * once and worked, not that something similar might.
+     *
+     * @return what was verified, for display
+     * @throws MavenProbeException naming the plugin that could not be obtained
+     */
+    public String verifyProbePlugins(MavenToolSettings settings) {
+        Path tempDir;
+        try {
+            tempDir = Files.createTempDirectory("sbomscope-plugin-check-");
+        } catch (IOException e) {
+            throw new MavenProbeException("Could not create a working directory: " + e.getMessage());
+        }
+
+        try {
+            Files.writeString(tempDir.resolve("pom.xml"), EMPTY_PROJECT_POM);
+            // The dependency plugin is what every probe runs; the help plugin only matters when
+            // an SBOM has a workspace path, but checking it here costs one invocation and turns
+            // a later silent "the probe ran isolated" into something known now.
+            runPluginCheck("dependency plugin", settings.dependencyTreeGoal(), settings, tempDir,
+                    "-DoutputFile=" + tempDir.resolve("tree.txt"), "-DoutputType=text");
+            runPluginCheck("help plugin", settings.effectivePomGoal(), settings, tempDir,
+                    "-Doutput=" + tempDir.resolve("effective.xml"));
+            return "%s and %s resolve and run".formatted(
+                    settings.dependencyTreeGoal(), settings.effectivePomGoal());
+        } catch (IOException e) {
+            throw new MavenProbeException("Could not write the check project: " + e.getMessage());
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    private void runPluginCheck(String label, String goal, MavenToolSettings settings, Path workingDirectory,
+                                 String... extraArgs) {
+        List<String> command = new ArrayList<>(List.of(
+                settings.executablePath(), "-B", "-q", goal,
+                "-Dmaven.repo.local=" + defaultProbeRepository()));
+        command.addAll(List.of(extraArgs));
+        if (settings.hasProfiles()) {
+            command.add("-P" + settings.profiles().trim());
+        }
+
+        MavenInvocation.Result result = MavenInvocation.run("check " + label, command, workingDirectory, PLUGIN_CHECK_TIMEOUT);
+        if (result.ok()) {
+            return;
+        }
+        if (result.startFailed()) {
+            throw new MavenProbeException("Could not start mvn: " + result.startError());
+        }
+        if (result.timedOut()) {
+            throw new MavenProbeException(
+                    "The %s did not resolve within %d seconds. If this machine reaches its repository "
+                            .formatted(label, PLUGIN_CHECK_TIMEOUT.toSeconds())
+                            + "through a slow mirror, the first fetch can be slow; try again.");
+        }
+        throw new MavenProbeException(
+                ("Maven runs, but the %s (%s) could not be obtained. The probe resolves into its own "
+                        + "repository (%s), never your ~/.m2, so it has to fetch this itself — on a "
+                        + "machine with no route to a repository it cannot. Full output is in "
+                        + "sbomscope.log. Maven said: %s")
+                        .formatted(label, goal, defaultProbeRepository(), result.lastMeaningfulLine()));
+    }
+
+    /** No dependencies: the check is about the tooling, not about resolving anything. */
+    private static final String EMPTY_PROJECT_POM = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>dev.sbomscope.probe</groupId>
+              <artifactId>plugin-check</artifactId>
+              <version>0</version>
+              <packaging>pom</packaging>
+            </project>
+            """;
 
     @Override
     public ProbeOutcome resolve(List<ModuleDependency> moduleDependencies, Map<MavenArtifact, String> overrides,
@@ -94,13 +194,14 @@ public class MavenDependencyResolver implements DependencyResolver {
             List<String> command = new ArrayList<>(List.of(
                     context.mvnExecutable(),
                     "-B", "-q",
-                    "dependency:tree",
+                    context.dependencyTreeGoal(),
                     "-Dmaven.repo.local=" + context.isolatedRepository(),
                     "-DoutputFile=" + treeOutput,
                     "-DoutputType=text"));
             command.addAll(context.profileArgs());
 
-            ProcessResult result = run(command, tempDir, context.timeout());
+            MavenInvocation.Result result = MavenInvocation.run(
+                    "dependency:tree for " + describeOverrides(overrides), command, tempDir, context.timeout());
             ProbeOutcome outcome = outcomeFor(result, treeOutput, overrides, target);
 
             activityLog.record(ActivityLogger.Category.PROCESS, "MAVEN_PROBE",
@@ -117,11 +218,11 @@ public class MavenDependencyResolver implements DependencyResolver {
         }
     }
 
-    private ProbeOutcome outcomeFor(ProcessResult result, Path treeOutput, Map<MavenArtifact, String> overrides,
-                                     MavenArtifact target) throws IOException {
+    private ProbeOutcome outcomeFor(MavenInvocation.Result result, Path treeOutput,
+                                     Map<MavenArtifact, String> overrides, MavenArtifact target) throws IOException {
         if (result.startFailed()) {
             return ProbeOutcome.failed(ProbeFailureReason.NOT_RUNNABLE,
-                    "Could not start mvn at the configured path: " + result.stderr());
+                    "Could not start mvn at the configured path: " + result.startError());
         }
         if (result.timedOut()) {
             return ProbeOutcome.failed(ProbeFailureReason.TIMEOUT,
@@ -299,80 +400,30 @@ public class MavenDependencyResolver implements DependencyResolver {
         return null;
     }
 
-    private ProbeOutcome classifyFailure(ProcessResult result) {
-        String combined = (result.stdout() + "\n" + result.stderr()).toLowerCase(Locale.ROOT);
-        String detail = lastMeaningfulLine(result);
+    private ProbeOutcome classifyFailure(MavenInvocation.Result result) {
+        String output = result.output().toLowerCase(Locale.ROOT);
+        String detail = result.lastMeaningfulLine();
 
-        if (combined.contains("could not find artifact")
-                || combined.contains("could not resolve dependencies")
-                || combined.contains("could not transfer artifact")
-                || combined.contains("no versions available")) {
+        // A plugin that cannot be resolved is not a fact about the component being probed —
+        // it means the isolated repository has no copy and no way to get one, which on a
+        // machine with no route to a repository is a setup problem, not a dependency problem.
+        // Classified apart so the panel stops blaming the artifact for it.
+        if (output.contains("no plugin found for prefix")
+                || output.contains("could not resolve plugin")
+                || output.contains("plugin org.apache.maven.plugins")) {
+            return ProbeOutcome.failed(ProbeFailureReason.PLUGIN_UNAVAILABLE, detail);
+        }
+        if (output.contains("could not find artifact")
+                || output.contains("could not resolve dependencies")
+                || output.contains("could not transfer artifact")
+                || output.contains("no versions available")) {
             return ProbeOutcome.failed(ProbeFailureReason.NOT_FOUND, detail);
         }
-        if (combined.contains("401") || combined.contains("403")
-                || combined.contains("not authorized") || combined.contains("authentication")) {
+        if (output.contains("401") || output.contains("403")
+                || output.contains("not authorized") || output.contains("authentication")) {
             return ProbeOutcome.failed(ProbeFailureReason.AUTHENTICATION, detail);
         }
         return ProbeOutcome.failed(ProbeFailureReason.OTHER, detail);
-    }
-
-    /** The last non-blank line of either stream — Maven's own [ERROR] summary comes last. */
-    private String lastMeaningfulLine(ProcessResult result) {
-        String combined = (result.stdout() + "\n" + result.stderr()).strip();
-        if (combined.isEmpty()) {
-            return "mvn exited " + result.exitCode() + " with no output.";
-        }
-        String[] lines = combined.split("\n");
-        for (int i = lines.length - 1; i >= 0; i--) {
-            if (!lines[i].isBlank()) {
-                return lines[i].strip();
-            }
-        }
-        return combined;
-    }
-
-    // --- process invocation ----------------------------------------------------------------
-
-    private record ProcessResult(
-            boolean startFailed, boolean timedOut, int exitCode, String stdout, String stderr) {}
-
-    private ProcessResult run(List<String> command, Path workingDirectory, Duration timeout) {
-        ProcessBuilder builder = new ProcessBuilder(command);
-        if (workingDirectory != null) {
-            builder.directory(workingDirectory.toFile());
-        }
-
-        Process process;
-        try {
-            process = builder.start();
-        } catch (IOException e) {
-            return new ProcessResult(true, false, -1, "", e.getMessage());
-        }
-
-        try {
-            String stdout = read(process.getInputStream());
-            String stderr = read(process.getErrorStream());
-
-            if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
-                return new ProcessResult(false, true, -1, stdout, stderr);
-            }
-            return new ProcessResult(false, false, process.exitValue(), stdout, stderr);
-
-        } catch (IOException e) {
-            process.destroyForcibly();
-            return new ProcessResult(false, false, -1, "", "Failed while reading mvn output: " + e.getMessage());
-        } catch (InterruptedException e) {
-            process.destroyForcibly();
-            Thread.currentThread().interrupt();
-            return new ProcessResult(false, false, -1, "", "Interrupted while waiting for mvn.");
-        }
-    }
-
-    private String read(InputStream stream) throws IOException {
-        try (stream) {
-            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-        }
     }
 
     private void deleteRecursively(Path directory) {
