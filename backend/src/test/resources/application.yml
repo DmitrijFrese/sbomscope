@@ -11,6 +11,7 @@
 # disposable instead, under target/ so `mvn clean` clears it.
 sbomscope:
   data-directory: ${project.build.directory:target}/sbomscope-test-data
+  logs-directory: ${sbomscope.data-directory}/logs
 
 spring:
   datasource:

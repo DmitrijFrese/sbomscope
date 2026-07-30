@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Spring Boot's own defaults: CONSOLE_LOG_PATTERN, FILE_LOG_PATTERN and the CONSOLE
+         appender. The FILE appender is defined here instead of included, because a second,
+         differently-shaped file (activity.jsonl) is needed alongside it and Boot's own
+         logging.file.* properties only ever configure one. -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <springProperty scope="context" name="LOGS_DIR" source="sbomscope.logs-directory"/>
+
+    <!-- The full verbose record, for diagnosing after the fact. Ordinary prose, capped so
+         it cannot grow without bound. -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOGS_DIR}/sbomscope.log</file>
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <fileNamePattern>${LOGS_DIR}/sbomscope.log.%i</fileNamePattern>
+            <minIndex>1</minIndex>
+            <maxIndex>5</maxIndex>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>10MB</maxFileSize>
+        </triggeringPolicy>
+    </appender>
+
+    <!-- Notable events only, one JSON object per line, written by ActivityLogger. Bound to
+         its own logger name below so this line never also lands in the prose log above. -->
+    <appender name="ACTIVITY" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOGS_DIR}/activity.jsonl</file>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <fileNamePattern>${LOGS_DIR}/activity.jsonl.%i</fileNamePattern>
+            <minIndex>1</minIndex>
+            <maxIndex>3</maxIndex>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>10MB</maxFileSize>
+        </triggeringPolicy>
+    </appender>
+
+    <logger name="dev.sbomscope.activity" level="INFO" additivity="false">
+        <appender-ref ref="ACTIVITY"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>

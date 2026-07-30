@@ -25,6 +25,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import dev.sbomscope.logging.ActivityLogger;
+
 /**
  * Maintains the offline OSV database that osv-scanner reads.
  *
@@ -76,9 +78,11 @@ public class OsvDatabaseService {
      * download, then index — in one place.
      */
     private final OsvArchiveMatcher matcher;
+    private final ActivityLogger activityLog;
 
-    OsvDatabaseService(OsvArchiveMatcher matcher) {
+    OsvDatabaseService(OsvArchiveMatcher matcher, ActivityLogger activityLog) {
         this.matcher = matcher;
+        this.activityLog = activityLog;
     }
 
     private final AtomicReference<DownloadProgress> progress =
@@ -139,9 +143,12 @@ public class OsvDatabaseService {
         }
 
         progress.set(DownloadProgress.starting(ecosystem));
+        activityLog.record(ActivityLogger.Category.NETWORK, "OSV_DATABASE_DOWNLOAD", "STARTED", ecosystem);
         downloads.submit(() -> {
             try {
                 long size = downloadEcosystem(databaseDirectory, ecosystem);
+                activityLog.record(ActivityLogger.Category.NETWORK, "OSV_DATABASE_DOWNLOAD", "SUCCESS",
+                        "%s (%d bytes)".formatted(ecosystem, size));
 
                 // Second phase, on the same background thread and the same progress record.
                 // Done here rather than on first use because it is the moment the user is
@@ -150,10 +157,16 @@ public class OsvDatabaseService {
                 progress.updateAndGet(current -> current.indexing(0));
                 matcher.buildIndex(databaseDirectory, ecosystem,
                         advisories -> progress.updateAndGet(current -> current.indexing(advisories)));
+                activityLog.record(ActivityLogger.Category.DATA, "OSV_DATABASE_INDEX", "SUCCESS", ecosystem);
 
                 progress.updateAndGet(current -> current.completed(size));
             } catch (RuntimeException e) {
                 log.warn("Preparing the {} database failed", ecosystem, e);
+                boolean whileIndexing = progress.get().phase() == DownloadProgress.Phase.INDEX;
+                activityLog.record(
+                        whileIndexing ? ActivityLogger.Category.DATA : ActivityLogger.Category.NETWORK,
+                        whileIndexing ? "OSV_DATABASE_INDEX" : "OSV_DATABASE_DOWNLOAD", "FAILURE",
+                        "%s: %s".formatted(ecosystem, e.getMessage()));
                 progress.updateAndGet(current -> current.failed(e.getMessage()));
             }
         });
@@ -179,13 +192,17 @@ public class OsvDatabaseService {
         }
 
         progress.set(DownloadProgress.starting(ecosystem).indexing(0));
+        activityLog.record(ActivityLogger.Category.DATA, "OSV_DATABASE_INDEX", "STARTED", ecosystem);
         downloads.submit(() -> {
             try {
                 matcher.buildIndex(databaseDirectory, ecosystem,
                         advisories -> progress.updateAndGet(current -> current.indexing(advisories)));
+                activityLog.record(ActivityLogger.Category.DATA, "OSV_DATABASE_INDEX", "SUCCESS", ecosystem);
                 progress.updateAndGet(current -> current.completed(current.totalBytes()));
             } catch (RuntimeException e) {
                 log.warn("Indexing the {} database failed", ecosystem, e);
+                activityLog.record(ActivityLogger.Category.DATA, "OSV_DATABASE_INDEX", "FAILURE",
+                        "%s: %s".formatted(ecosystem, e.getMessage()));
                 progress.updateAndGet(current -> current.failed(e.getMessage()));
             }
         });

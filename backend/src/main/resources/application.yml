@@ -27,6 +27,10 @@ sbomscope:
     # on a timer. After this long, results are flagged as possibly outdated so the age
     # is visible rather than assumed.
     stale-after-days: 7
+  # sbomscope.log and activity.jsonl live here. Ties to the same directory SbomFileStore
+  # uses (sbomscope.data-directory), so tests that already isolate that property get log
+  # isolation for free instead of needing a second override.
+  logs-directory: ${sbomscope.data-directory:${user.home}/.sbomscope}/logs
 
 server:
   port: 8080

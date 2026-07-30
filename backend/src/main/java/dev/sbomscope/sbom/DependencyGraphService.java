@@ -78,6 +78,43 @@ public class DependencyGraphService {
     }
 
     /**
+     * Every direct dependency of one component — its own {@code <dependencies>} declarations,
+     * not the graph beneath it.
+     *
+     * <p>The Maven probe needs a module's whole direct set, not only the one ancestor being
+     * bumped: Maven's nearest-wins resolution is decided by every competing declaration, and a
+     * component reached by two routes resolves through whichever one wins — something a
+     * single-dependency POM cannot recover, because the SBOM itself does not record which
+     * declaration was honoured.
+     */
+    public List<GraphNode> directDependencies(UUID sbomId, String ownerBomRef) {
+        return directDependencies(repository.findComponents(sbomId), repository.findEdges(sbomId), ownerBomRef);
+    }
+
+    List<GraphNode> directDependencies(
+            List<StoredComponent> components, List<ParsedSbom.DependencyEdge> edges, String ownerBomRef) {
+
+        Map<String, StoredComponent> byRef = new HashMap<>();
+        for (StoredComponent component : components) {
+            byRef.put(component.bomRef(), component);
+        }
+
+        List<GraphNode> direct = new ArrayList<>();
+        for (ParsedSbom.DependencyEdge edge : edges) {
+            if (!edge.fromBomRef().equals(ownerBomRef)) {
+                continue;
+            }
+            StoredComponent child = byRef.get(edge.toBomRef());
+            // DIRECT only: a module-to-module edge in a multi-module reactor resolves to an
+            // APPLICATION-scoped child, which is a sibling to declare dependencies on, not one.
+            if (child != null && child.scope() == DependencyScope.DIRECT) {
+                direct.add(GraphNode.of(child, false));
+            }
+        }
+        return direct;
+    }
+
+    /**
      * The walk itself, over data already loaded.
      *
      * <p>Separated from the fetch so the traversal can be tested against graphs a real

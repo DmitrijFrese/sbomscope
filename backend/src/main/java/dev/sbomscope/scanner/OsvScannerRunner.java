@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import dev.sbomscope.logging.ActivityLogger;
 import dev.sbomscope.settings.ScannerSettings;
 
 /**
@@ -38,6 +39,12 @@ public class OsvScannerRunner {
      */
     private static final int EXIT_NO_VULNERABILITIES = 0;
     private static final int EXIT_VULNERABILITIES_FOUND = 1;
+
+    private final ActivityLogger activityLog;
+
+    public OsvScannerRunner(ActivityLogger activityLog) {
+        this.activityLog = activityLog;
+    }
 
     /** Runs {@code --version}, both to confirm the path works and to record what ran. */
     public String version(String executablePath) {
@@ -102,7 +109,26 @@ public class OsvScannerRunner {
         }
     }
 
+    /**
+     * Wraps {@link #execute} to record every invocation to the activity log — every caller
+     * of {@code run} launches an external process, and that is exactly one of the three
+     * things the activity log exists to catch.
+     */
     private Result run(List<String> command, String databaseDirectory, Duration timeout) {
+        String invocation = String.join(" ", command.subList(1, command.size()));
+        try {
+            Result result = execute(command, databaseDirectory, timeout);
+            activityLog.record(ActivityLogger.Category.PROCESS, "OSV_SCANNER", "SUCCESS",
+                    "%s (exit %d)".formatted(invocation, result.exitCode()));
+            return result;
+        } catch (OsvScannerException e) {
+            activityLog.record(ActivityLogger.Category.PROCESS, "OSV_SCANNER", "FAILURE",
+                    "%s: %s".formatted(invocation, e.getMessage()));
+            throw e;
+        }
+    }
+
+    private Result execute(List<String> command, String databaseDirectory, Duration timeout) {
         ProcessBuilder builder = new ProcessBuilder(command);
         if (databaseDirectory != null) {
             // How osv-scanner is told where the offline database lives.

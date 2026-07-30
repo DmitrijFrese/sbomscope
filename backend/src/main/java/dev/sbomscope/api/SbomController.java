@@ -19,9 +19,13 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import dev.sbomscope.export.RegistryLinks;
+import dev.sbomscope.probe.BumpProbeService;
+import dev.sbomscope.probe.BumpProgress;
+import dev.sbomscope.probe.BumpRequest;
 import dev.sbomscope.sbom.ComponentGraph;
 import dev.sbomscope.sbom.DependencyGraphService;
 import dev.sbomscope.sbom.DependencyScope;
+import dev.sbomscope.sbom.GraphNode;
 import dev.sbomscope.sbom.InvalidSbomException;
 import dev.sbomscope.sbom.SbomService;
 import dev.sbomscope.sbom.StoredComponent;
@@ -31,6 +35,7 @@ import dev.sbomscope.scanner.SbomSeverity;
 import dev.sbomscope.scanner.ScanService;
 import dev.sbomscope.scanner.UpgradeAdvice;
 import dev.sbomscope.scanner.UpgradeAdviceService;
+import dev.sbomscope.settings.SettingsService;
 
 @RestController
 @RequestMapping("/api/sboms")
@@ -40,13 +45,17 @@ class SbomController {
     private final ScanService scans;
     private final DependencyGraphService graphs;
     private final UpgradeAdviceService advice;
+    private final BumpProbeService bumpProbes;
+    private final SettingsService settings;
 
     SbomController(SbomService service, ScanService scans, DependencyGraphService graphs,
-                   UpgradeAdviceService advice) {
+                   UpgradeAdviceService advice, BumpProbeService bumpProbes, SettingsService settings) {
         this.service = service;
         this.scans = scans;
         this.graphs = graphs;
         this.advice = advice;
+        this.bumpProbes = bumpProbes;
+        this.settings = settings;
     }
 
     record SbomResponse(
@@ -244,6 +253,56 @@ class SbomController {
                 component,
                 scans.rowsForComponent(id, purl),
                 graphs.graphFor(id, purl, scans.vulnerablePurls(id)),
+                scans.evaluatorFor(component));
+    }
+
+    /**
+     * Starts (or returns the already-running or cached) Maven probe for this component's
+     * {@code BUMP_ANCESTOR} remedy.
+     *
+     * <p>Deliberately separate from {@code /component/upgrade}: Tier 1 above answers instantly
+     * from data already held, while this drives a real external process and can take real
+     * wall-clock time — exactly why it is started and polled rather than returned inline.
+     */
+    @PostMapping("/{id}/component/bump")
+    BumpProgress startBump(@PathVariable UUID id, @RequestParam("purl") String purl) {
+        return bumpProbes.start(bumpRequestFor(id, purl), settings.mavenSettings());
+    }
+
+    @GetMapping("/{id}/component/bump")
+    BumpProgress bumpProgress(@PathVariable UUID id, @RequestParam("purl") String purl) {
+        if (service.findById(id).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
+        }
+        StoredComponent component = service.findComponentByPurl(id, purl)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "That component is not in this SBOM"));
+        return bumpProbes.progress(component, graphs.graphFor(id, purl, scans.vulnerablePurls(id)));
+    }
+
+    private BumpRequest bumpRequestFor(UUID id, String purl) {
+        StoredSbom sbom = service.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM"));
+        StoredComponent component = service.findComponentByPurl(id, purl)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "That component is not in this SBOM"));
+
+        ComponentGraph graph = graphs.graphFor(id, purl, scans.vulnerablePurls(id));
+
+        // The most-affected module first, matching how the graph itself is already ordered —
+        // its full direct set, not just the one route reaching this component, since Maven's
+        // nearest-wins resolution needs every competing declaration to decide correctly.
+        List<GraphNode> moduleDependencies = graph.reachedFrom().isEmpty()
+                ? List.of()
+                : graphs.directDependencies(id, graph.reachedFrom().getFirst().module().bomRef());
+
+        return new BumpRequest(
+                id,
+                component,
+                graph,
+                moduleDependencies,
+                UpgradeAdviceService.advisoriesFrom(scans.rowsForComponent(id, purl)),
+                sbom.workspacePath(),
                 scans.evaluatorFor(component));
     }
 

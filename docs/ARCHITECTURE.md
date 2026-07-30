@@ -74,8 +74,9 @@ written **last** so an interrupted build leaves rows nothing considers usable �
 reasoning as `all.zip.partial`.
 
 Everything above `osv_index` is created by a single `V1__baseline.sql` — the original V1–V4,
-squashed while SBOMscope was pre-release; see constraint 8 in [AGENTS.md](../AGENTS.md) for
-when that stops being allowed. `V2__osv_index.sql` is additive rather than folded in: the
+squashed once while SBOMscope was pre-release. The repository went public on 2026-07-29, so
+that exception is closed: see constraint 8 in [AGENTS.md](../AGENTS.md) — every migration from
+here on is additive, `V1__baseline.sql` included. `V2__osv_index.sql` is additive rather than folded in: the
 baseline is now installed with real data behind it, and folding would cost a database nobody
 needs to lose for a table nothing supersedes.
 

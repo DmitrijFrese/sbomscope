@@ -1,4 +1,8 @@
+import { useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+
 import { ExportSettingsPanel } from '../components/ExportSettingsPanel';
+import { MavenSettingsPanel } from '../components/MavenSettingsPanel';
 import { PurgePanel } from '../components/PurgePanel';
 import { ScannerSettingsPanel } from '../components/ScannerSettingsPanel';
 import { useTheme } from '../theme/ThemeProvider';
@@ -16,6 +20,15 @@ const THEME_OPTIONS: ReadonlyArray<{
 
 export function SettingsPage() {
   const { preference, resolved, setPreference } = useTheme();
+  const { hash } = useLocation();
+
+  // React Router only pushes history on an in-app <Link>; it does not repeat the browser's
+  // own scroll-to-fragment-on-load behaviour, so a link to e.g. #settings-maven from another
+  // page would otherwise land on top of the page instead of the section it named.
+  useEffect(() => {
+    if (!hash) return;
+    document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'start' });
+  }, [hash]);
 
   return (
     <>
@@ -25,6 +38,8 @@ export function SettingsPage() {
       </div>
 
       <ScannerSettingsPanel />
+
+      <MavenSettingsPanel />
 
       <ExportSettingsPanel />
 

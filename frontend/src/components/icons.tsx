@@ -75,6 +75,17 @@ export function MoreIcon(props: IconProps) {
   );
 }
 
+/** A log: notable-event lines of varying length, not a generic list. */
+export function LogIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 6h16" />
+      <path d="M4 12h11" />
+      <path d="M4 18h7" />
+    </Icon>
+  );
+}
+
 export function BookIcon(props: IconProps) {
   return (
     <Icon {...props}>

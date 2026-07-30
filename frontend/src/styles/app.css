@@ -453,6 +453,7 @@ body {
 }
 
 .field input[type='text'],
+.field input[type='number'],
 .field input[type='file'],
 .toolbar__search {
   width: 100%;
@@ -473,6 +474,15 @@ body {
 .upload-form__actions {
   display: flex;
   gap: var(--space-2);
+}
+
+.field-row {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.field-row .field {
+  flex: 1;
 }
 
 /* ----------------------------------------------------------- dropzone ---- */
@@ -1626,6 +1636,18 @@ body {
 }
 
 /* ------------------------------------------- upgrade paths ---- */
+
+/* Caps a heavily-vulnerable library's finding list rather than letting the page grow with it —
+   the verdict that follows (declaredBy, pinTarget clean/carries) lives outside this container,
+   deliberately, so it never scrolls out of view behind dozens of findings. */
+.fixlist-scroll {
+  max-height: 50vh;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+}
 
 .fixlist {
   margin: 0 0 var(--space-4);

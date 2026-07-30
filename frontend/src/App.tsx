@@ -4,6 +4,7 @@ import { SbomSidebar } from './components/SbomSidebar';
 import { TopMenu } from './components/TopMenu';
 import { ComponentInspectorPage } from './pages/ComponentInspectorPage';
 import { GlossaryPage } from './pages/GlossaryPage';
+import { LogPage } from './pages/LogPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { VulnerabilitiesPage } from './pages/VulnerabilitiesPage';
 import { usePersistentToggle } from './state/persisted';
@@ -37,6 +38,7 @@ export function App() {
             {/* The old name, kept so a bookmarked tab lands where it meant to rather
                 than bouncing to the vulnerability view via the catch-all. */}
             <Route path="/workspace" element={<Navigate to="/component-inspector" replace />} />
+            <Route path="/log" element={<LogPage />} />
             <Route path="/glossary" element={<GlossaryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/vulnerabilities" replace />} />

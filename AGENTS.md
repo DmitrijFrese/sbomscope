@@ -115,13 +115,12 @@ raising it with the maintainer first.
    to survive an application upgrade, so schema evolution must be explicit, reviewable
    and repeatable — not inferred from entity mappings at startup.
 
-   **Until the repository is public, the baseline may be rewritten instead of extended.**
-   The only installations are the maintainer's, so a migration that would immediately be
-   undone by the next one is better folded into `V1__baseline.sql` than shipped — a reader
-   should meet one description of the current schema, not a history to reconstruct. The
-   cost is that existing databases must be deleted, which is stated in the migration itself.
-   **Once the repository is public this stops**: migrations become strictly additive, because
-   from then on somebody else's data is on the other end of them.
+   **The repository is public as of 2026-07-29. Migrations are strictly additive from here
+   on** — never edit or squash a shipped migration, including `V1__baseline.sql`, because
+   somebody else's data may already be on the other end of it. Before that date, while the
+   only installations were the maintainer's, the baseline was rewritten instead of extended
+   (V1–V4 squashed once, see the decision log) — that exception no longer applies and must
+   not be reused.
 9. **Keep the dependency tree lean.** SBOMscope's own SBOM is a credibility statement,
    and every transitive dependency is a vulnerability someone has to triage. Justify new
    dependencies; prefer the standard library or a few lines of our own code over a
@@ -234,10 +233,31 @@ so they exercise the quirks those tools actually emit. All live in
 | `maven-sbomscope.cdx.json` | `mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom` — CycloneDX 1.6, 61 components |
 | `npm-frontend.cdx.json` | `npm --prefix frontend sbom --sbom-format cyclonedx` — CycloneDX 1.5, 29 components |
 | `osv-report-maven.json` | osv-scanner v2.4.0 scanning the Maven fixture |
+| `vuln-multi-module.cdx.json` | An adversarial two-module Maven aggregate (see below) — CycloneDX 1.6, 62 components |
 
 They are SBOMscope's own dependency trees, so regenerating them keeps the tests honest as
 the project changes. Integration tests use an in-memory H2 built by the same Flyway
 migrations as production, so the migrations are covered too.
+
+**A different category: adversarial fixtures.** Testing richer scenarios — several critical
+findings at once, the same library at two different versions across modules — needs an SBOM
+built from deliberately old, vulnerable dependencies, which is not SBOMscope's own tree.
+**Never commit the `pom.xml`/`package.json` that produces one.** The repository is public, and
+GitHub's dependency scanning reads any manifest it finds, including test fixtures — a
+committed pom declaring an old Keycloak or Netty would raise Dependabot alerts against
+SBOMscope's own repository for libraries it does not ship. Build the throwaway project
+outside the repository, and commit only the `.cdx.json` it produces — inert test data, not a
+manifest format anything scans.
+
+`vuln-multi-module.cdx.json` is the first: a two-module Maven aggregate (`module-a`,
+`module-b`), never committed itself. `module-a` declares `spring-boot-starter-web
+2.1.0.RELEASE` (dragging in old Jackson and `tomcat-embed-core`), `keycloak-core
+4.8.3.Final` and `netty-all 4.1.42.Final`; `module-b` declares `pdfbox 2.0.4`, `poi-ooxml
+3.17`, `keycloak-core 9.0.3` and `netty-all 4.1.68.Final`. `keycloak-core` and `netty-all`
+each therefore appear at two different versions in the one aggregate BOM — the cross-module
+version diamond Phase 8's route-completeness and bump-probe logic need a real case for.
+Regenerate with `mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom -DoutputFormat=json`
+against the throwaway project if the scenario needs to grow.
 
 **Tests must be isolated from `~/.sbomscope` in full, not just the database.** The in-memory
 datasource only covers half of it: uploads also write documents through `SbomFileStore`,
@@ -309,3 +329,23 @@ the severity summary went through two designs before the numbers showed which on
 - **The view and the export share one query path** (`FindingQuery` → SQL). If you add
   sorting or filtering, add it there rather than in a second implementation, or an
   exported spreadsheet will stop matching the screen it came from.
+
+- **A local Maven repository does not cache `maven-metadata.xml`.** It caches metadata
+  **per remote repository**, named after the repository id — `maven-metadata-central.xml`
+  for the ordinary case. Looking for the bare filename after resolving a version range
+  finds nothing, even though Maven resolved the range correctly moments earlier.
+  `MavenDependencyResolver.knownVersions` reads every `maven-metadata*.xml` present and
+  merges them, rather than assuming one name. Caught live: the ascending-refinement search
+  silently no-opped (zero candidate versions, not an error) and fell back to whatever the
+  range had already resolved to, which happened to still be correct here — a quieter
+  failure than it deserved, since a different scenario could have made it look like
+  "nothing to refine" when versions genuinely existed.
+
+- **The Maven probe's child `mvn` process needs `MAVEN_OPTS`, not a JVM `-D` flag.**
+  Environment variables propagate to a child process; `-D` system properties on the
+  parent JVM do not. On a machine where Maven itself needs
+  `-Djavax.net.ssl.trustStoreType=Windows-ROOT` (TLS-inspecting security software — see
+  the README), the probe's `mvn` needs that same setting in its own environment, which
+  means it must be present in the environment SBOMscope itself was launched from. A fresh,
+  empty `probe-repo` cannot resolve *any* plugin without it, so the first probe on such a
+  machine fails with `NoPluginFoundForPrefixException` until this is set.

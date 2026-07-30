@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import dev.sbomscope.logging.ActivityLogger;
 import dev.sbomscope.sbom.SbomFileStore;
 import dev.sbomscope.sbom.SbomService;
 import dev.sbomscope.sbom.StoredComponent;
@@ -39,12 +40,13 @@ public class ScanService {
     private final SbomFileStore files;
     private final OsvDatabaseService databases;
     private final OsvArchiveMatcher archives;
+    private final ActivityLogger activityLog;
 
     private final Duration staleAfter;
 
     ScanService(SettingsService settings, OsvScannerRunner runner, OsvReportParser parser,
                 VulnerabilityRepository repository, SbomService sboms, SbomFileStore files,
-                OsvDatabaseService databases, OsvArchiveMatcher archives,
+                OsvDatabaseService databases, OsvArchiveMatcher archives, ActivityLogger activityLog,
                 @Value("${sbomscope.scan.stale-after-days:7}") int staleAfterDays) {
         this.settings = settings;
         this.runner = runner;
@@ -54,6 +56,7 @@ public class ScanService {
         this.files = files;
         this.databases = databases;
         this.archives = archives;
+        this.activityLog = activityLog;
         this.staleAfter = Duration.ofDays(staleAfterDays);
     }
 
@@ -190,6 +193,8 @@ public class ScanService {
         repository.recordScan(scannedPurls, findings, version, scannedAt);
 
         log.info("Scanned SBOM {}: {} components, {} findings", sbomId, scannedPurls.size(), findings.size());
+        activityLog.record(ActivityLogger.Category.DATA, "SCAN", "SUCCESS",
+                "SBOM %s: %d components, %d findings".formatted(sbomId, scannedPurls.size(), findings.size()));
         return new ScanResult(scannedPurls.size(), findings.size(), scannedAt, version);
     }
 

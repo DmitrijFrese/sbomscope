@@ -1,8 +1,10 @@
 package dev.sbomscope.scanner;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.springframework.stereotype.Service;
@@ -49,10 +51,7 @@ public class UpgradeAdviceService {
 
     public UpgradeAdvice adviseFor(StoredComponent component, List<FindingRow> rows,
                                    ComponentGraph graph, TargetEvaluator targetEvaluator) {
-        List<AdvisoryFix> advisories = rows.stream()
-                .filter(FindingRow::hasFinding)
-                .map(row -> new AdvisoryFix(row.osvId(), row.cveId(), row.severityScore(), row.fixedVersion()))
-                .toList();
+        List<AdvisoryFix> advisories = advisoriesFrom(rows);
 
         List<String> clears = advisories.stream()
                 .filter(advisory -> advisory.fixedVersion() != null)
@@ -90,6 +89,18 @@ public class UpgradeAdviceService {
     }
 
     /**
+     * The advisories a component's rows describe, as the shared input both {@link #adviseFor}
+     * and the Maven probe's {@code clears} list are built from — so the two cannot disagree
+     * about what is being fixed.
+     */
+    public static List<AdvisoryFix> advisoriesFrom(List<FindingRow> rows) {
+        return rows.stream()
+                .filter(FindingRow::hasFinding)
+                .map(row -> new AdvisoryFix(row.osvId(), row.cveId(), row.severityScore(), row.fixedVersion()))
+                .toList();
+    }
+
+    /**
      * The highest fix version any advisory names, so a single pin addresses all of them.
      *
      * <p>Highest rather than lowest: pinning to the lowest would leave the others in place.
@@ -119,15 +130,24 @@ public class UpgradeAdviceService {
      * it directly without telling them who can.
      */
     private List<String> declaringDependencies(ComponentGraph graph) {
-        Set<String> declarers = new LinkedHashSet<>();
+        return declaringNodes(graph).stream().map(GraphNode::coordinates).toList();
+    }
+
+    /**
+     * The same declaring dependencies as {@link #declaringDependencies}, as full nodes rather
+     * than display strings — the Maven probe (Tier 2) needs the node's own version to build a
+     * version range, which a coordinates string has already thrown away.
+     */
+    public static List<GraphNode> declaringNodes(ComponentGraph graph) {
+        Map<String, GraphNode> byCoordinates = new LinkedHashMap<>();
         for (ComponentGraph.ModuleRoutes module : graph.reachedFrom()) {
             for (List<GraphNode> route : module.routes()) {
                 if (route.size() >= 2) {
-                    declarers.add(route.get(1).coordinates());
+                    byCoordinates.putIfAbsent(route.get(1).coordinates(), route.get(1));
                 }
             }
         }
-        return List.copyOf(declarers);
+        return List.copyOf(byCoordinates.values());
     }
 
     private Remedy upgrade(StoredComponent component, String pinTarget,
@@ -189,8 +209,8 @@ public class UpgradeAdviceService {
                         ? "Nothing in this SBOM declares this component."
                         : "Whether a newer version of what declares this ships the fix cannot be "
                                 + "determined offline — it needs that dependency's own "
-                                + "dependencies at versions you do not have. Enable registry "
-                                + "lookups to answer it.");
+                                + "dependencies at versions you do not have. Configure the Maven "
+                                + "probe in Settings and check from here to answer it.");
     }
 
     /**

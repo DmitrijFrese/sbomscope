@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import dev.sbomscope.logging.ActivityLogger;
 import dev.sbomscope.sbom.SbomFileStore;
 import dev.sbomscope.sbom.SbomService;
 import dev.sbomscope.scanner.OsvDatabaseService;
@@ -42,12 +43,15 @@ public class PurgeService {
     private final SbomService sboms;
     private final SbomFileStore files;
     private final SettingsService settings;
+    private final ActivityLogger activityLog;
 
-    PurgeService(JdbcTemplate jdbc, SbomService sboms, SbomFileStore files, SettingsService settings) {
+    PurgeService(JdbcTemplate jdbc, SbomService sboms, SbomFileStore files, SettingsService settings,
+                 ActivityLogger activityLog) {
         this.jdbc = jdbc;
         this.sboms = sboms;
         this.files = files;
         this.settings = settings;
+        this.activityLog = activityLog;
     }
 
     /**
@@ -80,6 +84,7 @@ public class PurgeService {
         }
 
         log.warn("Purge completed: {}", removed);
+        activityLog.record(ActivityLogger.Category.DATA, "PURGE", removed.toString());
         return new PurgeResult(removed);
     }
 

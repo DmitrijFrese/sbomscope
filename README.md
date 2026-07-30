@@ -216,6 +216,15 @@ database, so start it with:
 java -Djavax.net.ssl.trustStoreType=Windows-ROOT -jar backend/target/sbomscope.jar
 ```
 
+**The Maven probe (upgrade paths, Tier 2) fails the same way, for the same reason.** It
+runs your own `mvn` as a child process, which inherits environment variables — not JVM
+`-D` flags — from whatever launched SBOMscope. Setting `MAVEN_OPTS` with `setx` as above
+covers this automatically, since it is the same environment the probe's `mvn` inherits; a
+one-off `export`/`set` in the terminal you happen to launch SBOMscope from works too, as
+long as it is set before SBOMscope starts. A probe failing with something like
+`NoPluginFoundForPrefixException` on a fresh install of the probe's isolated repository
+almost always means this, not a real dependency problem.
+
 ## Scope
 
 SBOMscope is currently built for **a single developer running it on their own machine**

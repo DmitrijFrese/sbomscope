@@ -159,6 +159,17 @@ export function ComponentInspectorPage() {
     TAB_IDS.includes(stored) ? stored : 'advisories',
   );
 
+  // The last component looked at, per SBOM — restored below when this page is reached with
+  // no purl in the query string, which is what the top-nav link does. Without this, a trip
+  // to another tab (the Activity log, say) and back landed on a blank "No component selected"
+  // panel, discarding the whole inspector rather than the one thing that page navigation
+  // should not touch.
+  const [lastPurlBySbom, setLastPurlBySbom] = usePersistentState<Record<string, string>>(
+    'inspector.lastPurl',
+    {},
+    (stored) => (stored && typeof stored === 'object' ? stored : {}),
+  );
+
   const advisoryCount = detail?.findings.filter((row) => row.osvId).length ?? 0;
 
   const select = useCallback(
@@ -171,6 +182,19 @@ export function ComponentInspectorPage() {
   );
 
   const sbomId = selected?.id ?? null;
+
+  useEffect(() => {
+    if (!sbomId || purl) return;
+    const remembered = lastPurlBySbom[sbomId];
+    if (remembered) setParams({ purl: remembered }, { replace: true });
+  }, [sbomId, purl, lastPurlBySbom, setParams]);
+
+  useEffect(() => {
+    if (!sbomId || !purl) return;
+    setLastPurlBySbom((current) =>
+      current[sbomId] === purl ? current : { ...current, [sbomId]: purl },
+    );
+  }, [sbomId, purl, setLastPurlBySbom]);
 
   useEffect(() => {
     if (!sbomId || !purl) {

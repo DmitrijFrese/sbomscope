@@ -13,6 +13,8 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import dev.sbomscope.logging.ActivityLogger;
+
 /**
  * Import and retrieval of SBOMs.
  *
@@ -25,11 +27,14 @@ public class SbomService {
     private final CycloneDxParser parser;
     private final SbomRepository repository;
     private final SbomFileStore files;
+    private final ActivityLogger activityLog;
 
-    SbomService(CycloneDxParser parser, SbomRepository repository, SbomFileStore files) {
+    SbomService(CycloneDxParser parser, SbomRepository repository, SbomFileStore files,
+                ActivityLogger activityLog) {
         this.parser = parser;
         this.repository = repository;
         this.files = files;
+        this.activityLog = activityLog;
     }
 
     @Transactional
@@ -70,6 +75,8 @@ public class SbomService {
         repository.insertComponents(sbom.id(), parsed.components());
         repository.insertEdges(sbom.id(), parsed.edges());
 
+        activityLog.record(ActivityLogger.Category.DATA, "SBOM_UPLOADED",
+                "%s (%d components)".formatted(filename, parsed.components().size()));
         return sbom;
     }
 
@@ -108,6 +115,7 @@ public class SbomService {
         boolean deleted = repository.deleteById(id);
         if (deleted) {
             files.delete(id);
+            activityLog.record(ActivityLogger.Category.DATA, "SBOM_DELETED", id.toString());
         }
         return deleted;
     }

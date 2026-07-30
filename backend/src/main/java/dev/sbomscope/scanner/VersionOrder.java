@@ -16,10 +16,14 @@ import java.util.Comparator;
  * is a fair approximation for Maven's dotted versions. Maven's own qualifier rules are more
  * elaborate, so {@link OsvReportParser} prefers an advisory's explicit {@code versions[]}
  * enumeration where one exists — around 90% of the Maven set — and only falls back to this.
+ *
+ * <p>Public because the Maven probe (Tier 2) needs the same ordering to walk a tier's
+ * versions ascending — a second implementation would drift the same way two "is this version
+ * affected" statements would.
  */
-final class VersionOrder implements Comparator<String> {
+public final class VersionOrder implements Comparator<String> {
 
-    static final VersionOrder INSTANCE = new VersionOrder();
+    public static final VersionOrder INSTANCE = new VersionOrder();
 
     private VersionOrder() {}
 

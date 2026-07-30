@@ -14,11 +14,14 @@ import org.springframework.web.bind.annotation.RestController;
 
 import org.springframework.http.HttpStatus;
 
+import dev.sbomscope.probe.MavenDependencyResolver;
+import dev.sbomscope.probe.MavenProbeException;
 import dev.sbomscope.scanner.DownloadProgress;
 import dev.sbomscope.scanner.OsvDatabaseService;
 import dev.sbomscope.scanner.OsvScannerException;
 import dev.sbomscope.scanner.OsvScannerRunner;
 import dev.sbomscope.settings.ExportSettings;
+import dev.sbomscope.settings.MavenToolSettings;
 import dev.sbomscope.settings.ScannerSettings;
 import dev.sbomscope.settings.SettingsService;
 
@@ -29,11 +32,14 @@ class SettingsController {
     private final SettingsService settings;
     private final OsvScannerRunner scanner;
     private final OsvDatabaseService database;
+    private final MavenDependencyResolver maven;
 
-    SettingsController(SettingsService settings, OsvScannerRunner scanner, OsvDatabaseService database) {
+    SettingsController(SettingsService settings, OsvScannerRunner scanner, OsvDatabaseService database,
+                        MavenDependencyResolver maven) {
         this.settings = settings;
         this.scanner = scanner;
         this.database = database;
+        this.maven = maven;
     }
 
     record ScannerSettingsPayload(
@@ -159,5 +165,47 @@ class SettingsController {
     DownloadProgress downloadDatabase(@RequestParam("ecosystem") String ecosystem) {
         ScannerSettings current = settings.scannerSettings();
         return database.startDownload(current.databaseDirectory(), ecosystem);
+    }
+
+    // --- Maven probe (Phase 8 Tier 2) -----------------------------------------------------
+
+    record MavenSettingsPayload(
+            boolean enabled, String executablePath, int maxProbes, int runBudgetMinutes, String profiles) {
+
+        MavenToolSettings toDomain() {
+            return new MavenToolSettings(enabled, executablePath, maxProbes, runBudgetMinutes, profiles);
+        }
+
+        static MavenSettingsPayload from(MavenToolSettings domain) {
+            return new MavenSettingsPayload(
+                    domain.enabled(), domain.executablePath(), domain.maxProbes(), domain.runBudgetMinutes(),
+                    domain.profiles());
+        }
+    }
+
+    /** Mirrors {@link ScannerTestResult}: never throws, so the UI can show it inline. */
+    record MavenTestResult(boolean ok, String version, String error) {}
+
+    @GetMapping("/maven")
+    MavenSettingsPayload mavenSettings() {
+        return MavenSettingsPayload.from(settings.mavenSettings());
+    }
+
+    @PutMapping("/maven")
+    MavenSettingsPayload updateMaven(@RequestBody MavenSettingsPayload payload) {
+        return MavenSettingsPayload.from(settings.updateMavenSettings(payload.toDomain()));
+    }
+
+    @PostMapping("/maven/test")
+    MavenTestResult testMaven() {
+        MavenToolSettings current = settings.mavenSettings();
+        if (!current.hasExecutable()) {
+            return new MavenTestResult(false, null, "No mvn path configured.");
+        }
+        try {
+            return new MavenTestResult(true, maven.version(current.executablePath()), null);
+        } catch (MavenProbeException e) {
+            return new MavenTestResult(false, null, e.getMessage());
+        }
     }
 }

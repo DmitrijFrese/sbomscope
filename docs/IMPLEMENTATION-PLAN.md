@@ -6,8 +6,10 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-07-29 · Status: **Phases 0–2, 4–7 complete — Phase 3, and the Inspector's
-remaining panels (8–9)**
+Last updated: 2026-07-30 · Status: **Phases 0–2, 4–7 complete. Phase 8 Tier 1 complete; Tier 2
+passes A, B and C built and verified against a real `mvn`, plus the configurable probe
+budget, Maven profiles setting, and queued-vs-running probe status. Now starting the B-items
+(B1, the session-tabs redesign, onward) — then Phase 3 and Phase 9**
 
 ---
 
@@ -23,7 +25,7 @@ remaining panels (8–9)**
 | 5 | Excel export | **Done** |
 | 6 | Component Inspector: the shell | **Done** |
 | 7 | Dependency graph | **Done** |
-| 8 | Upgrade paths | Not started |
+| 8 | Upgrade paths | **Tier 1 done; Tier 2 works, second pass planned** |
 | 9 | Workspace usage detection | Not started |
 | 10 | Packaging and distribution | Not started |
 
@@ -545,39 +547,283 @@ Core Maven plugins only. **No settings parsing and no credentials**: Maven reads
 `settings.xml`, so mirrors, authentication and proxies come along for free and SBOMscope
 never learns them.
 
-- [ ] `DependencyResolver` behind an interface, per the standing convention on engine
-      integrations — the Maven probe today, a Gradle or npm probe later
-- [ ] **Resolve into an isolated local repository** (`~/.sbomscope/probe-repo`), never the
+- [x] `DependencyResolver` behind an interface, per the standing convention on engine
+      integrations — the Maven probe today, a Gradle or npm probe later. `MavenDependencyResolver`
+- [x] **Resolve into an isolated local repository** (`~/.sbomscope/probe-repo`), never the
       user's `~/.m2`. A failed probe writes `.lastUpdated` markers that can make a later
       *real* build refuse to retry a download; perturbing someone's build environment to
       answer a question they asked idly is not a trade worth making. Nearly free, because
       `dependency:tree` needs POMs and not jars — kilobytes per artifact
-- [ ] **Version enumeration comes from our own repo.** Resolving a range makes Maven download
-      `maven-metadata.xml` into the local repository to learn what exists; we read that file
-      from disk afterwards. No HTTP by us, so "we never call out, Maven does" survives
-- [ ] **Calibration probe.** Before trusting any candidate, probe the declaring dependency at
+- [x] **Version enumeration comes from our own repo.** Resolving a range makes Maven download
+      metadata into the local repository to learn what exists; we read it from disk afterwards.
+      **Not `maven-metadata.xml`** — found live, cost real debugging time: Maven caches this
+      per remote repository, named after the repository id (`maven-metadata-central.xml`), and
+      a plain `maven-metadata.xml` is not necessarily ever written to the local repo at all.
+      `knownVersions` reads every `maven-metadata*.xml` present and merges them. No HTTP by us,
+      so "we never call out, Maven does" survives
+- [x] **Calibration probe.** Before trusting any candidate, probe the declaring dependency at
       its *current* version and compare the resolved C against the C the SBOM reports.
       Matching means the isolated model reproduces their build for this chain and candidate
       results can be trusted; differing means something in their project is overriding it,
       the bump remedy is unverifiable, and the pin is the answer. Converts "we cannot really
       rely on this" into a checked claim
-- [ ] **With a workspace, lift in the project's `dependencyManagement`** via
+- [x] **With a workspace, lift in the project's `dependencyManagement`** via
       `mvn help:effective-pom`, so their pins and imported BOMs are honoured. Without one the
-      probe stays isolated and says so
-- [ ] **Search order: tiers first, then refine.** Three probes establish whether any bump
+      probe stays isolated and says so. `EffectivePomCache`, cached per workspace path for the
+      process lifetime. Built and unit-covered; not yet exercised live against a real workspace
+      with its own `<repositories>` — the supplier-artifact case below is the reason it exists,
+      and that specific path deserves a real test project with a custom repository before it's
+      trusted the way the rest of this phase now is
+- [x] **Search order: tiers first, then refine.** Three probes establish whether any bump
       works and in which tier — actionable in under half a minute — then walk ascending
       inside the winning tier for the true earliest. **Not a binary search**: "brings a fixed
       C" is not monotonic in the version, since a newer release can introduce a fresh
-      advisory, so an ordered search would report an earliest that is not one
-- [ ] Live progress while probing, linked to the log, with each probe's verdict recorded:
-      *4.2.0 → jackson-databind 3.1.6 → clean* against *→ 3.1.4, still affected by GHSA-…*
+      advisory, so an ordered search would report an earliest that is not one. Verified live
+      against a real `mvn`: `spring-boot-starter-web` 2.1.0.RELEASE → 4.1.0 cleared
+      `tomcat-embed-core`, correctly refined by walking eight ascending patch releases (all
+      still affected) before honestly falling back to the confirmed-clean 4.1.0 rather than
+      guessing further
+- [x] Live progress while probing, linked to the log, with each probe's verdict recorded:
+      *4.2.0 → jackson-databind 3.1.6 → clean* against *→ 3.1.4, still affected by GHSA-…*.
+      `BumpProgress`, polled the same way `DownloadProgress` already is
+- [x] **Probes will fail, and the likely reason is ours.** Observed in real use, twice over:
+      (1) the scenario this bullet anticipated — a generated POM with no `<repositories>` —
+      is handled by the workspace lift-in above; (2) a *different* real failure surfaced during
+      verification: a fresh, empty `probe-repo` cannot resolve **any** plugin at all without
+      network access, so on a machine where Maven itself needs
+      `-Djavax.net.ssl.trustStoreType=Windows-ROOT` (TLS-inspecting security software — see the
+      README), the very first probe fails with `NoPluginFoundForPrefixException` until the
+      SBOMscope process inherits `MAVEN_OPTS`. Documented in the README troubleshooting section
+      as the same root cause as the existing OSV-download note, since it is
+- [x] **Fall back per component, never globally.** A probe that fails falls back to the Tier 1
+      answer for *that component* — the pin still applies and is still correct. One
+      unresolvable supplier artifact must not switch the feature off for everything else.
+      Confirmed live: a `keycloak-core` probe failure (initially the plugin-resolution issue
+      above, later an honest "no candidate resolves this cleanly") never affected the
+      `spring-boot-starter-web` probe run moments later against a different component
+- [x] **Say which failure it was.** "Not found in any configured repository" sends the reader
+      to add a repository; "authentication failed" sends them to their credentials; "Maven is
+      not runnable" is a settings problem. One generic failure message would waste the only
+      moment the reader could act. `ProbeFailureReason`; the live `NoPluginFoundForPrefixException`
+      matched none of the specific patterns and fell to `OTHER` with the raw message kept rather
+      than discarded — the classification patterns are a starting set, not a closed one
+- [x] **Remember failures.** A known-unresolvable artifact must not be re-probed on every view
+      of the panel. Cache the negative result against the artifact and the settings that
+      produced it, and clear it when the build tool configuration changes. **Session-scoped
+      in-memory, deliberately not persisted** (decided 2026-07-29) — a restart is a fine time
+      to re-validate against whatever Maven configuration is current, and it avoids a migration
+      for data that is inherently tied to "the config as of five minutes ago"
+- [x] A timeout per probe, and a budget for the run. Maven can hang on an unreachable
+      repository, and the panel must be able to give up and say so. 60s per probe, 5 minutes
+      per component overall, 8 ascending-refinement probes at most
 - [ ] Per remedy: routes fixed of routes total, change size on the artifact *you* edit, and
-      whether the fix is upstream or a constraint you maintain
+      whether the fix is upstream or a constraint you maintain. **Deferred from the first pass;
+      planned in the second pass below.** `DependencyGraphService` caps routes shown per module
+      at 3 and reports a floor past 25 (`ComponentGraph.ModuleRoutes.truncated`), so counting
+      "routes fixed" against the *shown* routes would undercount whenever a module reaches a
+      component more than three ways — exactly the kind of confident-but-wrong number this
+      project designs against. Needs an uncapped "routes through ancestor X" query
 - [ ] Where no candidate resolves it, name the component in the chain that is holding it —
-      the blocker, not just the failure
+      the blocker, not just the failure. Deferred: identifying *why* a chain is stuck needs
+      comparing resolved trees across candidates for provenance, which the first-pass probe
+      does not retain. The whole-module probe below retains enough to make this answerable
 - [ ] Suggested remedy = clears every critical and high **and** fixes every route, at the
-      smallest change size; ties broken toward the upstream fix over the local override
-- [ ] A remedy that fixes some routes and not others is reported as partial, never as a fix
+      smallest change size; ties broken toward the upstream fix over the local override.
+      Waiting on route completeness — `advice.suggested` is still Tier 1's UPGRADE/PIN choice
+      only, and a successful `BUMP_ANCESTOR` is never offered as the suggestion even when it
+      clears everything, because "fixes every route" cannot yet be checked
+- [ ] A remedy that fixes some routes and not others is reported as partial, never as a fix.
+      Same dependency — today a probed `BUMP_ANCESTOR` is either the full remedy (every
+      advisory the target carries today, cleared) or absent; there is no partial state,
+      because route completeness is what a partial fix would be measured against
+
+### Tier 2, second pass — search shape, and route completeness by construction
+
+**Planned 2026-07-29, after using the first pass against a real project.** Neither item below
+is a coding defect in what was built; both are design problems only a real run could expose,
+which is the argument for having shipped a first pass at all. Between them they close the four
+items left open above.
+
+#### A — the refinement search is the wrong *shape*, not too small
+
+Observed live. Probing `spring-boot-starter-web 2.1.0.RELEASE` for a clean `tomcat-embed-core`,
+the minor-tier probe resolved `[2.1.0,3.0.0)` to **2.7.18**, still affected — which proves *no
+2.x release works at all* — and the refinement search then spent all eight of its probes on
+2.1.1 … 2.1.8, inside the very line that result had just ruled out. It reported 4.1.0, a
+three-major jump, having never tried 2.2, 3.0 or 4.0.
+
+**Raising the probe count does not fix this.** The candidate list is every known version between
+the current one and the winner, sorted ascending — roughly 200 releases for Spring Boot — walked
+from the bottom. Twelve probes reach 2.1.12. The shape of the list is the problem, not its budget.
+
+- [x] **Tier probes become elimination and bracketing, not candidates.** Their results already
+      carry more than "is this one clean": an affected patch tier rules out the line, and **an
+      affected highest-release-in-a-major rules out the entire major**. The first pass computed
+      exactly that and then discarded it.
+- [x] **`[current,)` is a feasibility probe, not an upgrade candidate.** It stays because it is
+      also the *metadata primer*: `knownVersions` reads the local repository, and nothing is
+      there until some range probe makes Maven fetch it. **Its short-circuit was removed in
+      pass C below — see the unsoundness recorded there.** Built with the short-circuit, which
+      was wrong.
+- [x] **Descend major → minor**, ascending, first clean wins at each level.
+      **Revised during the build: every step past feasibility probes an exact version, never a
+      numeric range.** `[3.0.0,4.0.0)` resolved live to **`4.0.0-RC2`** — a pre-release of the
+      *next* major. Maven ranks major-version differences above qualifier differences, so any
+      `4.0.0-<qualifier>` outranks every real 3.x release and wins the range, silently skipping
+      major 3 rather than merely offering a milestone. Candidates now come from
+      `knownVersions` (already pre-release-filtered) and are probed as `[exact]`.
+- [x] **Stop at the minor line, and report its highest patch.** Deliberate, not a budget
+      compromise: nobody plans an upgrade to 3.0.7 rather than 3.0.0 — they plan to move to
+      Spring Boot 3.0, and the blast-radius difference within a line is nil while 3.0 against
+      4.1 is the entire question. The highest patch in the winning line is also the safest choice
+      within it, carrying every other fix that landed there.
+- [x] **Still not a binary search, at any level.** The non-monotonicity argument stands
+      unchanged: a newer release can introduce a fresh advisory against the transitive component,
+      so bisecting on "is it clean" can report an earliest that is not one. What changes is only
+      the size of the set scanned linearly.
+- [x] **Filter pre-release versions out of candidates.** `knownVersions` excludes anything
+      carrying a `-` qualifier. **A second leak was found live and needed its own guard**: a
+      *resolved* version can still be a pre-release even when the candidate list is clean, via
+      the range-boundary case above, so a resolved pre-release is now rejected as an answer
+      regardless of what the archive says about the target.
+- [x] **Raise the probe ceiling to 16, and the run budget with it.** **The run budget is the
+      binding constraint, not the probe count**: the cold-repository tomcat run spent about four
+      minutes on twelve probes against about one minute warm. Both are revised again in C.
+- [x] **Claim only what was checked**: the note names the exact version verified and what it was
+      verified against — never "provably the earliest version".
+
+**Verified live 2026-07-29** against `vuln-multi-module.cdx.json` with a real `mvn` 3.9.16.
+`tomcat-embed-core 9.0.12` via `spring-boot-starter-web 2.1.0.RELEASE`: the first pass reported
+**4.1.0**, a three-major jump; the second reports **3.5.16**, having eliminated 2.1.x and all of
+2.x, then walked 3.0 → 3.5 to find the earliest clean minor line in major 3. Eleven probes,
+about fifty seconds warm.
+
+#### B — route completeness, from Maven rather than from us
+
+Also observed live, and this one is a correctness problem rather than a quality-of-answer one.
+
+`jackson-databind@2.9.5` appears in the fixture as **one component with two parents** —
+`keycloak-core` and `spring-boot-starter-json`. That is the *resolved* graph: Maven already chose
+one of those declarations by nearest-wins and discarded the other, and **the SBOM does not record
+which one it honoured.** So bumping the losing ancestor changes the resolved version by exactly
+nothing, and a panel reporting that bump as a fix would be stating something false.
+
+The first pass cannot see this, because it generates a POM containing only the one ancestor: it
+asks what that dependency brings *in isolation*, which is not a question anyone has.
+
+- [x] **Probe the whole owning module.** The generated POM carries all of that module's direct
+      dependencies at their current versions, with only the one under test moved to the candidate
+      version. `dependency:tree` then reports what the component *actually resolves to for that
+      module*, with nearest-wins, `dependencyManagement` and every competing route applied — by
+      Maven, which is the authority on its own resolution rules, rather than by us approximating
+      them.
+- [x] **The inputs are already held.** `DependencyGraphService.directDependencies` reads the
+      stored edges for the owning module's bom-ref and keeps the `DIRECT`-scoped children; no new
+      data, no new table.
+- [x] **Calibration becomes a whole-tree comparison** rather than a single chain: resolve the
+      module's current direct set with nothing overridden and check the component against what the
+      SBOM reports. That tests whether the isolated model reproduces their build, a far stronger
+      claim than reproducing one path through it.
+- [x] **Test combinations, and report the smallest set that works.** Each declaring ancestor
+      alone first, then all of them together. Where several routes are live this is the real
+      answer to "one suggestion for multiple routes": sometimes there is not one, and *"you have
+      to move all of these together"* is an actionable output rather than a failure.
+- [ ] **When no combination resolves it, the pin is provably correct.** `dependencyManagement`
+      constrains the component at any depth regardless of which declaration would otherwise win,
+      so it is route-complete by construction. That is the argument this phase has asserted since
+      it was written and has never been able to demonstrate. **Still not stated in the panel** —
+      the failure note says no combination resolves it, without drawing the conclusion.
+- [ ] **Offline route counts become the filter; the probe becomes the decision.** An uncapped
+      "how many routes reach this component, and how many pass through ancestor X" query in
+      `DependencyGraphService` supplies a *necessary* condition cheaply — a bump that misses
+      routes cannot be complete, so it need not be probed at all — while the probe supplies the
+      *sufficient* one. This is also what the "routes fixed of routes total" figure needs, and it
+      must be uncapped: the display caps routes at three per module and reports a floor past
+      twenty-five, so counting against the shown routes would undercount silently.
+- [ ] **Which module the answer holds for has to be stated.** A component owned by several
+      modules may need a different remedy in each, because their direct sets differ. Built as
+      *probe the most-affected module only* — `ComponentGraph.reachedFrom()` is already ordered
+      by route count, so its first entry is used and the others are not probed. **The remedy does
+      not yet say which module it was verified against**, which is the honesty half of this item
+      and is still open. **Open**: whether to probe every owning module eagerly — it multiplies
+      cost by the module count.
+
+Cost per candidate is unchanged: a larger generated POM, the same number of `dependency:tree`
+invocations.
+
+**Verified live 2026-07-29.** `jackson-databind@2.9.5`, reached through both `keycloak-core` and
+`spring-boot-starter-web`: bumping `spring-boot-starter-web` to its latest leaves jackson at
+**2.9.5, entirely unchanged**, because Keycloak's declaration is the one Maven honours. The
+single-dependency probe of the first pass would have shown jackson moving in isolation and
+reported a fix the real module does not get — exactly the false statement this pass exists to
+prevent.
+
+**Order.** A first — self-contained, changes only the search, needs no new inputs. B second, as
+its own pass, because it changes POM generation, calibration and the remedy model together.
+**Both built 2026-07-29**; C below follows from what building them exposed.
+
+#### C — ranked candidates per major line, and the unsoundness A left behind
+
+**Planned 2026-07-30.** Two things drive this, and the first is a defect in A rather than an
+enhancement.
+
+**The feasibility probe must not short-circuit.** A treats "`[current,)` came back affected" as
+*no version of this ancestor fixes it* and stops. That is the same non-monotonicity trap this
+design keeps invoking against binary search: **the global latest being affected does not mean no
+version is clean**, because a newer release can regress where an intermediate one was fine. The
+fixture hits it — `keycloak-core [4.8.3.Final,)` resolved to 26.7.0 bringing jackson 2.21.2,
+still affected, and the search stopped there without probing a single intermediate Keycloak. The
+"no combination resolves this cleanly" verdict recorded above is, on that point, **unproven
+rather than wrong**, and must not be read as evidence.
+
+**And one verdict is the wrong output shape anyway.** Tier 1 already presents *candidates, not a
+recommendation*, each carrying its own advisories — Tier 2 collapsing to a single winner was the
+odd one out, and it discards work it already did: every tier probe knows what its version still
+carries, and A threw that away the moment it was not perfectly clean.
+
+**The grouping is one row per major line**, every major from the current one up to the latest.
+
+| Row | Reports |
+|---|---|
+| Stay on 2.x | earliest clean in major 2 — or "highest is 2.7.18, still carries …" |
+| Move to 3.x | earliest clean in major 3 → 3.5.16 |
+| Move to 4.x (latest) | earliest clean in major 4 |
+
+- [ ] **One candidate per major, enumerated from `knownVersions` — never a "next major"
+      shorthand.** Picking "the next major" is the same arbitrary-boundary mistake as
+      `[3.0.0,4.0.0)`: at 1.x with latest 5.x it names 2.x and silently skips 3 and 4.
+- [ ] **Major is the axis blast radius varies along**, which is why rows split there. Spring Boot
+      2 → 3 is the Jakarta namespace migration; 3.0 → 3.5 is a weekend.
+- [ ] **The patch tier disappears as a concept.** The current-major row *is* the patch or minor
+      answer whenever the fix is nearby — if 2.1.18 were clean, "Stay on 2.x → 2.1.18". One
+      fewer concept and a more accurate one.
+- [ ] **Every row carries what it still carries**, as advisories with their GHSA ratings and
+      **not a count** — the existing rule that *"clears 3 of 4" cannot be acted on; which one
+      remains decides*. A row is additionally marked when it clears every critical and high,
+      since that is the bar an upgrade is usually judged against.
+- [ ] **This subsumes the partial-fix idea** raised the same day: a row whose highest release
+      still carries two criticals against a baseline of twelve is visible and comparable without
+      any separate "best candidate so far" mechanism.
+- [ ] **The feasibility probe keeps its other two jobs and loses the short-circuit.** It is the
+      metadata primer — `knownVersions` reads the local repository and nothing is there until a
+      range probe makes Maven fetch it — and it establishes the upper bound. Its verdict becomes
+      one data point among the rows.
+- [ ] **Nearest-major-first, on one shared budget.** Ranking wants ascending majors anyway, so
+      budget exhaustion lands on the far majors — precisely where precision matters least. No
+      special-casing needed. Unprobed majors are reported as **not probed**, never as "no fix".
+- [ ] **Budgets: 20 probes, 8 minutes.** The measured spring-boot case is ~11 probes, ~50s warm
+      and ~4 minutes cold for twelve. **Flagged as a UX judgement rather than a measurement**:
+      verdicts stream live and the useful rows land first, but eight minutes is a long time to
+      watch a panel, and keeping five with more "not probed" rows is a defensible alternative.
+- [ ] **Scope: ranked candidates for the single-ancestor search only.** Combination testing stays
+      the one coarse fallback probe it is now; ranking combinations as well is a combinatorial
+      step up not worth taking in the same pass.
+- [ ] **`BumpProgress` gains `List<BumpCandidate>`** — `(label, major, version, targetVersion,
+      clean, stillCarries, snippet)` — while `remedy` stays for the failure and unavailable
+      paths, so none of the failure-classification work is disturbed. The panel renders the rows
+      as a table, closer to how `advice.advisories` already renders than to a `RemedyCard`.
+- [ ] **No suggestion is emitted.** A bump cannot be *suggested* until route completeness exists,
+      which is still open under B.
 
 ### Logging
 
@@ -585,15 +831,27 @@ Not a feature of upgrade paths, but this is what made it necessary: a recommenda
 can check is the failure mode this project keeps designing against, and probing produces
 reasoning worth showing.
 
-- [ ] **Two files** under `~/.sbomscope/logs`. `sbomscope.log` is the full verbose record in
+- [x] **Two files** under `~/.sbomscope/logs`. `sbomscope.log` is the full verbose record in
       conventional text, rotated with a size cap, for diagnosing after the fact.
-      `activity.jsonl` holds notable events only, one JSON object per line
-- [ ] **The UI tails `activity.jsonl`.** Structured by construction, so the viewer never
-      parses prose — which is what makes reading back one's own log fragile
-- [ ] Notable = anything touching the network, anything running an external process, anything
-      changing stored data, and every probe result with its verdict
-- [ ] The log directory shown in Settings as copyable text, not a link: a browser cannot open
-      a native folder from an `http://` page
+      `activity.jsonl` holds notable events only, one JSON object per line. Both rotate by
+      size (`sbomscope.log`: 10 MB × 5; `activity.jsonl`: 10 MB × 3) via a custom
+      `logback-spring.xml`, since Boot's own `logging.file.*` properties only ever configure
+      one file. The directory is `sbomscope.logs-directory`, derived from the same
+      `sbomscope.data-directory` property `SbomFileStore` uses, so the existing test override
+      isolates logs too rather than needing a second one
+- [x] **The UI tails `activity.jsonl`.** Structured by construction, so the viewer never
+      parses prose. Polled every 3s from a panel on the Settings page; re-reads the file
+      from scratch each time rather than tracking a cursor, since the file is size-capped and
+      re-reading is naturally robust to rotation
+- [x] Notable = anything touching the network, anything running an external process, anything
+      changing stored data, and every probe result with its verdict. Network, process and data
+      covered (OSV database download/index, osv-scanner invocations, SBOM upload/delete, purge,
+      settings changes); Maven probe verdicts covered too, one `activity.jsonl` line per
+      `mvn dependency:tree` invocation, verified live against a real probe run
+- [x] The log directory shown in Settings as copyable text, not a link: a browser cannot open
+      a native folder from an `http://` page — **and**, per B6, an "Open folder" button that
+      drives `java.awt.Desktop` from the backend, hidden (not shown-and-failing) when
+      unsupported
   - [ ] Real version lists per component, cached per purl with a last-fetched timestamp
   - [ ] The four candidates above, properly
   - [ ] Whether a newer declaring ancestor ships the fix — the one remedy that cannot be
@@ -709,20 +967,67 @@ analysing does not need asking, because it sends nothing anywhere.
 - **The manual re-scan stays.** Filling a gap and deliberately re-running analysis against a
   refreshed archive are different needs, and only the first is automatic.
 
-### B1 — Component selection is global, and should be per SBOM
+### B1 — Component selection is global, should be per SBOM, and should be session-persistent tabs
 
-Switching to an SBOM that does not contain the selected component renders an error. It should
-clear instead: a component that is not in this document is not a failure, it is a different
-document.
+Merged 2026-07-30 from two items that turned out to be the same underlying gap approached from
+different angles: component selection does not survive navigation the way it should. Originally
+two problems —
 
-- Keep the purl in the query string. It is what makes a refresh survive, and Phase 6 needs it.
-- Add an in-memory `Map<sbomId, purl>` in `SbomProvider`. Selecting an SBOM restores its last
-  component; selecting a component records it against the current SBOM. **Not persisted** —
-  a remembered component is a convenience within a session, not a preference.
-- On load, if the purl in the URL is not in the selected SBOM, clear it and show the finder
-  with a quiet note. Do not show an error, and do not guess at a substitute.
-- The backend already returns 404 for an unknown purl, which is correct; the frontend simply
-  must stop rendering that as a failure.
+1. Switching to an SBOM that does not contain the selected component renders an error. It
+   should clear instead: a component that is not in this document is not a failure, it is a
+   different document.
+2. The inspector holds exactly one component at a time; picking another replaces it, so
+   comparing two libraries — or resuming one you were reading before a detour to the Activity
+   log — means re-searching every time.
+
+— and both are solved by the same mechanism: session-scoped, per-SBOM, multi-component state
+that lives above the router rather than being reconstructed from the URL alone.
+
+**Partially built 2026-07-30, ahead of this merge.** A live bug turned out worse than problem 1
+as originally described: the top-nav Component Inspector link carries no purl at all, so a trip
+to the Activity log and back reset the whole panel to "No component selected", not only the
+multi-SBOM case. Fixed as an immediate patch in `ComponentInspectorPage` with
+`usePersistentState('inspector.lastPurl', {})` — the same localStorage-backed hook already used
+for the tab selector — restoring the last purl per SBOM whenever the page is reached with no
+purl in the URL. This patch is superseded by the design below, not layered under it: the tab
+list becomes the thing that remembers "what was I looking at", and the single-purl map is
+removed once it exists. Two gaps the patch left, both closed by the design below rather than
+patched separately: it is localStorage-persisted where this item calls for session-only state,
+so it outlives a restart it should not; and the SBOM-switch case — a *stale* purl still present
+in the URL after switching to an SBOM that does not contain it — still 404s and shows the raw
+error rather than clearing quietly.
+
+**The design — browser-style tabs**, session-scoped, not a preference: does not need to survive
+an application restart. In-memory state above the router (so it survives route navigation,
+which is the actual bug every version of this item was chasing) is sufficient, and simpler than
+anything backed by localStorage.
+
+- **State shape**: `Map<sbomId, string[]>` in `SbomProvider` — an ordered list of open purls per
+  SBOM — plus which one is active. Scoped per SBOM because a tab strip for a component that is
+  not in the current document is meaningless: switching SBOMs shows that SBOM's own open tabs,
+  empty for one never visited this session, which is problem 1 solved as a side effect of the
+  data shape rather than a special case.
+- **The URL still names the active tab.** `?purl=` stays the source of truth for what is
+  currently shown — a refresh must keep working, and the per-row "Inspect" links elsewhere in
+  the app must keep working as plain links. Opening a purl not already in the list appends it
+  and makes it active; opening one already there just activates it. Opening a purl the current
+  SBOM does not contain clears quietly and shows the finder, per problem 1's original spec —
+  never the raw 404.
+- **UI**: a tab strip between the finder and the identity panel, each tab a short label (the
+  artifact name, not the full coordinates — the identity panel below already carries the full
+  purl) with its own close control. Closing the active tab activates its neighbour; closing the
+  last tab returns to the current "no component selected" placeholder.
+- **Only the active tab's panel is mounted.** Advisories, the dependency graph and the bump
+  probe are already fetched per (sbomId, purl) and the bump probe already survives being
+  un-mounted and re-mounted (today's fix, and the QUEUED/RUNNING work beside it) — a probe
+  started on one tab keeps running server-side while another tab is active, and hydrates
+  correctly when its tab is switched back to. Rendering every open tab's content simultaneously
+  is not needed and would multiply the polling for no benefit.
+- **Interacts directly with the queued-probe work built the same day.** With several tabs open,
+  starting a bump probe on more than one is a realistic thing to do in one sitting, not a
+  hypothetical — this is the scenario QUEUED exists to describe honestly.
+- Not in scope here: reordering tabs by drag, a maximum tab count, or restoring tabs after a
+  full reload — left for a later pass if the plain version proves not to be enough.
 
 ### B2 — Registry links break on vendor-patched versions
 
@@ -765,13 +1070,20 @@ successful import, as a single upload already does.
 `Content-Disposition`. The stored document is the one the scanner reads, so it is also the one
 worth handing to somebody else. 404 where the file has been swept.
 
-### B6 — Reaching the log directory
+### B6 — Reaching the log directory — **built 2026-07-29**
 
 Logs live under `~/.sbomscope/logs`. Show the absolute path as copyable text **and** offer a
 button that opens the folder in the OS file manager — possible only because the backend runs
 on the user's own machine, which is the same property that makes workspace scanning possible.
 Use `java.awt.Desktop` where supported and fall back silently to the copyable path when
 headless; a button that does nothing is worse than one that is absent.
+
+Built as `LogService`/`LogController` (`GET /api/logs/status`, `POST /api/logs/open-folder`)
+and `LoggingPanel.tsx`. `canOpenFolder` is reported once from the backend
+(`Desktop.isDesktopSupported() && isSupported(Action.OPEN)`) and the button is omitted
+entirely rather than shown disabled — matches the "fall back silently" instruction. Observed
+`false` when launched as a backgrounded process from this shell during verification; expected
+to report `true` under a normal interactive launch, worth confirming on your machine.
 
 ### B7 — Dependency graph rendering
 
@@ -1998,3 +2310,146 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   Without the flag, `@PathVariable`/`@RequestParam` cannot recover their own names and
   every such endpoint fails at runtime with a 400 — while parameter-free endpoints keep
   working, which makes it look like a routing problem rather than a compiler setting.
+- 2026-07-29 — **The repository went public.** Constraint 8's exception (rewriting
+  `V1__baseline.sql` instead of extending it, because the only installations were the
+  maintainer's) closes as of this date. Every migration from here on is strictly additive;
+  the baseline is not touched again. Recorded in `AGENTS.md` and `docs/ARCHITECTURE.md`.
+
+  It also changes what belongs in the repository at all. Adversarial test fixtures —
+  deliberately old, vulnerable dependency versions, built for Phase 8/9 testing — must never
+  be committed as a live `pom.xml` or `package.json`: GitHub's dependency scanning reads any
+  manifest it finds in a public repo, including test fixtures, and would raise Dependabot
+  alerts against SBOMscope's own repository for libraries it does not ship. The generated
+  `.cdx.json` this project already commits as test fixtures is not itself a manifest format
+  Dependabot parses, so the rule is: build the vulnerable project outside the repository,
+  commit only the CycloneDX output it produces.
+- 2026-07-29 — **Phase 8 Tier 2 (the Maven probe) built and verified against a real `mvn`,
+  not just fakes.** `vuln-multi-module.cdx.json` — a two-module aggregate with old Spring
+  Boot, Keycloak at two versions, Netty at two versions, PDFBox and POI — gave 288 real
+  findings across 62 components, including `jackson-databind` reached by two independent
+  routes (via `keycloak-core` and via `spring-boot-starter-web`) and `keycloak-core`/
+  `netty-all` each present at two versions in the one document.
+
+  Live testing found two real bugs the unit tests (fake resolver, no real Maven) could not
+  have caught, both fixed the same session: the `maven-metadata.xml` filename gotcha
+  recorded above, and a `String.formatted()` operator-precedence bug (`"a %s" + "b".formatted(x)`
+  binds the call to `"b"` alone, not the concatenation, leaving a literal `%s` in the
+  rendered note). Also confirmed live: the ascending-refinement search correctly exhausts
+  its budget and falls back to the already-confirmed candidate rather than guessing past it
+  (`spring-boot-starter-web` 2.1.0.RELEASE → 4.1.0 clearing `tomcat-embed-core`, after eight
+  ascending patch probes all came back still-affected); a real probe failure
+  (`NoPluginFoundForPrefixException`, see the `MAVEN_OPTS` gotcha above) correctly fell back
+  to an honest unavailable remedy for that one component without affecting any other.
+
+  Deliberately not built this pass, and not silently dropped: route completeness (routes
+  fixed of routes total), naming the blocking component when nothing resolves, and route
+  completeness feeding into which remedy gets suggested — all three need an uncapped
+  "routes through ancestor X" query `DependencyGraphService` does not yet have, recorded
+  as open items in the Tier 2 checklist above rather than attempted approximately.
+- 2026-07-29 — **Two Tier 2 designs revised after using it, before building anything further.**
+  Both supersede choices made in the first pass earlier the same day; the reasoning is in
+  "Tier 2, second pass" above and only the reversals are recorded here.
+
+  **The ascending refinement search is replaced by hierarchical major → minor descent.** The
+  first pass walked every known version between the current one and the winning candidate,
+  ascending from the bottom — around 200 releases for Spring Boot — so its eight probes never
+  left the 2.1.x line that the minor-tier probe had already disproved. Raising the probe count
+  was considered and **rejected as a fix**: twelve probes reach 2.1.12, because the candidate
+  list is the wrong shape rather than the wrong length. The tier probes' elimination value
+  (an affected minor tier rules out the whole major, since the range resolved that major's
+  highest release) was being computed and discarded, and now brackets the search instead. The
+  descent deliberately stops at the minor line rather than hunting the exact earliest patch:
+  the blast-radius difference inside a line is nil, and nobody plans an upgrade to 3.0.7 over
+  3.0.0. `[current,)` is kept, reframed as a feasibility probe rather than a candidate — it is
+  what made the Keycloak "nothing fixes this" answer cost one probe instead of six.
+
+  **Single-ancestor probing is replaced by whole-module probing.** A generated POM containing
+  only the ancestor under test asks what that dependency brings *in isolation*, which is not
+  the question. A component reached by two routes appears in the SBOM as one resolved node with
+  two parents, and **the SBOM does not record which declaration Maven honoured** — so bumping
+  the ancestor that lost nearest-wins changes nothing, and reporting it as a fix would be
+  false. Probing the owning module's full direct set, with one dependency moved, makes Maven
+  compute route completeness itself rather than having us approximate its resolution rules.
+  It also makes the pin's route-completeness demonstrable instead of merely asserted, and
+  turns "no single bump works, move both or pin it" into an answer the panel can give.
+- 2026-07-29 — **A version range is not a safe way to ask for "the highest release in a major".**
+  Found by reading the live verdicts rather than by a failing test. `[3.0.0,4.0.0)` resolved to
+  **`4.0.0-RC2`**: Maven compares major versions before qualifiers, so every `4.0.0-<qualifier>`
+  outranks every real 3.x release and satisfies the exclusive upper bound. The damage is not that
+  a milestone might be recommended — it is that **major 3 was skipped entirely**, which is the
+  same defect class as the ascending-walk bug this pass was written to fix, one level down.
+
+  Rejecting pre-release *resolutions* was the first fix and is insufficient on its own: it
+  prevents the wrong answer without restoring the missed one. Every tier probe past feasibility
+  now takes its candidate from `knownVersions` — which already excludes pre-releases — and probes
+  it as an exact `[version]`. The pre-release rejection is kept as a second guard, since the
+  feasibility probe is still a range. Measured effect on the fixture: `tomcat-embed-core`'s
+  recommendation moved from 4.1.0 (three majors) to **3.5.16** (one).
+
+  `[current,)` survives as the one remaining range because it is open at the top, so nothing can
+  leak in from above it, and because it is the only probe that populates the local metadata
+  `knownVersions` reads.
+- 2026-07-30 — **Tier 2 reports ranked candidates per major line, and the feasibility probe stops
+  short-circuiting.** Planned as pass C above; recorded here for the reversal it contains.
+
+  **The short-circuit was unsound.** Treating "the global latest is still affected" as "no version
+  fixes this" assumes monotonicity — the exact assumption this design refuses elsewhere when
+  rejecting binary search. A newer release can regress where an intermediate one was clean, and
+  the fixture demonstrates the shape: `keycloak-core` at 26.7.0 still carries an affected jackson,
+  and the search stopped without probing anything between 4.8 and 26.7. The recorded verdict "no
+  single ancestor, and no combination, resolves this cleanly" is therefore **unproven, not wrong**,
+  and the note above it says so rather than leaving it to be read as evidence.
+
+  **One verdict was also the wrong output shape.** Tier 1 has presented candidates rather than a
+  recommendation since it was designed, each carrying its own advisories; Tier 2 collapsing to a
+  single winner was inconsistent with that and discarded information it had already paid for —
+  every tier probe knows what its version still carries, and the search threw that away as soon
+  as it was not perfectly clean.
+
+  **Grouping by major line was chosen over "patch / this major / next major / latest".** "Next
+  major" is an arbitrary boundary: at 1.x with a 5.x latest it names 2.x and skips 3 and 4, which
+  is the same class of error as the range bug above. Enumerating every major between current and
+  latest has no such gap, splits rows along the axis blast radius actually varies on, and makes
+  the patch tier disappear as a separate concept — the current-major row *is* the patch answer
+  when the fix is nearby. It also subsumes the partial-fix idea raised the same day: with each row
+  carrying its remaining advisories, "fewer criticals and highs" is visible and comparable without
+  a separate best-so-far mechanism.
+
+- 2026-07-30 — **The probe run budget (max probes, run budget minutes) is user-configurable in
+  Settings, not a constant.** The only sound lever for trading completeness for cost — narrowing
+  the search space itself (a range standing in for several minor lines) was already rejected above
+  as the exact class of bug this design keeps finding. A binary-search-shaped optimisation for the
+  minor-line walk was proposed and rejected on the same grounds during this work: a range always
+  resolves to its own top, telling you nothing about the minors below it, one level down from the
+  major-line version of the same mistake. `MavenToolSettings.maxProbes`/`runBudgetMinutes` replace
+  the former hardcoded constants; the Bump section in the UI links to where they live.
+- 2026-07-30 — **A Maven profiles setting**, comma-separated, passed to every probe invocation
+  exactly as `-P<profiles>` — the same syntax `mvn` itself accepts. Threaded through both the
+  `dependency:tree` probe command and the `help:effective-pom` workspace lift-in, not the plain
+  `--version` check, which does not depend on profiles. A profile that changes what a dependency
+  resolves to (an added repository, a property the resolution depends on) has to be active in the
+  probe too, or it answers for a build the user does not actually have.
+- 2026-07-30 — **Advisory lists collapsed to a count-by-band with an expandable, CVE-linked
+  detail view**, replacing inline GHSA-id lists that ran to dozens of entries for a heavily
+  vulnerable library (`AdvisorySummary` in `UpgradePathsPanel.tsx`). Applied uniformly to
+  everywhere a remedy names what it clears or still carries — the bump candidate table, both
+  remedy cards, and the target's own advisory notice. "Never only a count" still holds: the
+  detail view is one click away, never removed, only collapsed by default.
+- 2026-07-30 — **A real bug in the Component Inspector, found live and worse than the B1 item
+  already described**: navigating away and back — even just to the Activity log via the top nav,
+  which carries no purl — reset the whole panel to blank, not only the multi-SBOM case B1 named.
+  Two fixes, both session-scoped: `ComponentInspectorPage` remembers the last purl per SBOM
+  (`usePersistentState`, restored when the page is reached with no purl in the URL), and the bump
+  probe card hydrates from the backend's already-cached progress on mount instead of discarding it.
+  The backend was already keeping probe progress correctly (session-scoped, keyed by module and
+  target) — the bug was entirely that the frontend never asked. Superseded, not just noted, by
+  B1's session-tabs redesign the same day — see B1 for what this patch does not yet cover.
+- 2026-07-30 — **Bump probe progress distinguishes QUEUED from RUNNING.** The single background
+  thread that runs every probe (deliberate — the isolated Maven repository cannot safely take
+  concurrent writes) means a second component's probe started while another is in flight does not
+  run alongside it, it waits. Reporting that as RUNNING claimed Maven was being probed right now
+  for something that had not started. `BumpProgress` gained a `QUEUED` state, `BumpProbeService`
+  tracks which key is actually executing in an `AtomicReference`, and the UI shows a distinct
+  "queued behind another probe" message. Became directly relevant once B1's session-tabs
+  redesign was in view: several tabs open at once makes starting more than one probe in a
+  sitting the normal case, not a corner one.

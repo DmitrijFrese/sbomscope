@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
 
+import dev.sbomscope.probe.MavenProbeException;
 import dev.sbomscope.sbom.InvalidSbomException;
 import dev.sbomscope.scanner.OsvScannerException;
 
@@ -73,6 +74,13 @@ class ApiExceptionHandler {
      */
     @ExceptionHandler(OsvScannerException.class)
     ResponseEntity<ApiError> handleScanner(OsvScannerException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of(HttpStatus.CONFLICT, e.getMessage()));
+    }
+
+    /** The Maven probe's equivalent: mvn cannot be run at all, a settings-level problem. */
+    @ExceptionHandler(MavenProbeException.class)
+    ResponseEntity<ApiError> handleMavenProbe(MavenProbeException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of(HttpStatus.CONFLICT, e.getMessage()));
     }

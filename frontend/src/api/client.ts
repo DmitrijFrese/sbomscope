@@ -364,6 +364,108 @@ export function testScanner(): Promise<ScannerTestResult> {
   return request<ScannerTestResult>('/settings/scanner/test', { method: 'POST' });
 }
 
+// --- Maven probe (Phase 8 Tier 2) -------------------------------------------
+
+export interface MavenSettings {
+  /** Slow enough (a real external process, sometimes several) to stay opt-in on its own. */
+  enabled: boolean;
+  executablePath: string | null;
+  /**
+   * Ceiling on `mvn dependency:tree` invocations one bump probe may spend, shared across
+   * ranking every major line. The only sound lever for trading completeness for cost —
+   * narrowing the search itself (a range standing in for several minor lines) answers for one
+   * version and silently drops the rest.
+   */
+  maxProbes: number;
+  /** Wall-clock ceiling for the same run — the binding constraint in practice: a cold probe
+   *  repository can spend minutes on probes that take seconds once warm. */
+  runBudgetMinutes: number;
+  /** Comma-separated profile IDs passed to every probe as `-P<profiles>`, e.g. `"prod,internal-repo"`.
+   *  Null or blank activates no profiles, Maven's own default. */
+  profiles: string | null;
+}
+
+export interface MavenTestResult {
+  ok: boolean;
+  version: string | null;
+  error: string | null;
+}
+
+export function fetchMavenSettings(): Promise<MavenSettings> {
+  return request<MavenSettings>('/settings/maven');
+}
+
+export function saveMavenSettings(settings: MavenSettings): Promise<MavenSettings> {
+  return request<MavenSettings>('/settings/maven', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+}
+
+export function testMaven(): Promise<MavenTestResult> {
+  return request<MavenTestResult>('/settings/maven/test', { method: 'POST' });
+}
+
+/**
+ * QUEUED is distinct from RUNNING: the backend serialises every probe on a single background
+ * thread (the isolated Maven repository cannot safely take concurrent writes), so a probe
+ * started while another component's is in flight waits rather than running alongside it.
+ * Reporting that as RUNNING would claim Maven is being probed right now for something that
+ * has not started yet.
+ */
+export type BumpState = 'IDLE' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+/**
+ * One major line's answer to "what's the best version here, and what does it still carry" —
+ * Tier 1's own "candidates, not a recommendation" shape, extended to the Maven probe. One row
+ * per major from the currently-declared one up to the latest that exists: a later major being
+ * affected does not prove an earlier one is not clean, so every major is looked at rather than
+ * the search stopping at the first one that works.
+ */
+export interface BumpCandidate {
+  /** e.g. "Stay on 2.x", "Move to 3.x", "Move to 4.x (latest)". */
+  label: string;
+  ancestorCoordinates: string;
+  major: number;
+  /** Null when {@code probed} is false. */
+  version: string | null;
+  targetVersion: string | null;
+  /** False when the run budget was exhausted before this major was reached. */
+  probed: boolean;
+  clean: boolean;
+  clearsCriticalAndHigh: boolean;
+  /** Advisories remaining at {@code targetVersion} — never a count. */
+  stillCarries: AdvisoryHit[];
+  snippet: string | null;
+}
+
+/**
+ * Progress of one component's bump probe. {@code candidates} is the ranked list for the
+ * primary declaring ancestor; {@code remedy} reuses the exact {@link Remedy} shape Tier 1's
+ * remedies already use, but only for the failure/unavailable paths and the multi-ancestor
+ * combination result — it is null whenever the ranked list is the whole answer.
+ */
+export interface BumpProgress {
+  state: BumpState;
+  /** One line per probe as it completes, e.g. "[4.2.0] → jackson-databind 3.1.6 → clean". */
+  verdicts: string[];
+  candidates: BumpCandidate[];
+  remedy: Remedy | null;
+  message: string | null;
+}
+
+/** Starts the probe if one is not already running or cached, and returns current progress. */
+export function startBump(sbomId: string, purl: string): Promise<BumpProgress> {
+  return request<BumpProgress>(`/sboms/${sbomId}/component/bump?purl=${encodeURIComponent(purl)}`, {
+    method: 'POST',
+  });
+}
+
+export function fetchBumpProgress(sbomId: string, purl: string): Promise<BumpProgress> {
+  return request<BumpProgress>(`/sboms/${sbomId}/component/bump?purl=${encodeURIComponent(purl)}`);
+}
+
 // --- findings --------------------------------------------------------------
 
 /**
@@ -584,4 +686,42 @@ export function startDatabaseDownload(ecosystem: string): Promise<DownloadProgre
 
 export function fetchDownloadProgress(): Promise<DownloadProgress> {
   return request<DownloadProgress>('/settings/scanner/database/progress');
+}
+
+// --- logging -----------------------------------------------------------------
+
+export interface LogStatus {
+  /** Absolute path to the directory holding sbomscope.log and activity.jsonl. */
+  path: string;
+  /** False in headless environments — the caller falls back to the copyable path alone. */
+  canOpenFolder: boolean;
+}
+
+export type ActivityCategory = 'NETWORK' | 'PROCESS' | 'DATA';
+
+/**
+ * One notable event: anything touching the network, running an external process, or
+ * changing stored data.
+ */
+export interface ActivityEvent {
+  /** ISO-8601 instant. */
+  timestamp: string;
+  category: ActivityCategory;
+  event: string;
+  /** Absent for events that describe a change rather than a result. */
+  outcome: 'STARTED' | 'SUCCESS' | 'FAILURE' | null;
+  detail: string | null;
+}
+
+export function fetchLogStatus(): Promise<LogStatus> {
+  return request<LogStatus>('/logs/status');
+}
+
+/** Only meaningful because the backend runs on the user's own machine. */
+export function openLogFolder(): Promise<LogStatus> {
+  return request<LogStatus>('/logs/open-folder', { method: 'POST' });
+}
+
+export function fetchActivity(limit = 200): Promise<ActivityEvent[]> {
+  return request<ActivityEvent[]>(`/logs/activity?limit=${limit}`);
 }
