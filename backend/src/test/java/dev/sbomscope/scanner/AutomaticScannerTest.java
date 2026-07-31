@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 import dev.sbomscope.logging.ActivityLogger;
+import dev.sbomscope.settings.ScannerSettingsChangedEvent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -113,6 +114,37 @@ class AutomaticScannerTest {
 
         verify(scans).scan(sbomId);
         verify(scans).scan(other);
+    }
+
+    @Test
+    void configuringTheScannerQueuesWhatWasSkippedWhileItWasNotConfigured() {
+        // The gap this closes: scanLater declines silently when readiness is not met, so an
+        // SBOM uploaded with no scanner configured stayed unscanned until the next restart,
+        // showing an empty table that reads as "nothing found". Configuring the scanner is
+        // the moment the obstacle goes away, and it has to be what re-runs the sweep.
+        when(repository.sbomIdsWithUnscannedComponents()).thenReturn(List.of(sbomId));
+        ready(sbomId);
+        scanReturns(sbomId);
+
+        scanner.scanUnscannedAfterSettingsChange(new ScannerSettingsChangedEvent());
+        awaitIdle();
+
+        verify(scans).scan(sbomId);
+        verify(activityLog).record(eq(ActivityLogger.Category.PROCESS), eq("AUTO_SCAN"),
+                eq("STARTED"), contains("scanner settings changing"));
+    }
+
+    @Test
+    void aSettingsChangeThatFixesNothingQueuesNothing() {
+        // Saving the panel is not evidence that anything became scannable. Every SBOM already
+        // has a scan row here, so the sweep must find nothing to do rather than re-scanning
+        // the world on every save — re-running analysis stays the manual button.
+        when(repository.sbomIdsWithUnscannedComponents()).thenReturn(List.of());
+
+        scanner.scanUnscannedAfterSettingsChange(new ScannerSettingsChangedEvent());
+
+        assertThat(scanner.inFlight()).isEmpty();
+        verify(scans, never()).scan(any());
     }
 
     @Test

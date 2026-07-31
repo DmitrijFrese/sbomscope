@@ -37,8 +37,29 @@ public record ExportDescription(
                 sortDescription(query),
                 severityDescription(query),
                 scopeDescription(query),
-                query.filter() == null || query.filter().isBlank() ? "none" : query.filter(),
+                textFilterDescription(query),
                 columnDescription(columns));
+    }
+
+    /**
+     * The filter, and which way it was read.
+     *
+     * <p>A regex and a literal that select the same rows today are different selections, and a
+     * reader weeks later cannot tell them apart from the text alone: {@code spring.core} means
+     * two different things depending on a toggle that is not in the workbook. Saying which one
+     * was in force is the same duty the severity and scope lines already discharge — a workbook
+     * has to be able to account for its own size.
+     */
+    private static String textFilterDescription(FindingQuery query) {
+        if (!query.hasFilter()) {
+            return "none";
+        }
+        // The polarity leads, because it inverts the meaning of everything after it. A reader
+        // who skims "org.springframework" and assumes the workbook is *about* Spring, when it is
+        // in fact everything except Spring, has been misled by the one line meant to prevent that.
+        String verb = query.negateFilter() ? "excluding rows matching " : "matching ";
+        String mode = query.regexFilter() ? "  (regular expression, case-insensitive)" : "";
+        return verb + query.filter() + mode;
     }
 
     private static String scopeDescription(FindingQuery query) {
@@ -63,6 +84,10 @@ public record ExportDescription(
             // a descending export should not have to work out why the blanks are at the bottom.
             case FIXED_VERSION -> "Fixed in, " + direction + " (no fix last)";
             case SCOPE -> "Scope, " + direction + " (your own code, direct, transitive)";
+            case PUBLISHED -> "Published, " + direction + " (undated last)";
+            // Named as GitHub's scale rather than "rating", so a reader does not take it for the
+            // CVSS band in the Severity column beside it.
+            case GHSA_RATING -> "GHSA rating, " + direction + " (unrated last)";
         };
     }
 

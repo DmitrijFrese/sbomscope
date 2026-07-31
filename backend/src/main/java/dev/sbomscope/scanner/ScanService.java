@@ -8,9 +8,12 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -65,15 +68,68 @@ public class ScanService {
     }
 
     /**
-     * Whether results are old enough to warrant a refresh.
+     * Why results are worth re-running, which is not one question.
      *
-     * <p>Never-scanned counts as stale: the absence of findings must never read as
-     * "clean" when nothing has actually been checked.
+     * <p>Age and supersession are different claims and want different sentences. "More than
+     * seven days old" is a guess that the world has probably moved; "you have downloaded a
+     * newer archive than these results were produced against" is a fact about this machine,
+     * and it is the one the reader can act on immediately.
      */
-    public boolean isStale(UUID sbomId) {
-        return lastScannedAt(sbomId)
-                .map(scannedAt -> scannedAt.isBefore(Instant.now().minus(staleAfter)))
-                .orElse(true);
+    public enum StaleReason {
+        /** As current as anything on this machine can make it. */
+        NONE,
+        /** Older than the staleness threshold, or never scanned at all. */
+        AGED,
+        /** An archive this SBOM needs was replaced after the last scan ran. */
+        ARCHIVE_REFRESHED
+    }
+
+    /**
+     * The single reading of "should this be re-run".
+     *
+     * <p>Replaced a boolean {@code isStale}, which the caller now derives from this
+     * ({@code != NONE}) rather than asking for separately: two entry points computing the
+     * same judgement would eventually disagree about the same SBOM in the same request.
+     *
+     * <p>Never-scanned counts as stale: the absence of findings must never read as "clean"
+     * when nothing has actually been checked.
+     *
+     * <p>Supersession is checked before age because it is the stronger statement: an archive
+     * downloaded an hour ago against a scan from yesterday is not "aged", and saying so would
+     * send the reader looking at a seven-day clock that has nothing to do with it.
+     */
+    public StaleReason staleReason(UUID sbomId) {
+        Optional<Instant> scannedAt = lastScannedAt(sbomId);
+        if (scannedAt.isEmpty()) {
+            return StaleReason.AGED;
+        }
+        if (archiveRefreshedSince(sbomId, scannedAt.get())) {
+            return StaleReason.ARCHIVE_REFRESHED;
+        }
+        return scannedAt.get().isBefore(Instant.now().minus(staleAfter))
+                ? StaleReason.AGED
+                : StaleReason.NONE;
+    }
+
+    /**
+     * Whether an archive this SBOM's ecosystems need was written after the scan ran.
+     *
+     * <p>Read from the archive file's own modification time rather than from a recorded
+     * download timestamp, which means it is equally true of an archive <em>carried across on a
+     * USB stick</em> — the workflow this product is built around, and the one a download-time
+     * column would have been blind to. Re-indexing alone deliberately does not count: osv-scanner
+     * reads the archive, not the index, so an index rebuild changes no answer this reports on.
+     */
+    private boolean archiveRefreshedSince(UUID sbomId, Instant scannedAt) {
+        Set<String> required = requiredEcosystems(sbomId);
+        if (required.isEmpty()) {
+            return false;
+        }
+        return databases.status(settings.scannerSettings().databaseDirectory()).stream()
+                .filter(status -> required.contains(status.ecosystem()))
+                .map(OsvDatabaseService.EcosystemStatus::lastModified)
+                .filter(Objects::nonNull)
+                .anyMatch(scannedAt::isBefore);
     }
 
     /**
@@ -136,12 +192,22 @@ public class ScanService {
         return ScanReadiness.ok();
     }
 
-    /** Ecosystems this SBOM contains that have no downloaded archive behind them. */
-    private List<String> missingDatabases(UUID sbomId, String databaseDirectory) {
-        Set<String> required = sboms.findComponents(sbomId).stream()
+    /**
+     * Which archives this SBOM's contents actually need, derived from the purls.
+     *
+     * <p>One definition, read by both the readiness check and the supersession check, so
+     * "which archives does this document depend on" cannot be answered two ways.
+     */
+    private Set<String> requiredEcosystems(UUID sbomId) {
+        return sboms.findComponents(sbomId).stream()
                 .map(this::ecosystemOf)
                 .filter(ecosystem -> !ecosystem.isEmpty())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /** Ecosystems this SBOM contains that have no downloaded archive behind them. */
+    private List<String> missingDatabases(UUID sbomId, String databaseDirectory) {
+        Set<String> required = requiredEcosystems(sbomId);
 
         Set<String> present = databases.status(databaseDirectory).stream()
                 .filter(OsvDatabaseService.EcosystemStatus::present)
@@ -203,13 +269,38 @@ public class ScanService {
         return repository.findingsForSbom(sbomId, FindingQuery.defaults());
     }
 
+
     /** View rows: components joined to their vulnerabilities, including clean ones. */
     public List<FindingRow> rows(UUID sbomId, FindingQuery query) {
-        return repository.rowsForSbom(sbomId, query);
+        return repository.rowsForSbom(sbomId, validated(query));
     }
 
     public int countRows(UUID sbomId, FindingQuery query) {
-        return repository.countRows(sbomId, query);
+        return repository.countRows(sbomId, validated(query));
+    }
+
+    /**
+     * Compiles a regex filter here, before it can reach the database.
+     *
+     * <p>Two reasons it happens on this side. The message: {@link java.util.regex.Pattern}
+     * says <em>"Unclosed group near index 7"</em>, where the same failure arriving back through
+     * JDBC is wrapped in a driver exception whose text is about SQL. And the status: a pattern
+     * that never compiles is a 400 the caller can act on, while letting it fail in the engine
+     * makes it a data-access failure indistinguishable from the database being broken.
+     *
+     * <p>Every query path routes through this rather than the controller doing it once, because
+     * the export reaches the repository by its own route and an unchecked pattern there would
+     * be the same 500 by a different door.
+     */
+    static FindingQuery validated(FindingQuery query) {
+        if (query.regexFilter() && query.hasFilter()) {
+            try {
+                Pattern.compile(query.filter());
+            } catch (PatternSyntaxException e) {
+                throw new InvalidFilterPatternException(query.filter(), e);
+            }
+        }
+        return query;
     }
 
     /** One component's rows, in the same shape and order the table would show them. */
@@ -227,9 +318,19 @@ public class ScanService {
         return repository.vulnerablePurls(sbomId);
     }
 
+    /**
+     * The worst band per purl, for the finder's severity marks.
+     *
+     * <p>A purl missing from the map has never been scanned, which the caller must keep
+     * distinct from {@code CLEAN}.
+     */
+    public Map<String, FindingQuery.SeverityBand> worstBandByPurl(UUID sbomId) {
+        return repository.worstBandByPurl(sbomId);
+    }
+
     /** Vulnerabilities only, for counts that describe risk rather than inventory size. */
     public int countFindings(UUID sbomId, FindingQuery query) {
-        return repository.countFindings(sbomId, query);
+        return repository.countFindings(sbomId, validated(query));
     }
 
     /**

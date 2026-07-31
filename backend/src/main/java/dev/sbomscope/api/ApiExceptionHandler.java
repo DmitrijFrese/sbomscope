@@ -15,6 +15,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import dev.sbomscope.probe.MavenProbeException;
 import dev.sbomscope.sbom.InvalidSbomException;
+import dev.sbomscope.scanner.InvalidFilterPatternException;
 import dev.sbomscope.scanner.OsvScannerException;
 
 /**
@@ -77,6 +78,24 @@ class ApiExceptionHandler {
     ResponseEntity<ApiError> handleScanner(OsvScannerException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of(HttpStatus.CONFLICT, e.getMessage()));
+    }
+
+    /**
+     * A half-written regular expression in the filter field — a 400, and an ordinary one.
+     *
+     * <p>Its own handler rather than a lean on {@link IllegalArgumentException}, following the
+     * lesson this class has now learned twice: key on what the exception <em>is</em>, not on
+     * what it happens to extend. It also earns the distinction — this is the one 400 here that
+     * is expected to arrive several times per second, because a filter field is typed into one
+     * character at a time and {@code ^(org\.spring} exists on the way to every pattern that
+     * starts that way.
+     *
+     * <p>Not logged, for the same reason. A log line per keystroke would bury the entries that
+     * mean something, and nothing has gone wrong here.
+     */
+    @ExceptionHandler(InvalidFilterPatternException.class)
+    ResponseEntity<ApiError> handleInvalidFilterPattern(InvalidFilterPatternException e) {
+        return ResponseEntity.badRequest().body(ApiError.of(HttpStatus.BAD_REQUEST, e.getMessage()));
     }
 
     /** The Maven probe's equivalent: mvn cannot be run at all, a settings-level problem. */

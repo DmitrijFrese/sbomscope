@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { REMEDY_LABELS, continueBump, fetchBumpProgress, fetchUpgradeAdvice, startBump } from '../api/client';
-import type { AdvisoryFix, AdvisoryHit, BumpCandidate, BumpProgress, BumpScope, BumpState, Remedy, UpgradeAdvice } from '../api/client';
+import type { AdvisoryFix, AdvisoryHit, BumpCandidate, BumpProgress, BumpScope, BumpState, ProbeStep, Remedy, UpgradeAdvice } from '../api/client';
 import { bandOf, BAND_LABELS } from '../findings/presentation';
 
 const BUMP_POLL_INTERVAL_MS = 1500;
@@ -208,28 +208,59 @@ function WorstRemaining({ hits }: { hits: AdvisoryHit[] }) {
  * carries — a count by severity first, the full list (CVE-linked where one exists) one click
  * away, since "clears 3 of 4" alone cannot be acted on.
  */
-function BumpCandidateRow({ candidate }: { candidate: BumpCandidate }) {
+function BumpCandidateCard({ candidate, running }: { candidate: BumpCandidate; running: boolean }) {
+  const hasSnippet = candidate.probed && candidate.clean && !!candidate.snippet;
+  const carries = rowsFromHits(candidate.stillCarries);
+
   return (
-    <tr>
-      <td>{candidate.label}</td>
-      <td className="mono">
-        {candidate.probed ? candidate.version : '—'}
-        {/* Qualifies the version itself, because the version is what would otherwise be
-            misread: it looks like this major's highest when it is only where we stopped. */}
-        {candidate.higherReleasesUnchecked && <span className="badge badge--warn">checked up to here</span>}
-      </td>
-      <td>
-        {!candidate.probed && <span className="panel__hint">not probed</span>}
+    <article className="bump-result" data-outcome={outcomeOf(candidate)}>
+      {/* The result of the attempts listed above it. The label is not repeated — the group
+          heading already carries it, and saying "Move to 3.x" twice a line apart would read as
+          two different things. */}
+      <header className="bump-result__header">
+        <span className="bump-result__label">Result</span>
+        <span className="bump-result__version mono">{candidate.probed ? candidate.version : '—'}</span>
+        {/* "not probed" and "not probed yet" are different claims, and which one is true
+            depends on whether the search is still going. The skeleton renders every major
+            before any of them is walked, so calling an unreached row "not probed" mid-run
+            would report the budget running out on a search that is still working. */}
+        {!candidate.probed && (
+          <span className="panel__hint">{running ? 'waiting' : 'not probed'}</span>
+        )}
         {candidate.probed && candidate.clean && <span className="badge">clean</span>}
         {/* The worst band left, stated plainly. It replaces a critical/high binary and is
             both more informative and one concept fewer — "Moderate" already says critical and
-            high are gone. Derived from the same array the cell beside it lists, so the two
-            cannot disagree. An unrated advisory reads as unrated, never as clean: that is the
+            high are gone. Derived from the same array the body lists, so the two cannot
+            disagree. An unrated advisory reads as unrated, never as clean: that is the
             NONE-versus-CLEAN rule, one level further down. */}
         {candidate.probed && !candidate.clean && <WorstRemaining hits={candidate.stillCarries} />}
-      </td>
-      <td>
-        <AdvisorySummary verb="Carries" rows={rowsFromHits(candidate.stillCarries)} />
+        {/* Qualifies the version itself, because the version is what would otherwise be
+            misread: it looks like this major's highest when it is only where we stopped. */}
+        {candidate.higherReleasesUnchecked && (
+          <span className="badge badge--warn">checked up to here</span>
+        )}
+      </header>
+
+      <div className="bump-result__body">
+        {/* Something always renders here. A major the run never reached still gets its block,
+            saying so — the alternative is an absent row, and "we did not get to this" reading
+            as "there is nothing here" is the same unproven-versus-disproven confusion the
+            search itself is careful about. */}
+        {!candidate.probed && (
+          <p className="panel__hint">
+            {running
+              ? 'Not checked yet — the search works upward from the current major.'
+              : 'The run budget ran out before this major was reached, so nothing is known '
+                + 'about it either way.'}
+          </p>
+        )}
+
+        {candidate.probed && carries.length === 0 && candidate.clean && (
+          <p className="panel__hint">Nothing known against this version.</p>
+        )}
+
+        <AdvisorySummary verb="Carries" rows={carries} />
+
         {candidate.higherReleasesUnchecked && (
           <p className="panel__hint">
             The run budget ran out partway through {candidate.major}.x, so releases above{' '}
@@ -237,10 +268,20 @@ function BumpCandidateRow({ candidate }: { candidate: BumpCandidate }) {
             well be clean.
           </p>
         )}
-      </td>
-      <td>{candidate.probed && candidate.clean && candidate.snippet && <Snippet code={candidate.snippet} />}</td>
-    </tr>
+
+        {/* The reason this stopped being a table. A snippet is five lines of XML sharing a
+            column width with a prose advisory summary, which left it around 40px wide and
+            wrapping one character per line. Out of the grid it takes the block's full width. */}
+        {hasSnippet && <Snippet code={candidate.snippet as string} />}
+      </div>
+    </article>
   );
+}
+
+/** Drives the block's left edge: found something, found nothing, or never got there. */
+function outcomeOf(candidate: BumpCandidate): 'unprobed' | 'clean' | 'affected' {
+  if (!candidate.probed) return 'unprobed';
+  return candidate.clean ? 'clean' : 'affected';
 }
 
 /**
@@ -315,27 +356,120 @@ function BumpScopeCaption({ scope }: { scope: BumpScope }) {
   );
 }
 
-function BumpCandidateTable({ candidates, scope }: { candidates: BumpCandidate[]; scope: BumpScope | null }) {
+/**
+ * One block per major line, replacing the table this used to be.
+ *
+ * <p><b>A table was the wrong container, and it failed on the most useful column.</b> Every
+ * cell in a column shares one width, so the snippet — the one thing here anybody copies —
+ * competed with a prose advisory summary and lost, ending up narrow enough to wrap a single
+ * character per line and stretch a row past 700px. Nothing about these results is tabular:
+ * they are not compared column-by-column, they are read one at a time until one of them is
+ * the answer.
+ *
+ * <p>Each block leads with what was tried and how it came out, then gives the detail. Blocks
+ * are rendered for majors that were never reached too, because an absent block would read as
+ * "nothing here" for something that simply was not checked.
+ */
+/**
+ * The attempts belonging to one group, each its own line with its outcome marked.
+ *
+ * <p>The text is the backend's own wording, rendered verbatim. It already ends in "→ clean" or
+ * "→ still affected", so the outcome is carried as a coloured edge rather than a badge
+ * repeating the word that is already there.
+ */
+function ProbeStepList({ steps }: { steps: ProbeStep[] }) {
+  if (steps.length === 0) return null;
   return (
-    <div className="table-scroll">
+    <ol className="probe-steps">
+      {steps.map((step, index) => (
+        <li key={index} className="probe-step mono" data-outcome={step.outcome}>
+          {step.text}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * The search, grouped the way it actually happened: what was tried on each major line, then
+ * what that line came to.
+ *
+ * <p><b>Grouping needs the backend to say which line an attempt belongs to.</b> Until
+ * 2026-07-31 the attempts were a flat list of prose strings — sixteen of them against three
+ * results, with no key between the two — so the panel could only show them as a log at the
+ * bottom, disconnected from the answers they produced. `ProbeStep.major` is that key, and
+ * recovering it by parsing the sentences would have been inference where there was a fact.
+ *
+ * <p>Calibration and the opening feasibility probe belong to no major by construction, so they
+ * get their own group rather than being filed under one they did not test.
+ */
+function BumpCandidateResults({
+  candidates,
+  steps,
+  scope,
+  running,
+}: {
+  candidates: BumpCandidate[];
+  steps: ProbeStep[];
+  scope: BumpScope | null;
+  /** A probe is still in flight, so a major with attempts and no verdict yet is normal. */
+  running: boolean;
+}) {
+  const setup = steps.filter((step) => step.kind === 'CALIBRATION' || step.kind === 'FEASIBILITY');
+  const combination = steps.filter((step) => step.kind === 'COMBINATION');
+
+  // Groups come from the attempts as well as the results, which is what makes the panel live.
+  // The backend publishes candidates only when the run finishes, so keying groups off
+  // `candidates` alone left every attempt after calibration accumulating invisibly for minutes
+  // and then appearing all at once — the flat log this replaced did at least stream.
+  //
+  // Insertion order is the order the search reaches each line: settled candidates first (already
+  // ranked from the current major upward), then any major the attempts have got to since.
+  const byMajor = new Map(candidates.map((candidate) => [candidate.major, candidate]));
+  const majors = [
+    ...new Set([
+      ...candidates.map((candidate) => candidate.major),
+      ...steps.flatMap((step) => (step.major === null ? [] : [step.major])),
+    ]),
+  ];
+
+  return (
+    <div className="bump-results">
       {scope && <BumpScopeCaption scope={scope} />}
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th scope="col">Option</th>
-            {/* Reads as a sentence with the caption above: "Bumping keycloak-core … Bump to 9.0.3". */}
-            <th scope="col">Bump to</th>
-            <th scope="col">Status</th>
-            <th scope="col">Still carries</th>
-            <th scope="col">Snippet</th>
-          </tr>
-        </thead>
-        <tbody>
-          {candidates.map((candidate) => (
-            <BumpCandidateRow key={candidate.major} candidate={candidate} />
-          ))}
-        </tbody>
-      </table>
+
+      {setup.length > 0 && (
+        <section className="bump-group">
+          <h4 className="bump-group__title">Before the search</h4>
+          <ProbeStepList steps={setup} />
+        </section>
+      )}
+
+      {majors.map((major) => {
+        const candidate = byMajor.get(major);
+        return (
+          <section key={major} className="bump-group">
+            {/* Without a candidate there is no label yet — "Stay on" versus "Move to" is a
+                verdict, not a fact about the number — so the bare line is used until one
+                arrives rather than guessing at the wording and changing it later. */}
+            <h4 className="bump-group__title">{candidate ? candidate.label : `${major}.x`}</h4>
+            <ProbeStepList steps={steps.filter((step) => step.major === major)} />
+            {candidate ? (
+              <BumpCandidateCard candidate={candidate} running={running} />
+            ) : (
+              <p className="panel__hint">
+                {running ? 'Still checking this line…' : 'No verdict was reached for this line.'}
+              </p>
+            )}
+          </section>
+        );
+      })}
+
+      {combination.length > 0 && (
+        <section className="bump-group">
+          <h4 className="bump-group__title">Every declaring ancestor at once</h4>
+          <ProbeStepList steps={combination} />
+        </section>
+      )}
     </div>
   );
 }
@@ -435,7 +569,14 @@ function BumpAncestorCard({
   // failure). Before that, the static Tier-1 placeholder is shown — it is always unavailable,
   // since Tier 1 can only explain why this remedy needs a probe, never compute it.
   const completed = progress?.state === 'COMPLETED';
-  const candidates = completed ? progress.candidates : [];
+  // Not gated on completion, and that is the whole point. `continueBump` comes back as RUNNING
+  // *carrying the candidates already settled* — `BumpProgress.resuming()` preserves them
+  // deliberately, so that pressing Continue does not blank a panel the reader is mid-way
+  // through. Reading them only when COMPLETED discarded exactly what the backend had gone out
+  // of its way to keep, and the rows vanished the moment Continue was pressed.
+  const candidates = progress?.candidates ?? [];
+  // The remedy stays gated: it is a statement about how the run ended, and mid-run there is
+  // none by construction.
   const completionRemedy = completed ? progress.remedy : null;
   const hasResult = candidates.length > 0 || completionRemedy !== null;
   // Nothing running, and nothing the reader can act on: either it never started (no button
@@ -455,8 +596,16 @@ function BumpAncestorCard({
 
       {!hasResult && remedy.note && <p className="remedy__note">{remedy.note}</p>}
 
-      {candidates.length > 0 && (
-        <BumpCandidateTable candidates={candidates} scope={progress?.scope ?? null} />
+      {/* Rendered when there are steps even with no candidates: a run that failed during
+          calibration has attempts worth reading and nothing else, and dropping them would leave
+          the panel silent about what it just spent minutes doing. */}
+      {(candidates.length > 0 || (progress?.verdicts.length ?? 0) > 0) && (
+        <BumpCandidateResults
+          candidates={candidates}
+          steps={progress?.verdicts ?? []}
+          scope={progress?.scope ?? null}
+          running={progress ? inFlight(progress.state) : false}
+        />
       )}
 
       {/* Only where the search actually left something unfinished — a run that settled every
@@ -531,15 +680,9 @@ function BumpAncestorCard({
         </p>
       )}
 
-      {progress && progress.verdicts.length > 0 && (
-        <ul className="target-advisories">
-          {progress.verdicts.map((verdict, index) => (
-            <li key={index} className="mono">
-              {verdict}
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* No separate probe log any more: every attempt now sits in the group whose result it
+          produced, which is the whole point of structuring them. A second, flat copy at the
+          bottom would show the same sixteen lines twice. */}
     </section>
   );
 }

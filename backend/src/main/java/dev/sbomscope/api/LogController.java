@@ -39,8 +39,12 @@ class LogController {
     }
 
     @GetMapping("/activity")
-    List<ActivityEvent> activity(@RequestParam(value = "limit", defaultValue = "200") int limit) {
-        return logs.tail(Math.min(Math.max(limit, 1), MAX_LIMIT));
+    List<ActivityEvent> activity(
+            @RequestParam(value = "limit", defaultValue = "200") int limit,
+            @RequestParam(value = "filter", required = false) String filter,
+            @RequestParam(value = "regex", defaultValue = "false") boolean regex,
+            @RequestParam(value = "negate", defaultValue = "false") boolean negate) {
+        return logs.tail(Math.min(Math.max(limit, 1), MAX_LIMIT), filter, regex, negate);
     }
 
     /**
@@ -51,7 +55,11 @@ class LogController {
      * would not reach the start of the failure being read.
      */
     @GetMapping("/text")
-    List<String> text(@RequestParam(value = "limit", defaultValue = "500") int limit) {
-        return logs.text(Math.min(Math.max(limit, 1), MAX_TEXT_LINES));
+    List<String> text(
+            @RequestParam(value = "limit", defaultValue = "500") int limit,
+            @RequestParam(value = "filter", required = false) String filter,
+            @RequestParam(value = "regex", defaultValue = "false") boolean regex,
+            @RequestParam(value = "negate", defaultValue = "false") boolean negate) {
+        return logs.text(Math.min(Math.max(limit, 1), MAX_TEXT_LINES), filter, regex, negate);
     }
 }

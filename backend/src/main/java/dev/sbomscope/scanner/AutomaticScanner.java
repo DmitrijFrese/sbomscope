@@ -14,10 +14,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import jakarta.annotation.PreDestroy;
 
 import dev.sbomscope.logging.ActivityLogger;
+import dev.sbomscope.settings.ScannerSettingsChangedEvent;
 
 /**
  * Scans without being asked: after an upload, and at startup for anything never covered.
@@ -87,7 +90,8 @@ public class AutomaticScanner {
      */
     public enum Trigger {
         UPLOAD("a newly uploaded SBOM"),
-        STARTUP("components that had never been scanned");
+        STARTUP("components that had never been scanned"),
+        SCANNER_CONFIGURED("the scanner settings changing, leaving components never scanned");
 
         private final String description;
 
@@ -137,12 +141,36 @@ public class AutomaticScanner {
      */
     @EventListener(ApplicationReadyEvent.class)
     void scanUnscannedAtStartup() {
+        queueUnscanned(Trigger.STARTUP);
+    }
+
+    /**
+     * The same sweep, when the scanner settings change.
+     *
+     * <p>Closes a gap the startup sweep could not: {@link #scanLater} declines silently when
+     * readiness is not met, so an SBOM uploaded before osv-scanner was configured stayed
+     * unscanned until the next restart — with nothing on screen to say the automation had
+     * skipped it, which is precisely the "reads as nothing found" failure the startup sweep
+     * exists to prevent. Configuring the scanner is the moment the obstacle goes away.
+     *
+     * <p><b>After the commit, not on publication.</b> {@code updateScannerSettings} is
+     * transactional, and the scan runs on another thread with its own connection — queued
+     * before the commit, it would re-check readiness against the settings as they were and
+     * decline again, turning the fix into a no-op that looks like the original bug.
+     * {@code fallbackExecution} keeps it working where there is no transaction at all.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    void scanUnscannedAfterSettingsChange(ScannerSettingsChangedEvent event) {
+        queueUnscanned(Trigger.SCANNER_CONFIGURED);
+    }
+
+    private void queueUnscanned(Trigger trigger) {
         List<UUID> pending = repository.sbomIdsWithUnscannedComponents();
         if (pending.isEmpty()) {
             return;
         }
         log.info("{} SBOM(s) have components that have never been scanned; queueing", pending.size());
-        pending.forEach(sbomId -> scanLater(sbomId, Trigger.STARTUP));
+        pending.forEach(sbomId -> scanLater(sbomId, trigger));
     }
 
     private void run(UUID sbomId, Trigger trigger) {

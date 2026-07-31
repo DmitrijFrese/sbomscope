@@ -10,9 +10,11 @@ import dev.sbomscope.scanner.UpgradeAdvice.Remedy;
  * {@link dev.sbomscope.scanner.DownloadProgress}, for the same reason: a run that can take
  * real wall-clock time must not be a silent wait.
  *
- * @param verdicts   one line per probe as it completes — e.g. {@code "4.2.0 → jackson-databind
- *                   3.1.6 → clean"} — so the reasoning is visible while it runs, not only once
- *                   it is done
+ * @param verdicts   one {@link ProbeStep} per probe as it completes — e.g. {@code "4.2.0 →
+ *                   jackson-databind 3.1.6 → clean"} — so the reasoning is visible while it
+ *                   runs, not only once it is done. Structured rather than prose since
+ *                   2026-07-31: each step names the major line it belongs to, which is what
+ *                   lets the panel show an attempt beside the result it contributed to
  * @param candidates one ranked row per major line for the primary declaring ancestor — Tier 1's
  *                   own "candidates, not a recommendation" shape, since no single verdict can
  *                   claim to be the earliest without checking every major
@@ -23,7 +25,7 @@ import dev.sbomscope.scanner.UpgradeAdvice.Remedy;
  */
 public record BumpProgress(
         State state,
-        List<String> verdicts,
+        List<ProbeStep> verdicts,
         List<BumpCandidate> candidates,
         Remedy remedy,
         String message,
@@ -78,8 +80,22 @@ public record BumpProgress(
                         + "start as soon as it finishes.", null);
     }
 
-    public BumpProgress withVerdict(String verdict) {
-        List<String> updated = new ArrayList<>(verdicts);
+    /**
+     * The rows as they stand mid-run: the skeleton first, then each major replaced as it settles.
+     *
+     * <p>Published before anything is known about the lines it names. Every major the search will
+     * walk is knowable the moment the feasibility probe returns — the labels come from the
+     * current and latest versions, not from any verdict — so the panel can show the shape of the
+     * answer immediately and fill it in, instead of showing nothing for minutes and then
+     * everything at once. The rows start as {@link BumpCandidate#notProbed}, which already means
+     * exactly "this line exists and nothing is known about it yet".
+     */
+    public BumpProgress withCandidates(List<BumpCandidate> candidates) {
+        return new BumpProgress(State.RUNNING, verdicts, List.copyOf(candidates), null, null, scope);
+    }
+
+    public BumpProgress withVerdict(ProbeStep verdict) {
+        List<ProbeStep> updated = new ArrayList<>(verdicts);
         updated.add(verdict);
         return new BumpProgress(State.RUNNING, List.copyOf(updated), candidates, null, null, scope);
     }

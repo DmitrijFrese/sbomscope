@@ -22,6 +22,7 @@ import { ExportMenu } from '../components/ExportMenu';
 import { Pagination } from '../components/Pagination';
 import { ScanProgress } from '../components/ScanProgress';
 import { ScanReadinessHint } from '../components/ScanReadinessHint';
+import { SearchField } from '../components/SearchField';
 import { ViewOptionsMenu } from '../components/ViewOptionsMenu';
 import { ComponentIcon } from '../components/icons';
 import { COLUMNS, COMPACT_DEFAULT, reviveColumns } from '../findings/columns';
@@ -36,10 +37,24 @@ import { usePersistentState } from '../state/persisted';
 
 const PAGE_SIZES = [20, 50, 100, 200];
 
+/**
+ * How long the table waits after the last keystroke before asking the backend.
+ *
+ * <p>Long enough that typing a pattern is one request rather than fifteen, short enough that
+ * it still reads as live. Applied to every change, not only the filter, so the field does not
+ * behave differently depending on the regex toggle.
+ */
+const FILTER_DEBOUNCE_MS = 250;
+
 const DEFAULT_QUERY: FindingQuery = {
   sort: 'SEVERITY',
   ascending: false,
   filter: '',
+  // Off by default, deliberately: a purl is mostly dots, so always-on would silently widen
+  // every filter anyone already types and start erroring on literals containing ( or [.
+  regex: false,
+  // Same reasoning: exclusion is a mode the reader turns on, never a guess.
+  negate: false,
   // Opens on what needs attention; tick "No vulnerabilities" to bring the rest of the
   // inventory into the same table.
   severities: VULNERABLE_BANDS,
@@ -69,6 +84,11 @@ function reviveQuery(stored: FindingQuery): FindingQuery {
     // selection would render an empty table for the same reason severities cannot be empty.
     scopes:
       Array.isArray(stored.scopes) && stored.scopes.length > 0 ? stored.scopes : SCOPES,
+    // Absent in anything stored before B15. Defaulting to false rather than to the stored
+    // value's truthiness matters: `undefined` would send the filter as a literal anyway, but
+    // the toggle would render indeterminate and disagree with what the table is showing.
+    regex: stored.regex === true,
+    negate: stored.negate === true,
     pageSize: PAGE_SIZES.includes(stored.pageSize) ? stored.pageSize : DEFAULT_QUERY.pageSize,
     page: 0,
   };
@@ -220,7 +240,15 @@ export function VulnerabilitiesPage() {
   );
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /**
+   * A failure, and whether it was the filter pattern's fault.
+   *
+   * The two belong in different places on screen. A rejected regex is a note on the field
+   * that produced it — the reader is looking at the input, mid-word — where a scan or network
+   * failure is about the page. Carrying the distinction in the state rather than guessing it
+   * from the message text keeps it out of the business of parsing prose.
+   */
+  const [error, setError] = useState<{ message: string; fromPattern: boolean } | null>(null);
 
   const [details, setDetails] = usePersistentState<boolean>('findings.details', false);
   const [compactColumns, setCompactColumns] = usePersistentState<ColumnId[]>(
@@ -236,11 +264,18 @@ export function VulnerabilitiesPage() {
 
   const load = useCallback(async (sbomId: string, current: FindingQuery) => {
     setLoading(true);
-    setError(null);
     try {
       setStatus(await fetchFindings(sbomId, current));
+      setError(null);
     } catch (e) {
-      setError(messageOf(e));
+      // The rows already on screen are left in place. A pattern is typed one character at a
+      // time, so `^(org\.spring` exists on the way to every pattern that starts that way —
+      // blanking the table at each of those would make the whole field flicker. The message
+      // appears beside the input; the last answer that meant something stays visible.
+      setError({
+        message: messageOf(e),
+        fromPattern: current.regex && current.filter.length > 0,
+      });
     } finally {
       setLoading(false);
     }
@@ -256,7 +291,13 @@ export function VulnerabilitiesPage() {
       setStatus(null);
       return;
     }
-    void load(selectedId, query);
+    // Debounced, in both modes. It was undebounced before B15, which a LIKE could carry and
+    // a regular expression cannot — and the delay is deliberately not conditional on the
+    // mode, or the field would feel different depending on a toggle that is meant to change
+    // only what matches. Everything else on this object (sort, bands, paging) is a click
+    // rather than a keystroke, so waiting on those costs one interaction its 250ms.
+    const timer = window.setTimeout(() => void load(selectedId, query), FILTER_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   }, [selectedId, query, load]);
 
   /** Any change other than paging returns to the first page. */
@@ -305,7 +346,7 @@ export function VulnerabilitiesPage() {
       // refresh it would leave two views of one document disagreeing on screen at once.
       await reload();
     } catch (e) {
-      setError(messageOf(e));
+      setError({ message: messageOf(e), fromPattern: false });
     } finally {
       setScanning(false);
     }
@@ -390,27 +431,45 @@ export function VulnerabilitiesPage() {
         </div>
       )}
 
+      {/* Two different statements, deliberately not merged. "A newer archive is on disk" is a
+          fact about this machine that the reader can act on now; the day count is a guess that
+          the world has moved on. Showing the second for the first case would point them at a
+          seven-day clock that has nothing to do with why the results are behind. */}
       {status?.scanningEnabled && !neverScanned && status.stale && (
         <div className="notice notice--warn">
-          These results are more than {status.staleAfterDays} days old. New advisories are
-          published constantly — re-scan for an up-to-date answer.
+          {status.staleReason === 'ARCHIVE_REFRESHED' ? (
+            <>
+              A newer vulnerability database has been downloaded since these results were
+              produced. Re-scan to check this SBOM against it.
+            </>
+          ) : (
+            <>
+              These results are more than {status.staleAfterDays} days old. New advisories are
+              published constantly — re-scan for an up-to-date answer.
+            </>
+          )}
         </div>
       )}
 
-      {error && (
+      {/* A rejected pattern is reported on the field instead — see below. */}
+      {error && !error.fromPattern && (
         <p className="form-error" role="alert">
-          {error}
+          {error.message}
         </p>
       )}
 
       <div className="controls">
-        <input
-          type="search"
-          className="toolbar__search"
-          placeholder="Filter by component, advisory or CVE…"
+        <SearchField
           value={query.filter}
-          onChange={(event) => update({ filter: event.target.value })}
-          aria-label="Filter rows"
+          onValueChange={(filter) => update({ filter })}
+          regex={query.regex}
+          onRegexChange={(regex) => update({ regex })}
+          negate={query.negate}
+          onNegateChange={(negate) => update({ negate })}
+          placeholder="Filter by component, advisory or CVE…"
+          ariaLabel="Filter rows"
+          note={error?.fromPattern ? error.message : null}
+          inputClassName="toolbar__search"
         />
 
         {/* The chips and the severity counts described the same six bands, so showing both

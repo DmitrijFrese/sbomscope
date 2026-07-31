@@ -120,6 +120,14 @@ export interface SbomComponent {
   type?: string;
   root: boolean;
   scope: DependencyScope;
+  /**
+   * The worst band standing against this component, or **null for never scanned**.
+   *
+   * Null is not `CLEAN` and must not render as it: `CLEAN` means checked and nothing found,
+   * null means nobody has looked. Collapsing the two would let an unscanned SBOM read as a
+   * clean one — the single ambiguity this application is most careful about.
+   */
+  severity: SeverityBand | null;
   /** The artifact's own registry page, or null where we have nothing safe to link. */
   registryArtifactUrl: string | null;
   /** This exact version's page, or null where that version has none. */
@@ -496,10 +504,29 @@ export interface BumpCandidate {
  * remedies already use, but only for the failure/unavailable paths and the multi-ancestor
  * combination result — it is null whenever the ranked list is the whole answer.
  */
+/**
+ * One attempt the search made, and what came of it.
+ *
+ * `major` is the grouping key — null for the steps that belong to no single line: calibration,
+ * the opening feasibility probe, and the combination fallback. That is a real answer, not
+ * missing data: those precede the per-major search.
+ *
+ * `text` is the line as it has always read, so the log wording is the backend's, not a second
+ * rendering of the same facts assembled here.
+ */
+export interface ProbeStep {
+  major: number | null;
+  kind: 'CALIBRATION' | 'FEASIBILITY' | 'CANDIDATE' | 'COMBINATION';
+  requested: string | null;
+  /** `NOT_CHECKED` is deliberately not `AFFECTED` — "we did not find out" is not "we found a problem". */
+  outcome: 'CLEAN' | 'AFFECTED' | 'NOT_CHECKED' | 'FAILED' | 'INFO';
+  text: string;
+}
+
 export interface BumpProgress {
   state: BumpState;
-  /** One line per probe as it completes, e.g. "[4.2.0] → jackson-databind 3.1.6 → clean". */
-  verdicts: string[];
+  /** One entry per probe as it completes, e.g. "[4.2.0] → jackson-databind 3.1.6 → clean". */
+  verdicts: ProbeStep[];
   candidates: BumpCandidate[];
   remedy: Remedy | null;
   message: string | null;
@@ -580,7 +607,19 @@ export interface FindingRow {
  * FIXED_VERSION orders by the version an advisory names as the fix, as a version rather than
  * as a string. Rows with no fix sort last in both directions — "no fix" is not a version.
  */
-export type SortField = 'COMPONENT' | 'SEVERITY' | 'FIXED_VERSION' | 'SCOPE';
+/**
+ * `PUBLISHED` is the only honest way to order these rows by age — sorting by CVE id was
+ * considered and rejected, because the sequence number is not zero-padded and `CVE-2020-9547`
+ * lexically follows `CVE-2020-10001`. `GHSA_RATING` is GitHub's own word, not the CVSS band,
+ * and the two disagree often enough that both are worth sorting by.
+ */
+export type SortField =
+  | 'COMPONENT'
+  | 'SEVERITY'
+  | 'FIXED_VERSION'
+  | 'SCOPE'
+  | 'PUBLISHED'
+  | 'GHSA_RATING';
 
 /**
  * NONE and CLEAN are deliberately distinct: NONE is a real vulnerability whose advisory
@@ -607,6 +646,22 @@ export interface FindingQuery {
   sort: SortField;
   ascending: boolean;
   filter: string;
+  /**
+   * Whether `filter` is a regular expression rather than a literal substring.
+   *
+   * Off by default, and deliberately a mode rather than a guess: a purl is made almost
+   * entirely of dots, so reading every filter as a regex would silently widen `spring.core`
+   * to also match `springXcore`, and would start rejecting literals containing `(` or `[`.
+   */
+  regex: boolean;
+  /**
+   * Show the rows the filter does *not* match.
+   *
+   * Independent of `regex`: "hide everything from org.springframework" and "hide everything
+   * matching `(ABC|DEF)`" are the same question at two levels of precision, so tying exclusion
+   * to regex would make the simpler one unavailable.
+   */
+  negate: boolean;
   /** Empty means every band; the backend treats it the same way. */
   severities: SeverityBand[];
   /**
@@ -645,6 +700,12 @@ export interface ScanStatus {
   totalComponents: number;
   /** True when results are old, and also when nothing has ever been scanned. */
   stale: boolean;
+  /**
+   * Which of two different things makes it stale. `ARCHIVE_REFRESHED` means a newer OSV
+   * archive is on disk than these results were produced against — a fact about this machine,
+   * and actionable now; `AGED` is only the staleAfterDays clock.
+   */
+  staleReason: 'NONE' | 'AGED' | 'ARCHIVE_REFRESHED';
   staleAfterDays: number;
   /** The settings toggle alone. `readiness` is the stronger "would it actually work". */
   scanningEnabled: boolean;
@@ -673,8 +734,20 @@ function queryParams(query: FindingQuery, scopeParam = 'scope'): URLSearchParams
     sort: query.sort,
     direction: query.ascending ? 'asc' : 'desc',
   });
-  if (query.filter.trim()) {
-    params.set('filter', query.filter.trim());
+  // A regex is sent verbatim; a literal is trimmed. Leading and trailing whitespace is
+  // meaningful in a pattern and is a typing artefact in a substring, so trimming both would
+  // quietly rewrite one of them. The backend reads the same rule from the same flag.
+  const filter = query.regex ? query.filter : query.filter.trim();
+  if (filter) {
+    params.set('filter', filter);
+    if (query.regex) {
+      params.set('regex', 'true');
+    }
+    // Only meaningful with a filter to negate — sent alone it would ask the backend to exclude
+    // nothing, which is what it already does.
+    if (query.negate) {
+      params.set('negate', 'true');
+    }
   }
   // Always sent explicitly. Omitting them would make the backend fall back to its
   // default of vulnerabilities-only, silently dropping clean components for a user who
@@ -808,16 +881,37 @@ export function openLogFolder(): Promise<LogStatus> {
   return request<LogStatus>('/logs/open-folder', { method: 'POST' });
 }
 
-export function fetchActivity(limit = 200): Promise<ActivityEvent[]> {
-  return request<ActivityEvent[]>(`/logs/activity?limit=${limit}`);
+/**
+ * @param filter matched against the columns the panel shows, not the stored JSON
+ * @param regex  read `filter` as a Java regular expression rather than as literal text
+ */
+export function fetchActivity(limit = 200, filter = '', regex = false, negate = false): Promise<ActivityEvent[]> {
+  return request<ActivityEvent[]>(`/logs/activity?${logParams(limit, filter, regex, negate)}`);
+}
+
+/**
+ * The filter reaches the backend rather than being applied to what arrived, because the
+ * backend can look further back than the limit. Filtering here would search only the last
+ * page and report an entry that plainly happened as absent.
+ */
+function logParams(limit: number, filter: string, regex: boolean, negate: boolean): URLSearchParams {
+  const params = new URLSearchParams({ limit: String(limit) });
+  // A regex goes verbatim; a literal is trimmed. Whitespace means something in a pattern.
+  const value = regex ? filter : filter.trim();
+  if (value) {
+    params.set('filter', value);
+    if (regex) params.set('regex', 'true');
+    if (negate) params.set('negate', 'true');
+  }
+  return params;
 }
 
 /**
  * The verbose log, oldest line first — every `mvn` command and everything Maven said back.
  * A transcript rather than a record of events, so it is read top to bottom.
  */
-export function fetchLogText(limit = 500): Promise<string[]> {
-  return request<string[]>(`/logs/text?limit=${limit}`);
+export function fetchLogText(limit = 500, filter = '', regex = false, negate = false): Promise<string[]> {
+  return request<string[]>(`/logs/text?${logParams(limit, filter, regex, negate)}`);
 }
 
 // --- the probe queue ---------------------------------------------------------

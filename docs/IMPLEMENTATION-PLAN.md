@@ -21,9 +21,20 @@ the dependency graph no longer repeats the module on every route and marks the d
 can change; and the findings table sorts by fix version (V3 adds `fixed_version_sort`) and both
 sorts and filters by dependency scope.
 
+**Built since, all from use rather than from this plan:** B15 (regular-expression search in all
+four search fields), B16 (the finder marks and sorts by worst severity), B17 (bump results are
+blocks grouped by major, with structured `ProbeStep` attempts), B18 (Published and GHSA-rating
+sorting, and a negating filter toggle) — plus two bugfix passes: the manual re-scan button
+(configuring the scanner re-runs the never-scanned sweep; a freshly downloaded archive marks
+affected SBOMs stale rather than leaving them looking current for a week) and the Maven probe
+reporting a TLS failure as a missing dependency.
+
+README and ARCHITECTURE were brought back in step with all of it on 2026-07-31.
+
 Next: **B10 (secondary sort), then B11 — which is the open decision and needs the maintainer —
 then B12, B13, and B14 (route completeness), which is specified in full** — then Phase 3 and
-Phase 9**
+Phase 9. Phase 3 feasibility research is still outstanding and was asked for before any of it
+is built.
 
 ---
 
@@ -1812,6 +1823,348 @@ this actually fix" has an authoritative input rather than an inferred one.
 **Done when**: every remedy states which modules it holds for, a pin can show why it is complete,
 a partial bump is labelled partial, and the mixed-scope case above produces a true statement.
 
+### B15 — Every search field takes a regular expression — **built 2026-07-31**
+
+Raised 2026-07-31. Every search field in the application should accept a regular expression with
+the **full syntax Java supports** — lookahead, lookbehind, backreferences, named groups, the lot.
+
+**The fields, enumerated rather than assumed.** Four places, and only two of them are search
+fields today:
+
+| Where | Today | Executes in |
+|---|---|---|
+| Findings table text filter (`VulnerabilitiesPage`) | `LIKE '%…%'`, lower-cased, over `c.purl`, `f.osv_id`, `f.cve_id` | **SQL** (`VulnerabilityRepository.TEXT_MATCH`) |
+| Component Inspector type-ahead (`ComponentFinder`) | `String.includes`, lower-cased, over coordinates, version and purl | **the browser** |
+| Monitoring → Full log (`FullLogPanel`) | **no search field at all** | — |
+| Monitoring → Activity log (`LoggingPanel`) | **no search field at all** | — |
+
+Nothing else searches. Checked and ruled out: the SBOM sidebar, the Processes tab, the dependency
+graph, the upgrade-paths panel, the glossary and every Settings field — those are inputs, not
+searches. `GET /api/logs/activity` and `/api/logs/text` take `limit` and nothing else, so the two
+log rows above are **new features**, not conversions.
+
+**H2's `REGEXP_LIKE` is `java.util.regex`, verified rather than assumed** (H2 2.4.240, the pinned
+version). This decides the whole approach, because the findings filter has to stay in SQL — the
+view and the export share one query path, which is what stops an exported spreadsheet from
+disagreeing with the screen it came from. Measured directly against the H2 on our own classpath:
+
+| Probed | Result |
+|---|---|
+| Lookbehind `(?<=springframework:)spring-core` | matches |
+| Negative / positive lookahead | matches |
+| Backreference `(\w+)-\1`, named `(?<w>\w+)-\k<w>` | matches |
+| Possessive `*+`, atomic `(?>…)`, `\p{Alpha}`, inline `(?i)` | all match |
+| Invalid pattern | `JdbcSQLDataException`, SQLSTATE **22025**, **root cause `java.util.regex.PatternSyntaxException`** |
+| Third argument | flags string, `'i'` etc., works |
+
+The root cause being `PatternSyntaxException` is the proof: nothing else implements Java's own
+error text. **No in-memory second pass is needed**, and none should be added — filtering in Java
+would break the one-query-path property deliberately.
+
+- [x] **The findings filter stays in SQL**, `TEXT_MATCH` becoming `REGEXP_LIKE` over the same
+      three columns. The pattern is a bind parameter exactly as the `LIKE` pattern already is, so
+      no caller text reaches assembled SQL.
+- [x] **An invalid regex is normal input, not an error condition.** Half-typed patterns are the
+      common case in a type-ahead. Compile the pattern in Java **before** it reaches SQL so the
+      message comes from `PatternSyntaxException` rather than from a JDBC wrapper, and answer 400
+      with it. `ApiExceptionHandler` is the precedent; check what the exception actually extends
+      before adding a handler, per the `NoResourceFoundException` trap recorded there.
+- [x] **A bound against catastrophic backtracking.** Measured on this machine, and the folklore
+      is out of date: on **both JDK 21 and JDK 25** the classic exponential patterns are handled
+      in linear time — `^(a+)+$` against 2000 characters is 22–29 ms. Two real failures survive:
+
+      - `(x+x+)+y` is polynomial with a punishing exponent — 28 ms at 200 characters, 470 ms at
+        500, **30 seconds at 2000**. A purl column is `VARCHAR(2048)` and real purls are ~100
+        characters, so a single row is cheap and *the row count* is what hurts.
+      - `(a|a)+$` and `(a|ab)+c` throw **`StackOverflowError`** on a long enough subject. H2
+        returns it as a `SQLException` with error code 50000 and the `Error` as its root cause,
+        so it does not escape as an `Error` — but it is a 500 with a stack trace unless handled.
+
+      `Statement.setQueryTimeout` **does** stop a long scan (SQLSTATE 57014) but is checked
+      between rows, not inside one: a single expensive row ran to completion 12 s past a 2 s
+      timeout. So the timeout bounds the scan and the column width bounds the row. Both halves
+      are needed, and the timeout's own quirk — it appeared to persist on the session rather than
+      the statement in a first probe, which matters with a pooled connection — must be pinned by
+      a test before it is relied on.
+- [x] **The pattern reaches `ExportDescription`.** It already carries `textFilter`; it has to say
+      that the text *is* a regular expression, or a workbook narrowed by `^org\.apache` looks
+      identical to one narrowed by a literal that happened to match the same rows.
+- [x] **The Component Inspector finder stays in the browser, on JavaScript's `RegExp`** —
+      **decided 2026-07-31, reversing an in-progress recommendation to move it to the backend.**
+      The finder already holds the whole component list in browser memory and filters it there, so
+      moving it server-side would *introduce* a round trip where there is none.
+
+      The argument is not only cheapness. What forces `java.util.regex` on the findings filter is
+      **export parity**: the workbook has to reproduce the screen, so both sides must be one
+      engine. The finder produces no artifact — it picks a tab. There is no second consumer that
+      could disagree with it, so the "one reading of what search means" argument that decides the
+      findings path has no force here.
+
+      **The divergence is named rather than discovered.** JS `RegExp` has lookahead, lookbehind,
+      named groups, backreferences and every flag that matters. Java-only: possessive quantifiers
+      (`*+`, `++`, `?+`), atomic groups `(?>…)`, `\A`/`\z`/`\Z`, `\Q…\E`, and POSIX-style
+      `\p{Alpha}` names. Every one exists to control backtracking or to do something nobody types
+      into a library finder — and backtracking cost is not a concern over a few thousand rows the
+      browser already holds.
+- [x] **The two log tails need the filter designed, not just added.** `LogService` reads the last
+      *n* lines; "filter the last 1000 lines" and "the last 1000 lines that match" are different
+      answers, and the second is the one a reader hunting a failure actually wants. Regex matching
+      over log lines is also where the length measurements above bite hardest — a Maven stack
+      trace line is far longer than a purl.
+
+**A toggle beside the field, default off — decided 2026-07-31**, over always-on and over
+always-on-with-a-literal-fallback.
+
+Always-on was rejected because it silently changes what every filter already in use *means*. A
+purl is made almost entirely of dots — `org.springframework`, `2.9.5` — so `spring.core` finding
+a literal today would additionally match `springXcore`, and that is the mild case: a literal
+containing `(` or `[` starts *erroring* in a field people type into casually. The literal-fallback
+variant was rejected on the stronger ground that it makes the tool quietly do something other than
+what was asked, which is the class of small dishonesty this codebase keeps removing.
+
+- [x] **The control is a `.*` button inside the field**, VS Code's convention — not a magnifier,
+      which reads as "search now" and is exactly the meaning it must not have (see the flow below).
+- [x] **The toggle is state, so it travels.** Persisted like the other view state, and carried into
+      `ExportDescription` beside the pattern itself.
+
+**Same flow in both modes: live as you type, no Enter, no trigger — decided 2026-07-31.**
+
+- The toggle already carries a semantic change (*how* it matches). Making it also change *when* it
+  runs stacks a timing mode on a matching mode: two things to learn instead of one.
+- It is the established pattern — VS Code, IntelliJ and Chrome devtools all do live regex behind a
+  toggle with an inline note when the pattern will not compile.
+- It is what *"an invalid regex is normal input"* already implies. A half-typed `spring(` shows a
+  quiet inline note and **leaves the last good result on screen**. Requiring Enter would be
+  solving the half-typed-pattern problem by refusing to look at it.
+
+- [x] **Debounce the findings filter at ~250 ms, in both modes.** It fires a full request per
+      keystroke today, undebounced (`VulnerabilitiesPage` → `load`), which is affordable for a
+      `LIKE` and is not for a regex. The same delay in both modes, so timing never depends on the
+      toggle. This is a gap regex *exposes* rather than one it creates.
+- [x] **The finder stays undebounced** — it is pure memory, and a delay there would be latency
+      added for nothing.
+
+**Done when**: every search field accepts a regular expression behind a `.*` toggle, an invalid
+pattern produces a readable inline message and never a 500, a pathological pattern cannot hang a
+screen without bound, and a filtered export states that its filter was a regex.
+
+**Built and verified live 2026-07-31.** One `SearchField` component serves all four fields —
+the toggle's meaning, its position, its pressed state and how a rejected pattern is reported are
+the same claim everywhere, and four copies would be four places for it to drift.
+
+Four things settled during the build that the specification did not name:
+
+- **`REGEXP_LIKE` gets the `'i'` flag, and no `LOWER()`.** The literal path lower-cases both
+  sides, so a regex that suddenly cared about case would be a second, unannounced change from
+  one control. Lower-casing the subject *as well* would then have quietly defeated `(?-i)` by
+  leaving nothing uppercase to match — so the flag does the job alone, and asking for
+  case-sensitivity back still works.
+- **A regex is not trimmed; a literal still is.** `"netty "` and `"netty"` are different
+  regexes, where in a substring the trailing space is a typing artefact. Same field, two honest
+  readings, applied identically in `client.ts` and in `withTextParams`.
+- **`H2` scopes a query timeout to the session, not the statement** — `setQueryTimeout` issues
+  `SET QUERY_TIMEOUT`. Established by a test rather than assumed, because it decides the design:
+  one bounded regex query would otherwise hand a pooled connection back carrying a ceiling for
+  whatever borrowed it next. `VulnerabilityRepository.bounded` therefore does everything on one
+  connection and resets in a `finally`, and a second test drains the pool to prove nothing is
+  left behind.
+- **The activity filter matches the rendered columns, and dropping absent fields matters.**
+  `outcome` and `detail` are null for events that describe a change rather than a result;
+  joining them as empty strings left trailing separators, so `$` anchored past whitespace nobody
+  can see and any pattern ending in one matched nothing. Caught by a test — on screen the two
+  render identically.
+
+Verified in a running application rather than asserted:
+
+| Behaviour | Result |
+|---|---|
+| Lookbehind, named group, atomic group, possessive quantifier, negative lookahead, backreference | all filter the findings table correctly through the real SQL |
+| `JACKSON-DATABIND` with the toggle on | 107 rows — case-insensitive, as the literal filter is |
+| `(?-i)JACKSON-DATABIND` | 0 rows — case-sensitivity asked for and honoured |
+| `spring(` through the API | **400** with *"Unclosed group at position 7."*, never a 500 |
+| A pattern half-typed in the field | note reads *"Unclosed group at position 36."*, `aria-invalid`, **the previous 107 rows stay on screen** and no page-level error block appears |
+| Activity log, `^PROCESS AUTO_SCAN (?!SUCCESS)` | 7 rows, all `STARTED` — lookahead over the columns as displayed |
+| Full log, `^\d{4}-\d{2}-\d{2}.*\bWARN\b` | 1000 lines → 66, every one a WARN, and the oldest match is dated **2026-07-29** — from further back than the 1000-line window, which is the "last *n* that match" property the item asked for |
+| Finder, `^org\.(?!apache)[a-z]+:.*-(core|api)$` | keycloak-core (both versions) and spring-core; an unterminated group shows the browser's own wording, visibly the JS dialect |
+| The controls row | still a single **39px** line — the constraint B9's placement decision was protecting |
+
+### B16 — The finder carries severity — **built 2026-07-31**
+
+Raised from use: *"I hardly use the finder, I always circle back to the vulnerabilities list and
+select components there."* The diagnosis held up — the finder was the only list in the
+application carrying **no signal at all**, so it could help only somebody who already knew the
+name, which is exactly when they do not need help.
+
+- [x] **The worst band per component**, from `VulnerabilityRepository.worstBandByPurl`, riding on
+      the existing `/components` response rather than a call of its own. The finder renders one
+      list, and two sources would let its colours describe a different set of components than its
+      rows. Built from `BAND_EXPRESSION` — the same SQL the chips and the counts read — and
+      ordered by the same scored/unscored/clean ranking `orderBy` already uses, rather than a
+      second opinion about where an advisory with no CVSS score sits.
+- [x] **Never scanned is its own state, and absent from the map rather than defaulted.** A "faint
+      tint" has an untinted state, and *two* things were about to land in it: scanned-and-clean,
+      and never-checked. Rendering the second as the first is the ambiguity `vulnerability_scan`
+      exists to prevent — and it is not hypothetical, since an SBOM with no scanner configured
+      would have rendered entirely reassuring. Marked by **shape, not another colour**: a dashed
+      edge against every solid one, so a reader who cannot separate the bands can still separate
+      "nobody has looked" from "looked and found nothing", which is the distinction that changes
+      what to do next.
+- [x] **The mark rides on the `<li>`, not the `<button>`.** `.finder__option` already uses
+      background for two states — keyboard-active and currently-open — and a third claim on the
+      same property would be least legible exactly where the reader is pointing. Measured: with a
+      row active the button's hover background wins **and** the row's severity edge survives.
+- [x] **The band is part of the option's accessible name.** Colour is the only channel for
+      *which* band, so without this the one piece of information the list was given is the one a
+      screen reader cannot reach. Found while verifying that the concatenation ran words
+      together; it now reads `org.keycloak:keycloak-core — Worst known: Critical — 4.8.3.Final`.
+- [ ] **Ordering was deliberately not changed.** Tint tells you which of the shown rows matter;
+      it does not stop the list being an arbitrary 40 of N. Worst-first ordering is the obvious
+      next lever and was held back on purpose — changing colour and order together would make it
+      impossible to tell which one did the work. Revisit if the tint alone does not fix it.
+
+**Verified live** against `vuln-multi-module.cdx.json` under **both** colour schemes: 10
+critical, 13 high, 6 medium and 33 clean marked correctly, tooltips reading *"Worst known:
+Critical"* / *"Checked, nothing known against it"*, and the two states the fixture cannot produce
+(`NONE`, never-scanned) checked directly against the computed styles rather than claimed.
+
+- [x] **The tint stopped partway across a row — fixed 2026-07-31, and the cause was not the
+      tint.** Reported from a screenshot: colour covered the initially visible width and the rest
+      of the line, reachable by scrolling sideways, was unpainted.
+
+      A flex item's default `min-width` is `auto`, resolving to min-content — and the min-content
+      of a purl coordinate is its longest run with no break opportunity,
+      `com.fasterxml.jackson.core:jackson-` at roughly 270px against a 263px column. The name
+      could not shrink below that, so long rows were forced wider than the list and the list
+      scrolled sideways (`overflow-y: auto` forces `overflow-x` to `auto`, so the scrollbar
+      appeared without anyone asking for one). The tint then stranded because an `<li>` paints
+      its own box, and that box is the container's width, not the scroll width.
+
+      **Widening the row to the scroll width was rejected**: it fixes the symptom and keeps a
+      sideways scrollbar in a type-ahead 263px wide, which nothing wanted. `min-width: 0` plus
+      `overflow-wrap: anywhere` on `.finder__name` removes the overflow instead, so the row and
+      the container are the same width and the tint covers the whole line **by construction**
+      rather than by arithmetic. `anywhere` also makes min-content one character, so no column
+      width can reintroduce it. Measured at two widths: `scrollWidth == clientWidth`, and zero
+      rows whose content exceeds their painted box.
+
+### B17 — The bump results stop being a table — **built 2026-07-31**
+
+Raised from a screenshot: the results view was *"butchered"*, and the snippet *"does not have
+enough UI space"*. Both were the same cause.
+
+**A table was the wrong container, and it failed on its most useful column.** Every cell in a
+column shares one width, so the snippet — five lines of XML, and the one thing on the screen
+anybody copies — competed with a prose advisory summary and lost. Measured from the reported
+screenshots: around **40px wide, wrapping one character per line** (`<de` / `pen` / `den` /
+`cy>`), stretching a single row past **700px**. Nothing here is tabular anyway: these results
+are not compared column-by-column, they are read one at a time until one of them is the answer.
+
+- [x] **One block per major line**, each leading with what was tried, what it resolved to and how
+      it came out, then the detail beneath. The snippet takes the block's full width.
+- [x] **A block is rendered even for a major the run never reached**, saying so. An absent block
+      would read as "nothing here" for something that was simply not checked — the same
+      unproven-versus-disproven distinction the search itself is careful about.
+- [x] **Clean is the only outcome marked by colour.** Affected and unreached stay neutral rather
+      than competing for attention: neither is a problem to fix, they are just not the answer.
+- [x] **The attempt log becomes a labelled, collapsible "Probe log"**, open only when there are no
+      results above it — with nothing else on screen it is the only thing that says what the run
+      did.
+
+**Measured after, against the same component and a real `mvn` run** (`tomcat-embed-core@9.0.12`,
+16 attempts, 3 candidates — the same three the screenshot showed):
+
+| | Before | After |
+|---|---|---|
+| Snippet width | ~40px, one character per line | **531px, 5 lines** |
+| Tallest result | >700px | **208px** |
+| All three results | over 1000px of scrolling | **593px total** |
+| Horizontal page scroll | yes | **none** |
+
+- [x] **Attempts are grouped under the major they tested, with the result at the end of each
+      group** — the backend change the item above was blocked on, taken 2026-07-31.
+      `BumpProgress.verdicts` was a flat `string[]` of prose, sixteen lines against three
+      results, with no key between them; `ProbeStep` carries `major`, `kind`, `requested` and
+      `outcome` alongside the original text. **The prose is unchanged** — it is still what the
+      activity log records and what the panel renders, so this added the two fields that were
+      locked inside the sentence rather than rewriting anything.
+
+      `major` is threaded from `rankMajor` through `probeOne` rather than parsed back out of the
+      rendered string: the caller knows it, and recovering it from prose would be inference
+      where there is a fact. It is **null** for calibration, the opening feasibility probe and
+      the combination fallback — a real answer, since those belong to no single line, and they
+      get their own groups rather than being filed under one they did not test.
+
+      `Outcome.NOT_CHECKED` is kept distinct from `AFFECTED` throughout, including for a
+      resolution we refuse to offer because it produced a pre-release: declining to recommend a
+      milestone is a decision about what we will say, not a finding about the version.
+
+      **The separate probe log is gone**, since every attempt now sits in the group whose result
+      it produced — keeping a flat copy would have shown the same sixteen lines twice.
+
+**Verified against a second real `mvn` run**: 16 steps split 2 / 7 / 6 / 1 across "Before the
+search" and the three majors, each major's group ending in its result block, the snippet at
+529px, and no horizontal scroll.
+
+### B18 — Two more sortable columns, and a negating filter — **built 2026-07-31**
+
+Raised from use, together with a documentation-drift pass over README and ARCHITECTURE.
+
+**Sorting: four of thirteen columns were sortable, and the question was whether to offer all
+thirteen.** Answered no, after working out what each would actually order by:
+
+- [x] **`PUBLISHED`** — a real timestamp, and the one column that answers *"what is new since I
+      last looked"*. Nulls last in both directions.
+- [x] **`GHSA_RATING`** — GitHub's own word, ranked by an explicit `CASE`. **Not** a duplicate of
+      `SEVERITY`: that orders by the numeric CVSS score, and the two disagree, which is why both
+      columns exist. Note GitHub's middle band is `MODERATE`, not `MEDIUM`.
+- [x] **OSV ID rejected**, on the maintainer's own objection: the suffix of `GHSA-48r7-hpm6-gfxm`
+      is random, so sorting it groups by prefix and orders arbitrarily inside each group.
+- [x] **CVE ID rejected on the same scrutiny**, which was worth applying twice — the first
+      proposal oversold it. The year orders correctly *across* years, but the sequence number is
+      not zero-padded, so within a year `CVE-2020-9547` sorts after `CVE-2020-10001`. Half-right
+      ordering presented as chronological is worse than none, and `PUBLISHED` is right all the
+      way down.
+- [x] **Package URL rejected as a duplicate** — `COMPONENT` already orders by `LOWER(c.purl)`, so
+      it would be the same sort under a second name. **Summary and CVSS vector rejected** as
+      orderings of nothing.
+- [ ] **Version deferred to B10.** Sorting it lexically would put `1.10.0` before `1.9.0` —
+      precisely the defect B8 spent a migration and a backfill removing from "Fixed in", so
+      offering it would reintroduce a known-wrong answer in a new column. Doing it properly needs
+      `component.version_sort` (a V4 migration plus a backfill), and it only earns that as a
+      *secondary* sort under Component, which is what B10 is.
+
+**A caught-by-verifying mistake worth keeping:** the rating rank was first written 0-for-worst,
+like `SCOPE_RANK`. Descending then opened on LOW while the Severity column beside it opened on
+CRITICAL — two badness columns on one table disagreeing about which way a click points. The rank
+is now a *value* (higher is worse), shaped like `severity_score`. `SCOPE_RANK` stays the other
+shape deliberately: scope is a category, and ascending there means "your own code first".
+
+**Negation: a second toggle, `!`, independent of the regex one.**
+
+- [x] **Both toggles combine**, which was the point — `(ABC|DEF)` with both on removes every row
+      matching either alternative. Tying exclusion to regex would have made the simpler question
+      ("hide everything from org.springframework") unavailable.
+- [x] **Negation is of the row, not of each column.** The positive form shows a row when *any*
+      searched column matches, so the negative form hides it on the same condition. Negating
+      column by column would let one pattern both show and hide the same row.
+- [x] **Every column is `COALESCE`d, which only matters once negation exists.** A component can
+      have no purl: positively `LOWER(NULL) LIKE '%x%'` is NULL and the row simply does not
+      match, but negated `NOT (NULL OR …)` is *also* NULL, so the row would vanish from a search
+      for everything not containing a term it plainly does not contain. Pinned by its own test.
+- [x] **An unusable pattern stays unusable in both polarities.** In the browser-side finder a
+      pattern that will not compile matches nothing, and negating nothing is everything — so a
+      half-typed exclusion would have flashed the entire SBOM as though the filter were cleared.
+- [x] **The export says which polarity produced it**, and says it *first*: a reader who skims
+      `org.springframework` and assumes the workbook is about Spring, when it is everything
+      except Spring, has been misled by the one line meant to prevent that.
+- [x] All four search fields get both toggles at once, through the shared `SearchField`.
+
+**Verified live**: `jackson` shows 116 rows and excludes 172, summing to the unfiltered 288 —
+an exact partition, and the same in regex mode; `(jackson|netty)` with both toggles on leaves 172
+rows with neither string in any of them; GHSA rating descending opens on CRITICAL and ascending
+on LOW, matching Severity; Published descending opens on 2026-07-21 and ascending on 2018-10-17;
+and the controls row is still a single 39px line.
+
 ### Backlog
 
 - [ ] **Diff two SBOMs, or trend several.** This reopens a closed question: the decision log
@@ -3558,3 +3911,349 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   ambiguous to anything but this panel, and `BumpScope` reads the same routes. With the module
   gone from every line the list needed something else to say it belongs to the heading above it,
   so the indent and hairline rule replace the word that was being repeated.
+- 2026-07-31 — **Regular-expression search: the engine is decided by export parity, and it is not
+  the same answer in every field** (B15). Three decisions, one of them a reversal of a
+  recommendation made earlier in the same session.
+
+  **H2's `REGEXP_LIKE` is `java.util.regex`, established by probe rather than by documentation.**
+  Lookbehind, named backreferences, possessive quantifiers and atomic groups all evaluate
+  correctly on the pinned H2 2.4.240, and an invalid pattern arrives with
+  `java.util.regex.PatternSyntaxException` as its root cause — which nothing else would produce.
+  That is what lets the findings filter stay in SQL, and **no in-memory second pass is to be
+  added**: filtering in Java would break the shared query path the export depends on, which was
+  the one property this whole item had to be checked against.
+
+  **The finder stays client-side on JavaScript's `RegExp` — reversing the recommendation to move
+  it to the backend.** The reversal came from the maintainer's observation that the finder already
+  holds the entire component list in browser memory, so moving it server-side introduces a round
+  trip where there is none. The stronger reason emerged from that: what forces one engine on the
+  findings filter is **export parity**, and the finder has no second consumer to disagree with —
+  it picks a tab and produces no artifact. The Java-only constructs it therefore gives up
+  (possessive quantifiers, atomic groups, `\A`/`\z`, `\Q…\E`, POSIX `\p{…}` names) all exist to
+  control backtracking, which is not a cost over a few thousand rows already in memory. Named in
+  B15 so the divergence is disclosed rather than found later.
+
+  **A toggle, default off, and the same live flow in both modes.** Always-on was rejected because
+  a purl is made almost entirely of dots, so it would silently rewrite the meaning of every filter
+  in use and start *erroring* on literals containing `(` or `[`. A literal-fallback-on-invalid
+  variant was rejected more firmly: quietly doing something other than what was asked is the class
+  of dishonesty this project keeps removing. The flow does **not** change with the mode — no Enter
+  key, no magnifier — because the toggle already carries the semantic difference, and requiring a
+  trigger would be solving the half-typed-pattern problem by refusing to look at it. A half-typed
+  pattern shows an inline note and leaves the last good result on screen.
+
+  **One gap regex exposed rather than created:** the findings filter fires a full request per
+  keystroke today, undebounced. Affordable for a `LIKE`, not for a regex. It gains a ~250 ms
+  debounce in *both* modes, so timing never depends on the toggle.
+- 2026-07-31 — **The manual re-scan button was examined for obsolescence and kept — but it was
+  covering for two defects, and those are fixed.** Asked after B0 made scanning automatic: does
+  the button still earn its place? Traced every trigger first. Automatic scanning fires in exactly
+  two places, `SbomController.upload` and `AutomaticScanner`'s `ApplicationReadyEvent` sweep for
+  *never-scanned* components. `OsvDatabaseService` has no hook at all. So the button remains the
+  only route to re-running analysis deliberately, which is what the 2026-07-30 decision intended —
+  **not obsolete.** Two things it was silently standing in for were not intended.
+
+  **Defect 1 — configuring the scanner did not re-run the sweep.** `AutomaticScanner.scanLater`
+  declines silently when readiness is not met, which is right, and nothing told it when the
+  obstacle went away: an SBOM uploaded before osv-scanner was configured stayed unscanned until
+  the next restart, showing an empty table that reads as *"nothing found"* — the precise failure
+  the startup sweep exists to prevent. `updateScannerSettings` now publishes
+  `ScannerSettingsChangedEvent`, mirroring `MavenSettingsChangedEvent`, and the sweep runs again
+  on it. **`@TransactionalEventListener(AFTER_COMMIT)`, not `@EventListener`** — the settings
+  update is transactional and the scan runs on another thread with its own connection, so queued
+  before the commit it would re-check readiness against the *old* settings and decline again,
+  making the fix a no-op indistinguishable from the bug. `fallbackExecution = true` keeps it
+  working where there is no transaction.
+
+  **Defect 2 — a freshly downloaded archive superseded every existing scan, silently.** The only
+  staleness signal was a seven-day clock, so results answered against data the machine no longer
+  holds looked current for up to a week. `ScanService.staleReason` replaces the `isStale` boolean
+  (the caller derives the flag from it, so one judgement cannot be made two ways) and returns
+  `ARCHIVE_REFRESHED` when an archive the SBOM's ecosystems need was written *after* the last
+  scan.
+
+  **Read from the archive file's own modification time, not from a recorded download timestamp.**
+  That makes it equally true of an archive **carried across on a USB stick**, which is the
+  workflow this product is built around and which a download-time column would have been blind
+  to. Re-indexing deliberately does not count: osv-scanner reads the archive, not the index.
+  Ecosystem relevance is honoured — a fresh npm archive does not supersede a Maven-only document,
+  the same narrowing the readiness check already applies, now through one shared
+  `requiredEcosystems`.
+
+  **Marked stale rather than auto-re-scanned, deliberately.** Constraint 2 would permit the
+  automatic version — analysing sends nothing anywhere, and the user just pressed Download, so
+  the cost is expected. It was rejected because it would quietly reverse the 2026-07-30 decision
+  that re-running analysis against a refreshed archive is a decision with a cost, and because it
+  could mean minutes of external process across every document at the moment the user was
+  expecting a download to finish. Marking stale fixes the part that was actually broken — nothing
+  said the refresh had happened — and leaves the decision where that decision put it.
+
+  **The two reasons get two sentences**, because they are different claims: *"a newer
+  vulnerability database has been downloaded since these results were produced"* is a fact about
+  this machine and actionable now, where the day count is a guess that the world has moved.
+  Merging them would point the reader at a seven-day clock that has nothing to do with why their
+  results are behind.
+
+  One thing checked expecting a bug and found correct: `lastScannedAt` is `MIN(scanned_at)` across
+  the SBOM's components. Since findings are keyed by purl and shared across SBOMs, `MAX` would
+  have let one document look freshly scanned because another document re-scanned a component they
+  share. Verified live: with the Maven archive's timestamp moved forward the notice appears and
+  `staleReason` reads `ARCHIVE_REFRESHED`; with it restored, both revert.
+- 2026-07-31 — **Regular-expression search is built, and the engine question was decided by
+  export parity rather than by preference** (B15). The specification entry above carries the
+  measurements and the verification table; four things belong here because they are decisions
+  rather than results.
+
+  **One `SearchField` component, not one per field.** The toggle's meaning, its position inside
+  the box, its pressed state and the way a rejected pattern is reported are the same claim in
+  all four places. Four copies would be four places for that claim to drift, which is the same
+  argument that put `RegistryLinks.forPurl` behind one record returning both destinations.
+
+  **The findings filter stays in SQL and no in-memory pass was added.** Checked before building:
+  H2's `REGEXP_LIKE` is `java.util.regex`, established by probing the pinned version — lookbehind,
+  named backreferences, possessive quantifiers and atomic groups all evaluate, and an invalid
+  pattern arrives with `PatternSyntaxException` as its root cause, which nothing else produces.
+  Matching in Java would have needed a second query path and would have broken the one property
+  the shared `FindingQuery` exists to guarantee.
+
+  **`H2` scopes a query timeout to the session, not to the statement**, and that is now pinned by
+  a test rather than left as a comment. It decides the shape of the bound: `setQueryTimeout`
+  issues `SET QUERY_TIMEOUT`, so a pooled connection that ran one bounded regex query would carry
+  that ceiling back into the pool and silently bound a scan write or an export that borrowed it
+  next — a failure with nothing to connect it to the filter that caused it. `bounded` does the
+  whole thing on one connection and resets in a `finally`; a second test drains the pool to prove
+  it. If a future H2 makes the timeout statement-scoped, the first test is what will say so.
+
+  **The folklore about catastrophic backtracking is out of date, and the measurement changed the
+  design.** On both JDK 21 and JDK 25 the textbook exponential patterns are linear — `^(a+)+$`
+  against 2000 characters is 22–29 ms. What survives is narrower and still real: `(x+x+)+y` is
+  30 seconds at 2000 characters, and `(a|a)+$` throws `StackOverflowError`, which H2 returns as a
+  `SQLException` with the `Error` as its root cause. Since a purl is ~100 characters, the row
+  count is what hurts and not any single row, which is exactly what a query timeout bounds. The
+  log tails needed a different instrument — a log line is far longer, and that loop is ours, so
+  it checks a deadline between lines and **reports** exhaustion rather than returning "no
+  matches", which would be read as evidence the log does not contain the thing being looked for.
+- 2026-07-31 — **A TLS failure was being reported as a missing dependency**, found from a real
+  probe run on the maintainer's machine. Two defects, one root cause, both fixed.
+
+  **The classification.** Maven prints `Could not transfer artifact` for an untrusted certificate
+  exactly as it does for an artifact that genuinely does not exist, and `classifyFailure` tested
+  for absence first — so a `PKIX path building failed` on a machine with TLS-inspecting security
+  software produced *"Not found in any configured repository."* for `com.h2database:h2:2.4.240`,
+  which is in Central and perfectly findable. That is the same wrong-blame failure the
+  `PLUGIN_UNAVAILABLE` split was created to prevent, one level along, and it sent the reader to
+  add a repository when the fix is a truststore setting. `REPOSITORY_UNREACHABLE` is now decided
+  **before** `NOT_FOUND`, on TLS and connectivity signatures, and its message names the fix —
+  including the part that catches people out, that `MAVEN_OPTS` is an environment variable and a
+  `-D` flag on SBOMscope's own JVM never reaches the `mvn` it starts.
+
+  **The detail line, which made the first fix half-useful.** `Result.lastMeaningfulLine` took the
+  last non-blank line — correct for osv-scanner, whose contract in AGENTS.md records that its
+  errors come last, and **exactly wrong for Maven**, which closes every failure with four lines of
+  advice and a wiki URL. The panel was therefore appending
+  *"[ERROR] [Help 1] http://cwiki.apache.org/…/DependencyResolutionException"* to every probe
+  failure. It now takes the first informative `[ERROR]` line — Maven leads with its summary —
+  and falls back to the old behaviour when there is no `[ERROR]` marker at all, since a
+  wrong-but-present line beats an empty message.
+
+  **Verified by reproducing it**, not by reading: the run that produced the report was re-run
+  against the same unconfigured environment, and the panel now reads *"Maven could not complete
+  the download — the repository's certificate could not be verified…"* with the verdict naming
+  *"Failed to execute goal on project probe: Could not collect dependencies"*. Pinned by tests
+  built from the **verbatim** failing output, because the trap is that the text matches both
+  branches; a third test keeps a genuinely absent artifact classified as `NOT_FOUND`, and a
+  fourth keeps plugin failures outranking both.
+
+  **Not done, and it is the maintainer's call.** SBOMscope knows when it was itself started with
+  `-Djavax.net.ssl.trustStoreType`, and could forward that into the child's `MAVEN_OPTS` so the
+  probe inherits the truststore its parent is using. That would have made this failure impossible
+  rather than merely legible — but it means injecting options into the user's own build tool,
+  which is a different act from running it, and constraint 1's category 3 reasoning is about
+  exactly that boundary. Raised, not taken.
+- 2026-07-31 — **The finder gets severity marks, and the interesting decision was what *absence*
+  of a mark means** (B16). Raised from use: the maintainer never used the finder and always went
+  back to the vulnerabilities list, because the finder was the one list in the application with
+  no signal on it.
+
+  **A faint tint has an untinted state, and two different things were about to land in it.**
+  Scanned-and-clean and never-scanned would both have rendered as "no mark", which is exactly the
+  ambiguity `vulnerability_scan` exists to prevent — and reachable today, since an SBOM uploaded
+  with no scanner configured would have shown as entirely reassuring. Never-scanned is therefore
+  its own state, distinguished by **shape rather than by another colour**: a dashed edge against
+  every solid one. A reader who cannot separate critical from medium can still separate "nobody
+  has looked" from "looked and found nothing", and that is the distinction that changes what to
+  do next. `worstBandByPurl` returns a map with holes rather than a total function, so no caller
+  can default the missing case to CLEAN without writing that down.
+
+  **The mark could not be the row background.** `.finder__option` already uses background for
+  keyboard-active and for currently-open, and severity would have been a third meaning on one
+  property — least legible on the row being pointed at. It rides on the `<li>` instead, so the
+  active state wins on the button while the severity edge survives on the row. Verified by
+  measuring both at once rather than by looking.
+
+  **Ordering was deliberately not changed, though it is probably the bigger lever.** Tint tells
+  you which of the shown rows matter; it does not stop the list being an arbitrary 40 of N.
+  Changing colour and order in one step would have made it impossible to tell which one fixed
+  the complaint, so worst-first ordering stays available and unused.
+
+  **Colour remains the only channel for *which* band**, which is why the band is now part of the
+  option's accessible name — otherwise the one piece of information the list was just given is
+  the one piece a screen reader cannot reach. That is a real limit rather than a solved problem:
+  a colour-blind reader gets presence-versus-absence and the tooltip, not the ordering.
+- 2026-07-31 — **The finder sorts worst-first, reversing the decision taken hours earlier**
+  (B16). The original call was "tint only, order unchanged", on the reasoning that changing
+  colour and order together would make it impossible to tell which one fixed the complaint. The
+  tint shipped, was used, and the answer came back immediately: sort by severity descending.
+  Recorded as a reversal rather than quietly amended, because the reasoning that produced the
+  first decision was sound and still is — it bought a clean read on the tint before the ordering
+  landed on top of it.
+
+  **Always, not only on an empty box**, and one caveat raised at decision time turned out not to
+  apply: there is no name-relevance ranking here to displace. The finder is a plain substring
+  filter, so the order being replaced is whatever the database happened to return. Sorting also
+  changes what the 40-row cap means — an arbitrary 40 of N becomes the 40 that matter most,
+  which turns a cap that hid things into one that prioritises.
+
+  **Never-scanned sorts above clean, below unscored.** Clean is the only state where you know
+  there is nothing to do; a gap is not an answer. It sits below `NONE` because an advisory of
+  unknown severity is a known vulnerability, where this is the absence of the question having
+  been asked. The rank lives in one `Record<FinderBand, number>`, so a band added to the API
+  without a rank stops compiling rather than silently sorting last.
+- 2026-07-31 — **The bump results stop being a table, because the table broke the one column
+  that mattered** (B17). Reported as "butchered", with a second screenshot showing the snippet
+  at roughly 40px wrapping one character per line and a row past 700px.
+
+  **The diagnosis is the design.** A table gives every cell in a column one shared width, so the
+  snippet — five lines of XML, and the only thing on the screen anybody copies — was sized by
+  its competition with a prose advisory summary. No amount of column tuning fixes that, because
+  the content is not tabular: these results are read one at a time until one is the answer, not
+  compared field by field. Blocks instead, each with a heading line and a full-width body.
+  Measured after, against a real `mvn` run on the same component: snippet 531px and 5 lines,
+  tallest block 208px, all three results 593px total, no horizontal scroll.
+
+  **A block renders for a major the run never reached, too.** An absent block reads as "nothing
+  here" for something that was merely unchecked, which is the unproven-versus-disproven
+  confusion the search's own reporting is built to avoid — the same reason `probed: false` and
+  `higherReleasesUnchecked` exist at all.
+
+  **Not done, and it is the harder half of the request:** one block per *attempt* rather than
+  per major. `verdicts` is a flat `string[]` of prose, one line per probe, with nothing tying a
+  line to the result it contributed to — and inferring that by parsing the prose is precisely
+  the fragile move this codebase keeps refusing. Doing it properly means structuring verdicts on
+  the backend.
+- 2026-07-31 — **Probe attempts become structured, which is what let them be grouped with the
+  results they produced** (B17, second pass). `BumpProgress.verdicts` was `List<String>` — one
+  prose line per probe, appended to a flat list. Readable, and unusable for anything else: the
+  panel wanted each attempt beside the result it contributed to, and sixteen sentences against
+  three candidates had no key between them.
+
+  **The prose is kept verbatim.** `ProbeStep` adds `major`, `kind`, `requested` and `outcome`
+  around the original `text`, which is still what the activity log records and what the panel
+  renders. Structuring it therefore changed no wording — it exposed the two facts that were
+  locked inside the sentence.
+
+  **`major` is threaded, not parsed.** `rankMajor` knows which line it is walking, so it passes
+  it into `probeOne`; recovering it later by reading `[2.4.13]` out of the rendered string would
+  be inference where there is a fact, and would break the first time the wording moved. It is
+  **null** for calibration, the opening `[current,)` feasibility probe and the combination
+  fallback — those belong to no single line by construction, and filing them under one would
+  misattribute them, so they get their own groups.
+
+  **`NOT_CHECKED` is not `AFFECTED`**, and the pre-release case is why it matters. When a range
+  resolves to a milestone the search refuses to offer it and continues — internally that is
+  treated as still-affected so the walk proceeds, but reporting it that way would claim a
+  finding about a version nobody evaluated. The reported outcome says nothing was learned; the
+  internal one keeps the walk moving. Same distinction as NONE-versus-CLEAN, one level down.
+
+  **The separate probe log was removed rather than kept alongside.** Every attempt now sits in
+  the group whose result it produced, so a flat copy at the bottom would have been the same
+  sixteen lines twice — and the reason it existed as a log at all was precisely that nothing
+  connected it to the answers.
+- 2026-07-31 — **Not every column is worth sorting, and working out why is the useful part**
+  (B18). The question asked was whether to make all thirteen sortable "even if it does not
+  always make sense". Four were added to the four that already were; five were refused, each for
+  a different reason, and refusing them is what keeps a header from being a promise the table
+  cannot keep.
+
+  **The maintainer's objection improved the answer twice.** The first proposal offered OSV ID and
+  CVE ID as identifier sorts; the reply — *"the codes seem arbitrary, not like for CVE"* — was
+  right about GHSA ids, whose suffix is random, and applying the same scrutiny to CVE ids sank
+  those too: the year orders correctly across years, but the sequence number is not zero-padded,
+  so `CVE-2020-9547` lexically follows `CVE-2020-10001`. `PUBLISHED` answers age correctly and
+  is what remained. **GHSA *rating* survived because it is not an identifier at all** — it is
+  GitHub's severity word, and it disagrees with the CVSS score often enough that both columns
+  exist.
+
+  **Version is deferred rather than refused.** It is the one column where sorting would be
+  actively *wrong* rather than merely unhelpful: lexical order puts `1.10.0` before `1.9.0`,
+  which is the defect B8 spent V3 and a backfill removing from "Fixed in". Doing it properly
+  needs the same apparatus again for `component.version`, and it only earns that as a secondary
+  sort under Component — so it belongs with B10, not before it.
+
+  **A rank is either a position or a value, and mixing the two inverts a click.** The rating rank
+  was first written 0-for-worst, copying `SCOPE_RANK`; descending then opened on LOW while
+  Severity beside it opened on CRITICAL. Caught by verifying the live ordering rather than by
+  reading the code. It is now a value — higher is worse, shaped like `severity_score` — while
+  `SCOPE_RANK` stays a position, because ascending scope meaning "your own code first" is
+  correct and unrelated.
+- 2026-07-31 — **The search fields gain negation, independent of the regex toggle** (B18). Asked
+  for as *"a negation that works in conjunction and without regex"*, and built that way: two
+  booleans on `FindingQuery`, four combinations, one `textMatch` assembling them. Tying exclusion
+  to regex would have made the commoner question — hide everything from one group — unavailable
+  without writing a pattern for it.
+
+  **Negation is of the row, not of each column**, because the positive form shows a row when any
+  searched column matches. Per-column negation would keep a row whose purl contains the term on
+  the grounds that its version does not, so one pattern would both show and hide it.
+
+  **`COALESCE` became load-bearing the moment negation existed.** A component can have no purl.
+  Positively, `LOWER(NULL) LIKE '%x%'` is NULL rather than TRUE, so the row does not match and
+  that is correct. Negated, `NOT (NULL OR …)` is also NULL — so the row would be dropped from a
+  search for everything *not* containing a term it obviously does not contain. Invisible under
+  both polarities, and nothing on screen would have said so. Its own test.
+
+  **An unusable pattern must stay unusable when negated.** In the browser-side finder, a pattern
+  that will not compile matches nothing, and negating nothing is everything: a half-typed
+  exclusion would have flashed the whole SBOM as though the filter had been cleared. It now
+  yields no matches in both polarities.
+
+  **The export names the polarity before the pattern.** "excluding rows matching
+  org.springframework" rather than the pattern alone: a reader who skims the filter line and
+  assumes the workbook is *about* Spring, when it is everything except Spring, has been misled by
+  the one line that exists to prevent exactly that.
+- 2026-07-31 — **The bump panel gets a skeleton, fixing a live-rendering regression B17
+  introduced and a collapse that predated it.** Both reported from use, and they turned out to
+  share one line.
+
+  **`const candidates = completed ? progress.candidates : []`.** Reading the rows only in the
+  COMPLETED state did two separate kinds of damage. `continueBump` returns **RUNNING carrying
+  the candidates already settled** — `BumpProgress.resuming()` preserves them deliberately, with
+  a comment saying that emptying the list "would read as having lost them" — and the panel threw
+  away exactly what the backend had gone out of its way to keep, so pressing Continue blanked
+  everything. And since B17 keyed each group off a candidate, and the backend published
+  candidates only at the very end, every attempt after calibration accumulated invisibly for
+  minutes and then appeared at once. The flat log B17 replaced did at least stream; the grouping
+  regressed it.
+
+  **The fix is a skeleton, which is better than what was asked for and cheaper than it looks.**
+  The first attempt derived groups from whichever majors the *attempts* had reached, which
+  streams but makes the panel grow a row at a time under the reader's eyes. Every major the
+  search will walk is knowable the moment the feasibility probe returns — the labels come from
+  the current and latest versions, not from any verdict — so `rankCandidates` now publishes the
+  whole list as `BumpCandidate.notProbed` rows before probing any of them, and replaces each in
+  place as it settles. `notProbed` already meant "this line exists and nothing is known about it
+  yet", so the skeleton is an honest state rather than a placeholder needing explanation. The
+  continue path fills in the same way, replacing rows in a copy of the existing list.
+
+  **One thing the skeleton changed in meaning.** An unprobed row used to occur only after the
+  budget ran out, so its body said so. Mid-run that sentence reports a search that is still
+  working as having given up, so the card takes a `running` flag: *"Not checked yet — the search
+  works upward from the current major"* while in flight, the budget sentence once it is not.
+
+  **Verified live against a real `mvn` run.** At the API: rows appear as `wait` the moment
+  feasibility returns, then flip to `done` one at a time. In the browser, on
+  `jackson-databind@2.9.5` (23 majors through `keycloak-core`): 24 groups render at once, 11
+  settled at the first sample and 16 sixteen seconds later with the group count unchanged — a
+  stable shape filling in rather than a growing list. And 2.5 seconds after pressing Continue —
+  the moment the panel used to blank — all 24 groups and 23 result cards were still on screen
+  with 22 verdicts intact, while the attempt count climbed from 25 to 28.

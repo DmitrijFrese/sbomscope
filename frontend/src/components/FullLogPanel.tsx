@@ -2,9 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { fetchLogText } from '../api/client';
 import { usePersistentToggle } from '../state/persisted';
+import { SearchField } from './SearchField';
 
 const POLL_INTERVAL_MS = 3000;
 const LINES = 1000;
+const FILTER_DEBOUNCE_MS = 250;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
@@ -26,6 +28,9 @@ function messageOf(error: unknown): string {
 export function FullLogPanel() {
   const [lines, setLines] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+  const [regex, setRegex] = useState(false);
+  const [negate, setNegate] = useState(false);
   const [follow, toggleFollow] = usePersistentToggle('monitoring.followLog', true);
 
   const pollTimer = useRef<number | null>(null);
@@ -35,13 +40,15 @@ export function FullLogPanel() {
     let cancelled = false;
 
     function poll() {
-      fetchLogText(LINES)
+      fetchLogText(LINES, filter, regex, negate)
         .then((result) => {
           if (cancelled) return;
           setLines(result);
           setError(null);
         })
         .catch((e: unknown) => {
+          // The lines already on screen stay. A half-written pattern must not clear the
+          // transcript somebody is reading.
           if (!cancelled) setError(messageOf(e));
         })
         .finally(() => {
@@ -49,12 +56,15 @@ export function FullLogPanel() {
         });
     }
 
-    poll();
+    // Debounced on the filter for the same reason the findings table is: this is a request
+    // per keystroke otherwise, and the backend now scans megabytes to answer it.
+    const debounce = window.setTimeout(poll, filter ? FILTER_DEBOUNCE_MS : 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(debounce);
       if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
     };
-  }, []);
+  }, [filter, regex, negate]);
 
   // Layout, not passive: the scroll has to move in the same frame the new lines are painted,
   // or following a live log flickers back to the old position first.
@@ -74,6 +84,22 @@ export function FullLogPanel() {
         everything Maven printed back.
       </p>
 
+      {/* Filtered on the backend, not here: it can look much further back than the {LINES}
+          lines this panel holds, so searching for something that scrolled past still finds it.
+          Filtering what already arrived would only ever search the visible tail. */}
+      <SearchField
+        value={filter}
+        onValueChange={setFilter}
+        regex={regex}
+        onRegexChange={setRegex}
+        negate={negate}
+        onNegateChange={setNegate}
+        placeholder="Find in the log…"
+        ariaLabel="Find in the log"
+        note={error}
+        inputClassName="toolbar__search"
+      />
+
       <label className="setting-option" style={{ maxWidth: '100%' }}>
         <input type="checkbox" checked={follow} onChange={toggleFollow} />
         <span>
@@ -85,14 +111,10 @@ export function FullLogPanel() {
         </span>
       </label>
 
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
-
       {lines.length === 0 && !error ? (
-        <p className="panel__hint">Nothing written yet.</p>
+        <p className="panel__hint">
+          {filter ? 'No lines match that.' : 'Nothing written yet.'}
+        </p>
       ) : (
         <pre className="log-text" ref={scroller} tabIndex={0} aria-label="Full log">
           {lines.join('\n')}

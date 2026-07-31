@@ -24,6 +24,86 @@ class MavenDependencyResolverTest {
             "\\- com.acme:module-a:jar:4.2.0:compile",
             "   \\- com.fasterxml.jackson.core:jackson-databind:jar:3.1.6:compile");
 
+    /**
+     * The real output from a machine whose security software inspects HTTPS, abridged.
+     *
+     * <p>Kept verbatim rather than reduced to the one matching phrase, because the trap it
+     * documents is that this text contains <em>both</em> signatures: Maven says "Could not
+     * transfer artifact" here exactly as it does for an artifact that genuinely does not exist.
+     */
+    private static final String PKIX_OUTPUT = String.join("\n",
+            "[ERROR] Failed to execute goal on project probe: Could not collect dependencies for "
+                    + "project dev.sbomscope.probe:probe:pom:0",
+            "[ERROR] Failed to read artifact descriptor for com.h2database:h2:jar:2.4.240",
+            "[ERROR] \tCaused by: The following artifacts could not be resolved: "
+                    + "com.h2database:h2:pom:2.4.240 (absent): Could not transfer artifact "
+                    + "com.h2database:h2:pom:2.4.240 from/to central "
+                    + "(https://repo.maven.apache.org/maven2): (certificate_unknown) PKIX path "
+                    + "building failed: sun.security.provider.certpath.SunCertPathBuilderException: "
+                    + "unable to find valid certification path to requested target",
+            "[ERROR] -> [Help 1]");
+
+    private static MavenInvocation.Result failedWith(String output) {
+        return new MavenInvocation.Result(false, false, 1, output, null);
+    }
+
+    @Test
+    void theReportedDetailIsMavensSummaryNotItsClosingWikiLink() {
+        // Found in the same live run. The detail read "[ERROR] [Help 1] http://cwiki.apache.org/…",
+        // because the line was picked from the end — right for osv-scanner, whose errors do come
+        // last, and exactly wrong for Maven, which closes every failure with four lines of advice.
+        assertThat(failedWith(PKIX_OUTPUT).lastMeaningfulLine())
+                .startsWith("[ERROR] Failed to execute goal on project probe")
+                .doesNotContain("cwiki.apache.org");
+    }
+
+    @Test
+    void fallsBackToTheLastLineWhenMavenPrintedNoErrorAtAll() {
+        // A goal can fail with output that carries no [ERROR] marker; a wrong-but-present line
+        // still beats an empty message.
+        assertThat(failedWith("something went sideways").lastMeaningfulLine())
+                .isEqualTo("something went sideways");
+    }
+
+    @Test
+    void anUntrustedCertificateIsNotAMissingArtifact() {
+        // Found live. The panel reported "Not found in any configured repository" for an
+        // artifact sitting in Central, because the PKIX failure's own wording matches the
+        // absence test — which sent the reader to add a repository when the fix is a truststore.
+        assertThat(resolver.classifyFailure(failedWith(PKIX_OUTPUT)).failureReason())
+                .isEqualTo(ProbeFailureReason.REPOSITORY_UNREACHABLE);
+    }
+
+    @Test
+    void anArtifactThatGenuinelyDoesNotExistIsStillNotFound() {
+        // The other half: the reordering must not swallow the case NOT_FOUND exists for.
+        String absent = "[ERROR] Failed to execute goal on project probe: Could not resolve "
+                + "dependencies for project dev.sbomscope.probe:probe:pom:0: Could not find "
+                + "artifact com.acme:module-a:jar:9.9.9 in central";
+        assertThat(resolver.classifyFailure(failedWith(absent)).failureReason())
+                .isEqualTo(ProbeFailureReason.NOT_FOUND);
+    }
+
+    @Test
+    void aPluginItCannotObtainStillOutranksBoth() {
+        // Ordering runs plugin, then unreachable, then absent. A machine with no route to any
+        // repository produces plugin-resolution text *and* transfer text in one run, and the
+        // plugin problem is the one that has to be reported: nothing else could have happened.
+        String pluginFailure = "[ERROR] Plugin org.apache.maven.plugins:maven-dependency-plugin:3.6.1 "
+                + "or one of its dependencies could not be resolved: Could not transfer artifact "
+                + "... PKIX path building failed";
+        assertThat(resolver.classifyFailure(failedWith(pluginFailure)).failureReason())
+                .isEqualTo(ProbeFailureReason.PLUGIN_UNAVAILABLE);
+    }
+
+    @Test
+    void aHostThatCannotBeReachedIsNotAMissingArtifactEither() {
+        String refused = "[ERROR] Could not transfer artifact com.acme:module-a:pom:1.0 from/to "
+                + "central (https://repo.maven.apache.org/maven2): Connection refused: connect";
+        assertThat(resolver.classifyFailure(failedWith(refused)).failureReason())
+                .isEqualTo(ProbeFailureReason.REPOSITORY_UNREACHABLE);
+    }
+
     @Test
     void findsTheDirectDependencysResolvedVersion() {
         assertThat(resolver.findVersion(TREE, new MavenArtifact("com.acme", "module-a"))).isEqualTo("4.2.0");

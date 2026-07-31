@@ -148,17 +148,65 @@ are never buried regardless of sort direction.
 
 ### One query object
 
-`FindingQuery` carries sort, direction, text filter, severity bands, **dependency scopes**,
-limit and offset. The view, the row counts and the export all pass through the same object into
-the same SQL, which is what guarantees an exported spreadsheet matches the screen it came from.
-Do not add a second code path that sorts or filters independently.
+`FindingQuery` carries sort, direction, text filter, **whether that filter is a regular
+expression**, **whether it excludes rather than selects**, severity bands, **dependency
+scopes**, limit and offset. The view, the row counts and the export all pass through the same
+object into the same SQL, which is what guarantees an exported spreadsheet matches the screen it
+came from. Do not add a second code path that sorts or filters independently.
 
-`SortField` has four values, and two of them needed something the schema did not have.
+`SortField` has six values, and three of them needed something the schema did not have.
 `FIXED_VERSION` orders by `fixed_version_sort` (V3), a lexically-sortable encoding of the
 version — see below. `SCOPE` orders by an explicit `CASE` ranking APPLICATION, DIRECT,
-TRANSITIVE, stated rather than left to alphabetical coincidence. Both put the chosen field
-first and the scored/unscored/clean rank second, as `COMPONENT` does: leading with the rank
-would sort by whether a finding carries a CVSS score before the column the reader clicked.
+TRANSITIVE, stated rather than left to alphabetical coincidence. `GHSA_RATING` orders by another
+`CASE` over GitHub's own words — note the middle band is `MODERATE`, not `MEDIUM` — and is not a
+duplicate of `SEVERITY`, which orders by the numeric CVSS score; the two genuinely disagree,
+which is why both columns exist. All of them put the chosen field first and the
+scored/unscored/clean rank second, as `COMPONENT` does: leading with the rank would sort by
+whether a finding carries a CVSS score before the column the reader clicked.
+
+**The two `CASE` ranks are deliberately opposite shapes.** `SCOPE_RANK` is a position, so
+ascending means "your own code first". `RATING_RANK` is a *value*, higher for worse, so
+descending means "worst first" exactly as the numeric score does. Ranking the rating 0-for-worst
+was tried and caught by verification: descending opened on LOW while the Severity column beside
+it opened on CRITICAL, which is two badness columns on one table disagreeing about which way a
+click points.
+
+`PUBLISHED` orders by `published_at`, nulls last in both directions. **Sorting by CVE id was
+considered for the same purpose and rejected**: the year in `CVE-2020-9547` orders correctly
+across years, but the sequence number is not zero-padded, so within a year that id sorts *after*
+`CVE-2020-10001`. Half-right ordering presented as chronological is worse than none.
+
+### Filtering, in four combinations
+
+The text filter is literal or a regular expression, and selects or excludes — two independent
+booleans, assembled by one `VulnerabilityRepository.textMatch`. H2's `REGEXP_LIKE` is
+`java.util.regex`, verified against the pinned version rather than taken from the documentation:
+lookbehind, named backreferences, possessive quantifiers and atomic groups all evaluate, and an
+invalid pattern arrives with `PatternSyntaxException` as its root cause. That is what lets
+filtering stay in SQL — matching in Java would need a second query path and would break the
+property above. `ScanService.validated` compiles the pattern before it reaches the database, so a
+half-typed one is a 400 carrying Java's own message rather than a data-access failure.
+
+**Negation is of the row, not of each column.** The positive form shows a row when *any* searched
+column matches, so the negative form hides it on the same condition; negating column by column
+would let one pattern both show and hide the same row. Every column is `COALESCE`d for this
+reason: `NOT (NULL OR …)` is NULL, so without it a component with no purl would vanish from a
+search for everything *not* containing a term it plainly does not contain.
+
+**A user-supplied pattern is bounded, on its own connection.** A regex filter runs through
+`VulnerabilityRepository.bounded`, which applies a query timeout and resets it in a `finally`.
+The reset is not defensive tidiness: **H2 scopes a query timeout to the session**, since
+`setQueryTimeout` issues `SET QUERY_TIMEOUT`, so a pooled connection that ran one bounded query
+would carry that ceiling back into the pool and silently bound whatever borrowed it next. Doing
+it all inside one `ConnectionCallback` is what makes the reset land on the connection that was
+actually changed. Measured, and the folklore is out of date: on JDK 21 and 25 alike the textbook
+exponential patterns are linear, but `(x+x+)+y` is 30 seconds against 2000 characters and
+`(a|a)+$` throws `StackOverflowError`. Since a purl is ~100 characters, the row count is what
+hurts, which is what a query timeout bounds.
+
+The log tails bound the same risk differently — that loop is ours, so `LogService.LineMatcher`
+checks a deadline between lines and **reports** exhaustion rather than returning "no matches",
+which would be read as evidence the log does not contain the thing being searched for.
 
 **The scope filter is `scope` on the findings endpoint and `scope_filter` on the export**,
 because the export has used `scope` for its own visible/all selector since Phase 5. Both are
@@ -434,6 +482,25 @@ list that empties itself at that moment answers it with silence. `STOPPED` is ke
 `COMPLETED` because a run the user cut short and one that reached the end of its budget are
 different claims about how much of the search happened.
 
+**Every attempt is a `ProbeStep`, not a sentence.** `BumpProgress.verdicts` was a flat
+`List<String>` of prose — readable, and unusable for anything else: the panel shows each attempt
+beside the result it contributed to, and sixteen lines against three ranked candidates had no key
+between them. Each step now carries `major` (null for calibration, the opening feasibility probe
+and the combination fallback, which belong to no single line), `kind`, `requested` and `outcome`
+**around the original text**, which is still what the activity log records and what the panel
+renders. `major` is threaded from `rankMajor` through `probeOne` rather than parsed back out of
+the rendered string. `Outcome.NOT_CHECKED` is kept distinct from `AFFECTED` — including for a
+resolution refused because it produced a pre-release, where declining to recommend a milestone is
+a decision about what we will say, not a finding about the version.
+
+**A transfer failure is not a missing artifact.** Maven prints `Could not transfer artifact` for
+an untrusted certificate exactly as it does for one that does not exist, so
+`ProbeFailureReason.REPOSITORY_UNREACHABLE` is decided **before** `NOT_FOUND`. Found live: a
+`PKIX path building failed` on a machine with TLS-inspecting security software was reported as
+*"Not found in any configured repository"* for a library sitting in Central. Its message names
+the fix, including the part that catches people out — `MAVEN_OPTS` is an environment variable,
+and a `-D` flag on SBOMscope's own JVM never reaches the `mvn` it starts.
+
 **Probe progress is session-scoped, not persisted**, keyed by `moduleBomRef -> targetCoordinates`
 in `BumpProbeService.progressByKey` — cleared on Maven settings change (a stale answer against
 an old configuration is worse than a re-probe) and on process restart. `POST
@@ -505,9 +572,16 @@ to record what ran, invokes the scanner against the stored document, parses the 
 resolves packages back to purls, then writes a scan row for **every** component and
 replaces that component's findings wholesale (so a withdrawn advisory disappears).
 
-**Automatic scan** — `AutomaticScanner`, on a single daemon thread. After an upload, and on
-`ApplicationReadyEvent` for every SBOM holding a component with no `vulnerability_scan` row
-(`VulnerabilityRepository.sbomIdsWithUnscannedComponents`). Permitted by constraint 2 because
+**Automatic scan** — `AutomaticScanner`, on a single daemon thread. After an upload, on
+`ApplicationReadyEvent`, and on `ScannerSettingsChangedEvent` — in each case for every SBOM
+holding a component with no `vulnerability_scan` row
+(`VulnerabilityRepository.sbomIdsWithUnscannedComponents`). The settings trigger closes a gap the
+other two could not: `scanLater` declines silently when readiness is not met, so an SBOM uploaded
+before osv-scanner was configured stayed unscanned until the next restart, showing an empty table
+that reads as "nothing found". It is a **`@TransactionalEventListener(AFTER_COMMIT)`**, because
+the settings update is transactional and the scan runs on another thread with its own connection:
+queued before the commit it would re-check readiness against the old settings and decline again.
+Permitted by constraint 2 because
 running the scanner against an archive already on disk sends nothing anywhere — see the
 constraint for where that line is drawn. Gated on `ScanService.readiness` per SBOM and skipped
 **silently** when it is not met, since a machine with no scanner has not failed at anything.
@@ -523,6 +597,18 @@ one-directional, so a row can outlive its document.
 **View** — `ScanController.findings` returns a page of `FindingRow` plus totals: the
 unfiltered vulnerability count for the headline, and the filtered row count for paging
 and export labels.
+
+**Staleness** — `ScanService.staleReason`, one reading that the boolean flag is derived from
+rather than computed alongside. `AGED` is the seven-day clock, or never scanned.
+`ARCHIVE_REFRESHED` means an archive this SBOM's ecosystems need was written **after** its last
+scan, and is checked first because it is the stronger and more actionable statement: an archive
+downloaded an hour ago against yesterday's scan is not "aged". Read from the archive file's own
+modification time rather than a recorded download timestamp, so it is equally true of an archive
+**carried across on a USB stick** — the workflow this product is built for, and one a
+download-time column would have been blind to. Re-indexing deliberately does not count:
+osv-scanner reads the archive, not the index. `lastScannedAt` is `MIN(scanned_at)` across the
+SBOM's components, not `MAX` — findings are shared across SBOMs by purl, so `MAX` would let one
+document look freshly scanned because another refreshed a component they share.
 
 **Export** — `ScanController.export` → `FindingsExcelExporter`. Two scopes: `visible`
 reproduces the current page, filter and sort; `all` keeps sort, severity and dependency-scope
@@ -560,6 +646,27 @@ the single background thread described above; the UI polls `GET .../component/bu
 state leaves `RUNNING`/`QUEUED`. See "External tool contract: the Maven probe" above for the
 search strategy.
 
+**The rows stream, and they arrive as a skeleton.** Which majors the search will walk is settled
+the moment the feasibility probe returns — the labels come from the current and latest versions,
+not from any verdict — so `rankCandidates` publishes every row as `BumpCandidate.notProbed`
+before probing any of them (`BumpProgress.withCandidates`), then replaces each in place as it
+settles. `notProbed` already means "this line exists and nothing is known about it yet", so the
+skeleton is an honest state rather than a placeholder. The continue path fills in the same way.
+
+Two consequences for anything reading this. **Candidates must not be read only in the
+`COMPLETED` state** — `resuming()` deliberately carries the settled rows back into `RUNNING` so
+that pressing Continue does not blank a panel mid-read, and gating on completion throws away
+exactly what it preserves. And **an unprobed row means two different things**: "not reached yet"
+while the run is in flight, "the budget ran out before this major" once it is not. The panel is
+told which.
+
+**Component severity for the finder** — `VulnerabilityRepository.worstBandByPurl`, riding on
+`GET /sboms/{id}/components` rather than a call of its own, so the finder's marks and its rows
+cannot describe different sets. Built from the same `BAND_EXPRESSION` the filter chips and the
+severity counts read. **A purl absent from the map has never been scanned**, which is not
+`CLEAN`: the map has holes rather than being a total function, so no caller can default the
+missing case to "clean" without writing that down.
+
 ---
 
 ## Settings
@@ -571,7 +678,10 @@ belongs in an environment variable or git-ignored config, never in the database.
 `ScannerSettings` carries `enabled`, `executablePath` and `databaseDirectory`. With
 scanning switched off SBOMscope is a working SBOM inventory, not a broken installation —
 that is a supported mode, and the UI says so rather than showing an empty table that
-looks like a failure.
+looks like a failure. Changing any of it publishes `ScannerSettingsChangedEvent`, the counterpart
+to the Maven one below and for the opposite reason: that one invalidates work computed against a
+configuration that no longer applies, while this says work that was *skipped* may now be
+possible — see **Automatic scan** above.
 
 `MavenToolSettings` carries `enabled`, `executablePath`, `maxProbes`, `runBudgetMinutes`,
 `profiles`, `dependencyPluginVersion` and `helpPluginVersion` for the Tier 2 bump probe above. Same shape and same reasoning as `ScannerSettings`:

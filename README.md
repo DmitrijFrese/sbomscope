@@ -127,7 +127,24 @@ A browser-based UI served by the local backend.
 - **Component Inspector** — one library in depth: what to upgrade to and what each option
   still carries, who pulls it in and what it drags along, and whether your own code touches
   it. Reached by a per-row action from the vulnerability view, or by picking a library
-  directly in a type-ahead finder.
+  directly in a type-ahead finder, which lists worst-first and marks each library with the
+  severity standing against it — including a distinct mark for one nothing has scanned, since
+  "not checked" must never look like "nothing found".
+
+**Every search field takes a regular expression**, behind a `.*` toggle beside it, with full
+Java syntax — lookahead, lookbehind, backreferences, named groups. A second toggle, `!`, inverts
+the match so the field hides what it finds instead of showing it; the two combine, so `(ABC|DEF)`
+with both on removes every row matching either. Off by default, both of them: `.` is a valid
+regular expression and a purl is made almost entirely of dots, so `spring.core` keeps meaning
+what it has always meant until you say otherwise. An invalid pattern is ordinary input — it
+reports itself beside the field and leaves the last good result on screen, because half-typed
+patterns are what a filter field is full of.
+
+One exception worth stating rather than discovering: the Component Inspector's finder filters a
+list the browser already holds, so it runs on **JavaScript's** regular expressions rather than
+Java's. The two agree on everything a library finder is realistically typed with; they part
+company over possessive quantifiers, atomic groups and `\A`/`\z`, all of which exist to control
+backtracking that costs nothing over a few thousand rows in memory.
 
 ### Vulnerability table columns
 

@@ -705,15 +705,19 @@ public class BumpProbeService {
             MajorMinor current = MajorMinor.parse(primary.version());
             List<String> knownVersions = resolver.knownVersions(ancestor, context);
 
-            List<BumpCandidate> merged = new ArrayList<>();
-            for (BumpCandidate candidate : existing) {
+            // Starts as the rows already settled and replaces them in place, so a resumed run
+            // fills in exactly as a first one does rather than showing the old list until the
+            // whole pass finishes. `resuming()` has already put these back on screen.
+            List<BumpCandidate> merged = new ArrayList<>(existing);
+            for (int index = 0; index < merged.size(); index++) {
+                BumpCandidate candidate = merged.get(index);
                 if (!unfinished(candidate) || budget.exhausted()) {
-                    merged.add(candidate);
                     continue;
                 }
-                merged.add(rankMajor(key, moduleDeps, ancestor, candidate.ancestorCoordinates(), target,
+                merged.set(index, rankMajor(key, moduleDeps, ancestor, candidate.ancestorCoordinates(), target,
                         request.targetEvaluator(), context, budget, candidate.major(),
                         resumePointFor(candidate, current), knownVersions, candidate.label()));
+                publishCandidates(key, merged);
             }
 
             // A clean row found on this pass retires any "nothing resolves this" note the first
@@ -768,8 +772,10 @@ public class BumpProbeService {
         if (budget.exhausted()) {
             return List.of();
         }
+        // Null major: this one spans every line by construction, so filing it under any single
+        // major would misattribute it.
         ProbeAttempt feasibility = probeOne(moduleDeps, ancestor, "[" + currentVersion + ",)", target,
-                context, evaluator, key, budget);
+                context, evaluator, key, budget, null);
         if (!feasibility.outcome().resolved()) {
             // Not even a ranked list can be built without knowing what exists. The reason is
             // carried out rather than swallowed: an empty list alone completed the run showing
@@ -783,18 +789,38 @@ public class BumpProbeService {
         MajorMinor current = MajorMinor.parse(currentVersion);
         MajorMinor latest = MajorMinor.parse(globalLatest);
 
+        // Every row up front, all of them unprobed — the skeleton. Which majors will be walked
+        // is settled the moment feasibility returns, so the panel can show the shape of the
+        // answer now and fill it in, rather than showing nothing for minutes and then everything
+        // at once. `notProbed` already means "this line exists and nothing is known yet", so the
+        // skeleton is the honest state rather than a placeholder that has to be explained.
         List<BumpCandidate> candidates = new ArrayList<>();
         for (long major = current.major(); major <= latest.major(); major++) {
-            String label = labelFor(major, current.major(), latest.major());
+            candidates.add(BumpCandidate.notProbed(
+                    labelFor(major, current.major(), latest.major()), coordinates, major));
+        }
+        publishCandidates(key, candidates);
+
+        for (int index = 0; index < candidates.size(); index++) {
+            long major = current.major() + index;
+            // A budget that runs out leaves the remaining rows exactly as the skeleton set them,
+            // which is the same claim they would have carried anyway: reached, not examined.
             if (budget.exhausted()) {
-                candidates.add(BumpCandidate.notProbed(label, coordinates, major));
                 continue;
             }
             long startAfterMinor = major == current.major() ? current.minor() - 1 : -1;
-            candidates.add(rankMajor(key, moduleDeps, ancestor, coordinates, target, evaluator, context, budget,
-                    major, startAfterMinor, knownVersions, label));
+            candidates.set(index, rankMajor(key, moduleDeps, ancestor, coordinates, target, evaluator,
+                    context, budget, major, startAfterMinor, knownVersions,
+                    labelFor(major, current.major(), latest.major())));
+            publishCandidates(key, candidates);
         }
         return candidates;
+    }
+
+    /** One major's row settled, or the initial skeleton — published so the panel can fill in. */
+    private void publishCandidates(String key, List<BumpCandidate> candidates) {
+        progressByKey.compute(key, (k, current) ->
+                (current == null ? BumpProgress.starting() : current).withCandidates(candidates));
     }
 
     private String labelFor(long major, long currentMajor, long latestMajor) {
@@ -848,7 +874,8 @@ public class BumpProbeService {
             if (version == null) {
                 continue;
             }
-            ProbeAttempt attempt = probeOne(moduleDeps, ancestor, "[" + version + "]", target, context, evaluator, key, budget);
+            ProbeAttempt attempt = probeOne(moduleDeps, ancestor, "[" + version + "]", target, context,
+                    evaluator, key, budget, major);
             lastVersion = version;
             lastAttempt = attempt;
             if (attempt.isCleanResolution()) {
@@ -888,9 +915,16 @@ public class BumpProbeService {
                 .orElse(null);
     }
 
+    /**
+     * @param major the major line this attempt belongs to, or null for the opening feasibility
+     *              probe, which spans every line. Threaded through rather than parsed back out
+     *              of {@code versionSpec} later: the caller knows it, and recovering it from the
+     *              rendered string would be inference where there is a fact.
+     */
     private ProbeAttempt probeOne(List<ModuleDependency> moduleDeps, MavenArtifact ancestor, String versionSpec,
                                    MavenArtifact target, ProbeContext context,
-                                   UpgradeAdviceService.TargetEvaluator evaluator, String key, SearchBudget budget) {
+                                   UpgradeAdviceService.TargetEvaluator evaluator, String key, SearchBudget budget,
+                                   Long major) {
         ProbeOutcome outcome = resolver.resolve(moduleDeps, Map.of(ancestor, versionSpec), target, context);
         budget.spend();
 
@@ -901,14 +935,18 @@ public class BumpProbeService {
             // final 4.0.0, so it satisfies "< 4.0.0" and can win the range. Never offered as an
             // answer regardless of what the archive says about the target: a confident
             // milestone recommendation is worse than continuing the search past it.
-            appendVerdict(key, "%s → %s (pre-release, not offered)".formatted(versionSpec, resolvedAncestor));
+            // NOT_CHECKED rather than AFFECTED: refusing to offer a milestone is a decision about
+            // what we will recommend, not a finding about the version. It is treated as
+            // still-affected internally only so the walk continues past it.
+            appendVerdict(key, ProbeStep.attempt(major, versionSpec, ProbeStep.Outcome.NOT_CHECKED,
+                    "%s → %s (pre-release, not offered)".formatted(versionSpec, resolvedAncestor)));
             return new ProbeAttempt(outcome, CleanCheck.STILL_AFFECTED);
         }
 
         CleanCheck clean = outcome.resolved() && outcome.targetVersion() != null
                 ? checkClean(outcome.targetVersion(), evaluator)
                 : CleanCheck.UNKNOWN;
-        appendVerdict(key, verdictFor(versionSpec, outcome, ancestor, clean));
+        appendVerdict(key, verdictFor(major, versionSpec, outcome, ancestor, clean));
         return new ProbeAttempt(outcome, clean);
     }
 
@@ -1030,55 +1068,85 @@ public class BumpProbeService {
                     + "The probe resolves into its own repository (%s), never your ~/.m2, so on a "
                     + "machine that cannot reach a repository it has no way to obtain that plugin. "
                     + "The full Maven output is in sbomscope.log.").formatted(defaultProbeRepository());
+            // Says nothing about the artifact, so it must not read as though it did. The most
+            // common cause here is TLS-inspecting security software, whose fix is an environment
+            // variable and not a JVM flag — the probe's mvn is a child process, and children
+            // inherit the environment, never the parent's -D options.
+            case REPOSITORY_UNREACHABLE -> "Maven could not complete the download — the repository's "
+                    + "certificate could not be verified, or the repository could not be reached. "
+                    + "This says nothing about whether the artifact exists. If your machine inspects "
+                    + "HTTPS, set MAVEN_OPTS=-Djavax.net.ssl.trustStoreType=Windows-ROOT in the "
+                    + "environment SBOMscope is started from — a -D flag on SBOMscope's own JVM does "
+                    + "not reach the mvn it runs. The full Maven output is in sbomscope.log.";
             case TIMEOUT -> "mvn did not finish within the probe timeout.";
             case OTHER -> "The probe failed.";
         };
         return "%s %s".formatted(reason, outcome.detail() == null ? "" : outcome.detail());
     }
 
-    private String verdictForCalibration(ProbeOutcome outcome, StoredComponent component) {
+    private ProbeStep verdictForCalibration(ProbeOutcome outcome, StoredComponent component) {
         if (!outcome.resolved()) {
-            return "calibration → failed: %s".formatted(outcome.detail());
+            return ProbeStep.calibration(ProbeStep.Outcome.FAILED,
+                    "calibration → failed: %s".formatted(outcome.detail()));
         }
-        return "calibration → target resolves to %s (SBOM reports %s)"
-                .formatted(outcome.targetVersion(), component.version());
+        return ProbeStep.calibration(ProbeStep.Outcome.INFO,
+                "calibration → target resolves to %s (SBOM reports %s)"
+                        .formatted(outcome.targetVersion(), component.version()));
     }
 
-    private String verdictForCombination(Map<MavenArtifact, String> overrides, ProbeOutcome outcome, CleanCheck clean) {
+    private ProbeStep verdictForCombination(Map<MavenArtifact, String> overrides, ProbeOutcome outcome,
+                                            CleanCheck clean) {
         String spec = overrides.entrySet().stream()
                 .map(entry -> entry.getKey().artifactId() + " " + entry.getValue())
                 .collect(Collectors.joining(" + "));
         if (!outcome.resolved()) {
-            return "%s (combined) → failed: %s".formatted(spec, outcome.detail());
+            return ProbeStep.combination(ProbeStep.Outcome.FAILED, spec,
+                    "%s (combined) → failed: %s".formatted(spec, outcome.detail()));
         }
         String verdictWord = switch (clean) {
             case CLEAN -> "clean";
             case STILL_AFFECTED -> "still affected";
             case UNKNOWN -> "not checked";
         };
-        return "%s (combined) → target %s → %s".formatted(spec, outcome.targetVersion(), verdictWord);
+        return ProbeStep.combination(outcomeOf(clean), spec,
+                "%s (combined) → target %s → %s".formatted(spec, outcome.targetVersion(), verdictWord));
     }
 
-    private String verdictFor(String versionSpec, ProbeOutcome outcome, MavenArtifact primary, CleanCheck clean) {
+    private ProbeStep verdictFor(Long major, String versionSpec, ProbeOutcome outcome,
+                                 MavenArtifact primary, CleanCheck clean) {
         if (!outcome.resolved()) {
-            return "%s → failed: %s".formatted(versionSpec, outcome.detail());
+            return ProbeStep.attempt(major, versionSpec, ProbeStep.Outcome.FAILED,
+                    "%s → failed: %s".formatted(versionSpec, outcome.detail()));
         }
         String resolvedPrimary = outcome.resolvedVersions().get(primary);
         if (outcome.targetVersion() == null) {
-            return "%s → %s (target absent from the resolved tree)".formatted(versionSpec, resolvedPrimary);
+            // Resolved, but the target is not in the tree at all — nothing was learned about it,
+            // which is not the same as learning it is still affected.
+            return ProbeStep.attempt(major, versionSpec, ProbeStep.Outcome.NOT_CHECKED,
+                    "%s → %s (target absent from the resolved tree)".formatted(versionSpec, resolvedPrimary));
         }
         String verdictWord = switch (clean) {
             case CLEAN -> " → clean";
             case STILL_AFFECTED -> " → still affected";
             case UNKNOWN -> " → not checked";
         };
-        return "%s → %s → %s%s".formatted(versionSpec, resolvedPrimary, outcome.targetVersion(), verdictWord);
+        return ProbeStep.attempt(major, versionSpec, outcomeOf(clean),
+                "%s → %s → %s%s".formatted(versionSpec, resolvedPrimary, outcome.targetVersion(), verdictWord));
     }
 
-    private void appendVerdict(String key, String verdict) {
+    /** One mapping from the internal check to the reported outcome, rather than one per call site. */
+    private static ProbeStep.Outcome outcomeOf(CleanCheck clean) {
+        return switch (clean) {
+            case CLEAN -> ProbeStep.Outcome.CLEAN;
+            case STILL_AFFECTED -> ProbeStep.Outcome.AFFECTED;
+            case UNKNOWN -> ProbeStep.Outcome.NOT_CHECKED;
+        };
+    }
+
+    private void appendVerdict(String key, ProbeStep verdict) {
         progressByKey.compute(key, (k, current) ->
                 (current == null ? BumpProgress.starting() : current).withVerdict(verdict));
-        activityLog.record(ActivityLogger.Category.PROCESS, "MAVEN_PROBE", verdict);
+        activityLog.record(ActivityLogger.Category.PROCESS, "MAVEN_PROBE", verdict.text());
     }
 
     private void completeWithCandidates(String key, List<BumpCandidate> candidates, Remedy remedy) {

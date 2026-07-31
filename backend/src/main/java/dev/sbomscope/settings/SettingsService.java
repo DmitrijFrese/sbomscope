@@ -66,6 +66,11 @@ public class SettingsService {
 
         activityLog.record(ActivityLogger.Category.DATA, "SETTINGS_CHANGED",
                 "scanner: enabled=%s, path=%s".formatted(requested.enabled(), path != null));
+        // Anything that gave up because no scanner was configured gets to reconsider. Published
+        // unconditionally rather than only on a change that looks relevant: "did this edit make
+        // scanning possible" is a question about the filesystem as much as about these three
+        // values, and the listener's own work is a single query when there is nothing to do.
+        events.publishEvent(new ScannerSettingsChangedEvent());
         return scannerSettings();
     }
 

@@ -62,6 +62,14 @@ class ScanController {
             int scannedComponents,
             int totalComponents,
             boolean stale,
+            /**
+             * <em>Why</em> it is stale, so the notice can say which of two different things
+             * happened. {@code ARCHIVE_REFRESHED} is a fact about this machine — a newer
+             * archive is on disk than these results were produced against — where
+             * {@code AGED} is only the seven-day clock. Offering the second sentence for the
+             * first situation sends the reader to look at the wrong thing.
+             */
+            ScanService.StaleReason staleReason,
             long staleAfterDays,
             boolean scanningEnabled,
             /**
@@ -119,6 +127,8 @@ class ScanController {
             @RequestParam(value = "direction", defaultValue = "desc") String direction,
             @RequestParam(value = "scope", defaultValue = "all") String scope,
             @RequestParam(value = "filter", required = false) String filter,
+            @RequestParam(value = "regex", defaultValue = "false") boolean regex,
+            @RequestParam(value = "negate", defaultValue = "false") boolean negate,
             @RequestParam(value = "severity", required = false) List<String> severity,
             @RequestParam(value = "scope_filter", required = false) List<String> scopeFilter,
             @RequestParam(value = "column", required = false) List<String> column,
@@ -131,7 +141,7 @@ class ScanController {
         // Named scope_filter, not scope: `scope` is already this endpoint's visible/all
         // selector, and two meanings on one parameter name is how an export silently
         // stops matching the screen it came from.
-        FindingQuery onScreen = new FindingQuery(sort, isAscending(direction), filter,
+        FindingQuery onScreen = new FindingQuery(sort, isAscending(direction), filter, regex, negate,
                 FindingQuery.SeverityBand.parse(severity),
                 FindingQuery.parseScopes(scopeFilter), limit, offset);
 
@@ -182,6 +192,9 @@ class ScanController {
             @RequestParam(value = "sort", defaultValue = "SEVERITY") FindingQuery.SortField sort,
             @RequestParam(value = "direction", defaultValue = "desc") String direction,
             @RequestParam(value = "filter", required = false) String filter,
+            /** Whether {@code filter} is a regular expression. Off unless the reader says so. */
+            @RequestParam(value = "regex", defaultValue = "false") boolean regex,
+            @RequestParam(value = "negate", defaultValue = "false") boolean negate,
             @RequestParam(value = "severity", required = false) List<String> severity,
             @RequestParam(value = "scope", required = false) List<String> scope,
             @RequestParam(value = "limit", required = false) Integer limit,
@@ -189,15 +202,20 @@ class ScanController {
 
         requireSbom(id);
 
-        FindingQuery query = new FindingQuery(sort, isAscending(direction), filter,
+        FindingQuery query = new FindingQuery(sort, isAscending(direction), filter, regex, negate,
                 FindingQuery.SeverityBand.parse(severity),
                 FindingQuery.parseScopes(scope), limit, offset);
+
+        // One call, then both fields derived from it: asking isStale() separately would query
+        // the same thing twice and let the flag and the reason disagree mid-request.
+        ScanService.StaleReason staleReason = scans.staleReason(id);
 
         return new ScanStatusResponse(
                 scans.lastScannedAt(id).orElse(null),
                 scans.scannedComponentCount(id),
                 sboms.findComponents(id).size(),
-                scans.isStale(id),
+                staleReason != ScanService.StaleReason.NONE,
+                staleReason,
                 scans.staleAfterDays(),
                 settings.scannerSettings().enabled(),
                 scans.readiness(id),

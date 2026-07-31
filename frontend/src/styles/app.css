@@ -675,6 +675,91 @@ body {
   max-width: 320px;
 }
 
+/* The regex toggle lives inside the box, so the wrapper takes the flex sizing the input used
+   to carry and the input fills it. Without moving it, both would size themselves and the
+   toggle would sit outside the border it belongs in. */
+.search-field {
+  position: relative;
+  flex: 1 1 180px;
+  min-width: 140px;
+  max-width: 320px;
+}
+
+.search-field .toolbar__search {
+  width: 100%;
+  max-width: none;
+  /* Room for both toggles, reserved permanently rather than on focus. Text that reflowed the
+     moment a control appeared would be worse than a little space that is always there —
+     the same conclusion the SBOM card's row actions reached in B5. */
+  padding-right: 62px;
+}
+
+/* A cluster rather than two absolutely-positioned buttons, so neither has to know the other's
+   width and adding a third later costs one line instead of a round of right-offset arithmetic. */
+.search-field__toggles {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: flex;
+  gap: 2px;
+  transform: translateY(-50%);
+}
+
+.search-field__toggle {
+  padding: 2px 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.search-field__toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* Active state carries colour *and* a border, not colour alone: this is the one control on
+   the row that silently changes what every other one is describing. */
+.search-field__toggle[data-active='true'] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.search-field__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Absolutely positioned so a half-written pattern does not push the table down a line on
+   every other keystroke. */
+.search-field__note {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 1;
+  width: max-content;
+  max-width: 320px;
+  margin: 0;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--severity-critical);
+  background: var(--bg-surface);
+  border: 1px solid color-mix(in srgb, var(--severity-critical) 35%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* In a panel the field is a block rather than an item in a flex row, so it takes its own
+   spacing and a little more width — a log pattern is longer than a library name. */
+.panel > .search-field {
+  margin: var(--space-3) 0;
+  max-width: 420px;
+}
+
 .toolbar__count {
   font-size: 13px;
   color: var(--text-muted);
@@ -1584,6 +1669,59 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+/* Worst known severity, carried on the row rather than the button inside it — the button's
+   background already means "keyboard-active" and "currently open", and a third meaning on the
+   same property would be least legible exactly where the reader is looking.
+
+   The wash is deliberately faint: this is a finder, not the findings table, and the job is to
+   make a list of names scannable rather than to restate a severity the panel below states
+   properly. */
+.finder__results li {
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.finder__results li[data-band='critical'] {
+  border-left-color: var(--severity-critical);
+  background: color-mix(in srgb, var(--severity-critical) 9%, transparent);
+}
+
+.finder__results li[data-band='high'] {
+  border-left-color: var(--severity-high);
+  background: color-mix(in srgb, var(--severity-high) 9%, transparent);
+}
+
+.finder__results li[data-band='medium'] {
+  border-left-color: var(--severity-medium);
+  background: color-mix(in srgb, var(--severity-medium) 9%, transparent);
+}
+
+.finder__results li[data-band='low'] {
+  border-left-color: var(--severity-low);
+  background: color-mix(in srgb, var(--severity-low) 9%, transparent);
+}
+
+/* A real vulnerability whose advisory carries no score. Grey, and never absent — "we don't
+   know how bad this is" must not render as "this is fine". */
+.finder__results li[data-band='none'] {
+  border-left-color: var(--severity-none);
+  background: color-mix(in srgb, var(--severity-none) 9%, transparent);
+}
+
+/* Checked, nothing found. No mark at all — and absence now means exactly this one thing,
+   which is what the dashed rule below buys. */
+.finder__results li[data-band='clean'] {
+  border-left-color: transparent;
+}
+
+/* Never scanned. Distinguished by *shape*, not by another colour: a reader who cannot tell
+   the bands apart can still tell "nobody has looked" from "looked and found nothing", which
+   is the distinction that actually changes what you should do next. */
+.finder__results li[data-band='unknown'] {
+  border-left-style: dashed;
+  border-left-color: var(--border-strong);
+}
+
 .finder__option {
   display: flex;
   align-items: baseline;
@@ -1612,6 +1750,26 @@ body {
   background: var(--accent-subtle);
 }
 
+/* Why the severity tint stopped partway across a row, which is what made this visible.
+
+   A flex item's default `min-width` is `auto`, resolving to its min-content size — and the
+   min-content of a purl coordinate is its longest run with no break opportunity, here
+   `com.fasterxml.jackson.core:jackson-` at roughly 270px against a 263px column. The name
+   could not shrink below that, so every long row was pushed wider than the list and the list
+   scrolled sideways. (`overflow-y: auto` forces `overflow-x` to `auto` too, which is where the
+   horizontal scrollbar came from — nothing asked for one.)
+
+   The tint then stranded because an `<li>` paints its own box, and that box is the container's
+   width, not the scroll width: anything scrolled into view past 263px sat on unpainted
+   background. Widening the row to the scroll width would fix the symptom and keep a sideways
+   scrollbar in a 263px type-ahead, which is not worth having. Letting the name break instead
+   removes the overflow, so the row and the container are the same width and the tint covers the
+   whole line by construction. */
+.finder__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .finder__version {
   flex: none;
   color: var(--text-muted);
@@ -1622,6 +1780,24 @@ body {
   margin: var(--space-1) 0 0;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* A rejected pattern reads as a note, not as a failure — it is the ordinary state of a regex
+   being typed. Coloured enough to be seen and not enough to alarm. */
+.finder__note--error {
+  color: var(--severity-critical);
+}
+
+/* The finder's own box is wider than the toolbar's and flows in a column rather than a flex
+   row, so it takes the wrapper's sizing from the input instead of the other way round. */
+.finder .search-field {
+  flex: none;
+  min-width: 0;
+  max-width: 480px;
+}
+
+.finder .search-field .finder__input {
+  padding-right: 34px;
 }
 
 /* Finder fixed on the left, answer on the right. The finder earns its column by staying
@@ -1669,6 +1845,108 @@ body {
 .bump-scope__line {
   margin: 0 0 var(--space-1);
   font-size: 13px;
+}
+
+/* One block per major line. These were table rows until the snippet column proved a table was
+   the wrong container: every cell in a column shares one width, so five lines of XML competed
+   with a prose advisory summary and lost — down to roughly 40px, wrapping one character per
+   line and stretching the row past 700px. Nothing here is compared column-by-column anyway;
+   the blocks are read one at a time until one is the answer. */
+.bump-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.bump-result {
+  padding: var(--space-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* Clean is the answer somebody is looking for, so it is the one that is findable by colour.
+   Affected and unreached stay neutral rather than competing for attention: neither is a
+   problem to fix, they are just not the answer. */
+.bump-result[data-outcome='clean'] {
+  border-left-color: var(--severity-low);
+}
+
+.bump-result[data-outcome='unprobed'] {
+  border-left-style: dashed;
+}
+
+/* The line that used to be a table row. Wraps rather than truncating — a long label and a long
+   version together are still shorter than the block is wide, and a version that ellipsised
+   would be useless. */
+.bump-result__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.bump-result__label {
+  margin: 0;
+  font-size: 14px;
+}
+
+.bump-result__version {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.bump-result__body > :first-child {
+  margin-top: var(--space-2);
+}
+
+/* The whole point of the change: full block width, so it wraps at a sensible column. */
+.bump-result__body .snippet {
+  max-width: 100%;
+}
+
+/* One major line: what was tried, then what it came to. The attempts used to be a flat log at
+   the bottom of the panel, disconnected from the results they produced — they could not be
+   grouped until the backend started saying which line each attempt belonged to. */
+.bump-group + .bump-group {
+  margin-top: var(--space-4);
+}
+
+.bump-group__title {
+  margin: 0 0 var(--space-2);
+  font-size: 14px;
+}
+
+.probe-steps {
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+/* Each attempt is a line of its own, with its outcome on the left edge. No badge: the text
+   already ends in "→ clean" or "→ still affected", and a chip repeating that word would be
+   the same fact twice on one line. */
+.probe-step {
+  padding: 2px 0 2px var(--space-3);
+  font-size: 12px;
+  color: var(--text-muted);
+  border-left: 2px solid var(--border);
+}
+
+.probe-step[data-outcome='CLEAN'] {
+  color: var(--text-primary);
+  border-left-color: var(--severity-low);
+}
+
+.probe-step[data-outcome='FAILED'] {
+  border-left-color: var(--severity-critical);
+}
+
+/* Nothing was learned. Dashed rather than another colour, matching the finder's unscanned
+   state — "we did not find out" is a different kind of answer from any verdict. */
+.probe-step[data-outcome='NOT_CHECKED'] {
+  border-left-style: dashed;
 }
 
 /* ------------------------------------------------------- monitoring ---- */

@@ -170,6 +170,10 @@ frontend/               React + Vite UI
   src/
     api/client.ts       fetch wrapper, response types, query/export URL building
     components/         shell pieces, settings panel, purl display helpers
+      SearchField.tsx   the one search box: regex toggle, negation toggle, and how a rejected
+                        pattern is reported. Four fields use it, and the meaning of those
+                        controls is the same claim in all four — copies would be four places
+                        for it to drift
     pages/              one component per route
     sboms/              SbomProvider: uploaded SBOMs, the current selection, and the
                         Component Inspector's open tabs per SBOM — in-memory above the
@@ -344,6 +348,13 @@ the severity summary went through two designs before the numbers showed which on
   500. `ApiExceptionHandler` declares handlers for that, `HttpMessageNotReadableException`
   (malformed JSON is a 400, not a 500) and `IllegalStateException` (409). Keep them.
 
+  **`InvalidFilterPatternException` has its own handler for the same reason**, added when the
+  search fields learned regular expressions. It is the one 400 here that arrives several times
+  per second — a filter field is typed into one character at a time, so `^(org\.spring` exists on
+  the way to every pattern beginning that way — which is also why it is deliberately **not**
+  logged: a line per keystroke would bury the entries that mean something, and nothing has gone
+  wrong.
+
   **`NoResourceFoundException` is not covered by the `ResponseStatusException` handler**, which
   is the trap: it implements `ErrorResponse` without extending it, so it fell to the catch-all
   and every unmapped `/api/…` path answered 500 with a stack trace in the log. Found live on
@@ -357,6 +368,20 @@ the severity summary went through two designs before the numbers showed which on
   picks its parser from the **filename**, which is why uploads are stored as
   `<uuid>.cdx.json`. All three are covered in
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+- **Maven is the opposite of osv-scanner about where the error is, and the assumption was
+  borrowed once already.** Maven *leads* with its summary and closes every failure with four
+  lines of advice and a `[Help 1]` wiki URL, so taking the last line reported
+  `[ERROR] [Help 1] http://cwiki.apache.org/…` as the cause of every probe failure.
+  `MavenInvocation.Result.lastMeaningfulLine` takes the first informative `[ERROR]` line for
+  this reason. Do not generalise one external tool's output convention to another.
+
+- **`Could not transfer artifact` does not mean the artifact is missing.** Maven prints it for
+  an untrusted certificate and for a genuinely absent artifact alike, so any classification has
+  to test for the TLS and connectivity signatures *first* — `ProbeFailureReason` has
+  `REPOSITORY_UNREACHABLE` ahead of `NOT_FOUND` for exactly that, after a real PKIX failure was
+  reported to the user as "Not found in any configured repository" for a library sitting in
+  Central. On these target machines that is the common case, not the exotic one.
 
 - **`npm` is `npm.cmd` on Windows.** The frontend build invokes npm from the PATH via
   `exec-maven-plugin`, with OS profiles in `frontend/pom.xml` selecting the right

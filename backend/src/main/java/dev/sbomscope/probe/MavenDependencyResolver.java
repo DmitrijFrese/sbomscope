@@ -454,7 +454,29 @@ public class MavenDependencyResolver implements DependencyResolver {
         return null;
     }
 
-    private ProbeOutcome classifyFailure(MavenInvocation.Result result) {
+    /**
+     * Signatures of a transfer that failed for a reason that is not about the artifact.
+     *
+     * <p>TLS first, because it is the failure this project's target machines actually hit:
+     * security software that inspects HTTPS re-signs certificates with a root the JVM's own
+     * truststore does not know. The README documents the fix in three places; what it could not
+     * do was stop the probe reporting it as a missing dependency.
+     */
+    private static final List<String> UNREACHABLE_SIGNATURES = List.of(
+            "pkix path building failed",
+            "unable to find valid certification path",
+            "certificate_unknown",
+            "suncertpathbuilderexception",
+            "certpathvalidatorexception",
+            "sslhandshakeexception",
+            "connection refused",
+            "connect timed out",
+            "unknownhostexception",
+            "no route to host");
+
+    // Package-private so the classification can be pinned directly. It is decided from Maven's
+    // own text, which is the part that changes between Maven versions without warning.
+    ProbeOutcome classifyFailure(MavenInvocation.Result result) {
         String output = result.output().toLowerCase(Locale.ROOT);
         String detail = result.lastMeaningfulLine();
 
@@ -466,6 +488,13 @@ public class MavenDependencyResolver implements DependencyResolver {
                 || output.contains("could not resolve plugin")
                 || output.contains("plugin org.apache.maven.plugins")) {
             return ProbeOutcome.failed(ProbeFailureReason.PLUGIN_UNAVAILABLE, detail);
+        }
+        // Before NOT_FOUND, and that order is the whole point: Maven says "Could not transfer
+        // artifact" for an untrusted certificate exactly as it does for an artifact that is
+        // genuinely absent, so testing for absence first answers "not found" to a machine whose
+        // only problem is a truststore.
+        if (UNREACHABLE_SIGNATURES.stream().anyMatch(output::contains)) {
+            return ProbeOutcome.failed(ProbeFailureReason.REPOSITORY_UNREACHABLE, detail);
         }
         if (output.contains("could not find artifact")
                 || output.contains("could not resolve dependencies")

@@ -21,6 +21,19 @@ public enum ProbeFailureReason {
      * its own tooling, sends them to fix the wrong thing.
      */
     PLUGIN_UNAVAILABLE,
+    /**
+     * Maven reached the repository and the transfer failed for a reason that is not about the
+     * artifact — most often a certificate it cannot verify, sometimes a host it cannot reach.
+     *
+     * <p>Split out for exactly the reason {@link #PLUGIN_UNAVAILABLE} was, and it was found the
+     * same way: a real run on a machine with TLS-inspecting security software failed with
+     * {@code PKIX path building failed}, and the panel reported <em>"Not found in any configured
+     * repository"</em>. The artifact was in Central and perfectly findable. Every one of those
+     * failures says {@code Could not transfer artifact}, which the {@code NOT_FOUND} test also
+     * matches, so this must be decided <b>before</b> it — a genuinely absent artifact and an
+     * untrusted certificate produce the same sentence from Maven and need opposite fixes.
+     */
+    REPOSITORY_UNREACHABLE,
     TIMEOUT,
     OTHER
 }

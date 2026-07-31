@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import { fetchActivity, fetchLogStatus, openLogFolder } from '../api/client';
 import type { ActivityEvent, LogStatus } from '../api/client';
+import { SearchField } from './SearchField';
 
 const POLL_INTERVAL_MS = 3000;
+const FILTER_DEBOUNCE_MS = 250;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
@@ -30,6 +32,9 @@ export function LoggingPanel() {
   const [status, setStatus] = useState<LogStatus | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+  const [regex, setRegex] = useState(false);
+  const [negate, setNegate] = useState(false);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
 
@@ -43,11 +48,14 @@ export function LoggingPanel() {
     let cancelled = false;
 
     function poll() {
-      fetchActivity(200)
+      fetchActivity(200, filter, regex, negate)
         .then((result) => {
-          if (!cancelled) setEvents(result);
+          if (cancelled) return;
+          setEvents(result);
+          setError(null);
         })
         .catch((e: unknown) => {
+          // Rows already shown stay put — a pattern mid-word must not empty the table.
           if (!cancelled) setError(messageOf(e));
         })
         .finally(() => {
@@ -57,12 +65,13 @@ export function LoggingPanel() {
         });
     }
 
-    poll();
+    const debounce = window.setTimeout(poll, filter ? FILTER_DEBOUNCE_MS : 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(debounce);
       if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
     };
-  }, []);
+  }, [filter, regex, negate]);
 
   async function openFolder() {
     setOpening(true);
@@ -106,11 +115,23 @@ export function LoggingPanel() {
           {openError}
         </p>
       )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
+
+      {/* Matched against the columns below rather than the stored JSON, so `^SCAN` finds the
+          event name — against the raw record it would match nothing while a field name nobody
+          can see would match. Filtered on the backend, which can read further back than the
+          200 rows shown here. */}
+      <SearchField
+        value={filter}
+        onValueChange={setFilter}
+        regex={regex}
+        onRegexChange={setRegex}
+        negate={negate}
+        onNegateChange={setNegate}
+        placeholder="Find an event…"
+        ariaLabel="Find an event"
+        note={error}
+        inputClassName="toolbar__search"
+      />
 
       <div className="table-scroll" style={{ marginTop: 'var(--space-4)' }}>
         <table className="data-table">
@@ -126,7 +147,7 @@ export function LoggingPanel() {
           <tbody>
             {events.length === 0 && (
               <tr>
-                <td colSpan={5}>Nothing logged yet.</td>
+                <td colSpan={5}>{filter ? 'No events match that.' : 'Nothing logged yet.'}</td>
               </tr>
             )}
             {events.map((event, index) => (

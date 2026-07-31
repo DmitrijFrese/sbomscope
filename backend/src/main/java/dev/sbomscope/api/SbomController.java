@@ -130,9 +130,21 @@ class SbomController {
             /** The artifact's own registry page, or null where we have nothing safe to link. */
             String registryArtifactUrl,
             /** This exact version's page, or null where that version has none. */
-            String registryVersionUrl) {
+            String registryVersionUrl,
+            /**
+             * The worst band standing against this component, or <b>null for never scanned</b>.
+             *
+             * <p>Null is not "clean" and must not be rendered as it. {@code CLEAN} means checked
+             * with nothing found; null means nobody has looked, which in a security tool is the
+             * one ambiguity worth spending a distinct visual state on.
+             */
+            FindingQuery.SeverityBand severity) {
 
         static ComponentResponse from(StoredComponent component) {
+            return from(component, null);
+        }
+
+        static ComponentResponse from(StoredComponent component, FindingQuery.SeverityBand severity) {
             RegistryLinks.Links links = RegistryLinks.forPurl(component.purl());
             return new ComponentResponse(
                     component.id(),
@@ -145,7 +157,8 @@ class SbomController {
                     component.root(),
                     component.scope(),
                     links.artifactUrl(),
-                    links.versionUrl());
+                    links.versionUrl(),
+                    severity);
         }
     }
 
@@ -224,12 +237,24 @@ class SbomController {
                 .body(new FileSystemResource(files.pathFor(id)));
     }
 
+    /**
+     * The SBOM's components, each carrying the worst band standing against it.
+     *
+     * <p>The severity rides on this response rather than arriving from a call of its own: the
+     * finder renders one list, and two sources would let its colours describe a different set of
+     * components than its rows. One extra query per call, against a list already being read.
+     */
     @GetMapping("/{id}/components")
     List<ComponentResponse> components(@PathVariable UUID id) {
         if (service.findById(id).isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
         }
-        return service.findComponents(id).stream().map(ComponentResponse::from).toList();
+        Map<String, FindingQuery.SeverityBand> worst = scans.worstBandByPurl(id);
+        return service.findComponents(id).stream()
+                // Absent from the map means no scan row at all, and null carries that through
+                // to the client as "never checked" rather than collapsing it into CLEAN.
+                .map(component -> ComponentResponse.from(component, worst.get(component.purl())))
+                .toList();
     }
 
     /**

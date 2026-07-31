@@ -290,7 +290,7 @@ class FindingsExcelExporterTest {
         // Without this, a workbook holding 40 of 600 findings looks identical to a complete
         // one, and the reader has no way to tell a slice from the whole picture.
         FindingQuery narrowed = new FindingQuery(
-                FindingQuery.SortField.COMPONENT, true, "jackson",
+                FindingQuery.SortField.COMPONENT, true, "jackson", false, false,
                 EnumSet.of(FindingQuery.SeverityBand.CRITICAL, FindingQuery.SeverityBand.HIGH),
                 EnumSet.of(DependencyScope.DIRECT), 20, 0);
 

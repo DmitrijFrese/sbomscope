@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -112,7 +113,32 @@ final class MavenInvocation {
             return !startFailed && !timedOut && exitCode == 0;
         }
 
-        /** The last non-blank line — Maven's own {@code [ERROR]} summary comes last. */
+        /**
+         * Boilerplate Maven prints after every failure, in the order it prints it.
+         *
+         * <p>Not errors — advice about re-running with {@code -e} and a link to a wiki page.
+         */
+        private static final List<String> BOILERPLATE = List.of(
+                "-> [help",
+                "to see the full stack trace",
+                "re-run maven using",
+                "for more information about the errors",
+                "[help ");
+
+        /**
+         * The line that actually says what went wrong.
+         *
+         * <p><b>The first informative {@code [ERROR]} line, not the last one.</b> This read the
+         * last non-blank line, borrowed from the osv-scanner contract where errors genuinely do
+         * come last — and Maven is the opposite: it ends every failure with four lines of advice
+         * and a wiki URL, so a real PKIX failure was reported to the panel as
+         * <em>"[ERROR] [Help 1] http://cwiki.apache.org/…/DependencyResolutionException"</em>.
+         * Maven leads with its summary (<em>"Failed to execute goal on project probe: Could not
+         * collect dependencies…"</em>), which is the line worth showing.
+         *
+         * <p>Falls back to the old behaviour when nothing matches, because a wrong-but-present
+         * line still beats an empty message.
+         */
         String lastMeaningfulLine() {
             if (startFailed) {
                 return startError == null ? "mvn could not be started." : startError;
@@ -122,6 +148,19 @@ final class MavenInvocation {
                 return "mvn exited " + exitCode + " with no output.";
             }
             String[] lines = trimmed.split("\n");
+
+            for (String line : lines) {
+                String candidate = line.strip();
+                String withoutPrefix = candidate.replaceFirst("(?i)^\\[error]\\s*", "").strip();
+                if (!candidate.regionMatches(true, 0, "[ERROR]", 0, 7) || withoutPrefix.isEmpty()) {
+                    continue;
+                }
+                String lowered = withoutPrefix.toLowerCase(Locale.ROOT);
+                if (BOILERPLATE.stream().noneMatch(lowered::startsWith)) {
+                    return candidate;
+                }
+            }
+
             for (int i = lines.length - 1; i >= 0; i--) {
                 if (!lines[i].isBlank()) {
                     return lines[i].strip();
