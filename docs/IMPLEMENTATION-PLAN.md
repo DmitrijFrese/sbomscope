@@ -6,7 +6,7 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-07-31 · Status: **Phases 0–2, 4–7 complete. Phase 8 Tier 1 complete; Tier 2
+Last updated: 2026-08-01 · Status: **Phases 0–8 complete except 8's second pass. Phase 8 Tier 1 complete; Tier 2
 passes A–D built and verified against a real `mvn`, plus the configurable probe budget,
 Maven profiles, configurable plugin versions, queued-vs-running status, full `mvn` command and
 output logging, continuable searches, and honest reporting of a budget-truncated major. One
@@ -29,12 +29,24 @@ sorting, and a negating filter toggle) — plus two bugfix passes: the manual re
 affected SBOMs stale rather than leaving them looking current for a week) and the Maven probe
 reporting a TLS failure as a missing dependency.
 
-README and ARCHITECTURE were brought back in step with all of it on 2026-07-31.
+**Phase 3 is done as of 2026-08-01** — CISA KEV and EPSS, researched, specified across thirteen
+decisions, built and verified against both real feeds. Two additive migrations (V4, V5), a new
+`dev.sbomscope.exploit` package, two columns in the table and the Inspector, an "Exploitation
+signals" Settings panel with a Load control for a file carried across by hand, and both feeds on
+the Excel About sheet. **The frontend has unit tests for the first time** (Vitest + jsdom +
+Testing Library, 25), added on the maintainer's instruction after a formatter bug rendered a
+probability of 0.99945 as "100%".
+
+**Where the schema stands: V5 is the highest migration taken.** V1 baseline, V2 `osv_index`,
+V3 `fixed_version_sort`, V4 `kev_entry`/`kev_source`, V5 `epss_score`/`epss_source`. Additive
+only, per constraint 8.
+
+README, AGENTS.md and ARCHITECTURE were brought back in step with all of it on 2026-08-01.
 
 Next: **B10 (secondary sort), then B11 — which is the open decision and needs the maintainer —
-then B12, B13, and B14 (route completeness), which is specified in full** — then Phase 3 and
-Phase 9. Phase 3 feasibility research is still outstanding and was asked for before any of it
-is built.
+then B12, B13, and B14 (route completeness), which is specified in full** — then Phase 9.
+B10 now carries a second rider: KEV deliberately has no filter, so *"exploited, worst first"*
+needs the secondary sort before it is expressible at all.
 
 ---
 
@@ -45,7 +57,7 @@ is built.
 | 0 | Project scaffolding runs end to end | **Done** |
 | 1 | Upload an SBOM and see its components | **Done** |
 | 2 | Offline vulnerability matching works | **Done** |
-| 3 | Findings enriched with KEV / EPSS | Not started |
+| 3 | Findings enriched with KEV / EPSS | **Done** |
 | 4 | Vulnerability table complete | **Done** |
 | 5 | Excel export | **Done** |
 | 6 | Component Inspector: the shell | **Done** |
@@ -198,12 +210,211 @@ this phase is only the two feeds NVD never provided anyway.
 - [x] Attribute the CVSS vector honestly when a group's aliased advisories disagree about
       severity — the score is the group maximum, the rest of the row is one advisory, and
       the two must not be presented as one statement (see decision log)
-- [ ] CISA KEV catalog ingest → actively-exploited flag per CVE
-- [ ] EPSS ingest (FIRST.org) → exploitation probability per CVE
-- [ ] Refresh flow for both feeds, user-triggered only, showing per-feed last refresh
+- [x] CISA KEV catalog ingest → actively-exploited flag per CVE — **backend built 2026-08-01**
+      (`V4__kev.sql`, `KevCatalogLoader`), verified live: 1,656 entries loaded from the real
+      catalogue, and the join marks exactly the four CVEs the offline measurement predicted
+- [x] EPSS ingest (FIRST.org) → exploitation probability per CVE — **backend built 2026-08-01**
+      (`V5__epss.sql`, `EpssScoreLoader`), verified live: 354,453 scores loaded, 294 of 300 rows
+      on the adversarial fixture scored
+- [x] Refresh flow for both feeds, user-triggered only, showing per-feed last refresh —
+      `ExploitFeedService`, `GET/POST /api/exploit-feeds`. Each feed reports its **own** as-of
+      date (`dateReleased`, `score_date`) rather than a download timestamp, so a file carried
+      across on a USB stick describes itself correctly
+- [x] The two columns in the findings table, the Component Inspector and the glossary —
+      **built 2026-08-01**, rendered by one `KevCell`/`EpssCell` pair so a mark visible in the
+      table cannot be absent one click deeper
+- [x] The "Exploitation signals" Settings panel — **built 2026-08-01**, with a Load control for
+      a file carried across by hand
+
+**Done.** Verified end to end in a running application against both real feeds. On
+`vuln-multi-module.cdx.json`, 300 finding rows: 296 carry a CVE, **294 are EPSS-scored**, and
+**6 rows are KEV-listed across 4 distinct CVEs** — `CVE-2020-1938`, `CVE-2022-22965`,
+`CVE-2023-44487`, `CVE-2025-24813`, exactly the four the offline measurement predicted before
+anything was built. Sorting by either column is correct in both directions, and the Inspector
+shows the same advisories in the same words as the table.
 
 **Done when**: findings show KEV status and EPSS alongside severity, refreshable on
 demand from a connected machine and usable offline afterwards.
+
+### Feasibility, measured — researched 2026-08-01, not started
+
+Asked for before anything is built, because one answer decides the shape of the whole phase:
+**can each feed be downloaded whole?** A bulk public download is constraint 1's category 2 —
+asking for *everything* discloses nothing about which libraries are held. A per-CVE lookup API
+would be category 3 and therefore unavailable to us. Both feeds pass, and the numbers below were
+measured on this machine rather than read off a documentation page.
+
+**The two feeds.**
+
+| | CISA KEV | EPSS |
+|---|---|---|
+| URL | `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` | `https://epss.empiricalsecurity.com/epss_scores-current.csv.gz` |
+| Also published as | CSV at `/sites/default/files/csv/…` (note: **different path**, not `/feeds/`), plus a JSON Schema at `/feeds/known_exploited_vulnerabilities_schema.json` | dated files `epss_scores-YYYY-MM-DD.csv.gz`, archive back to 2021-04-14 at `github.com/empiricalsec/epss_scores` |
+| Downloaded whole | **Yes** — 1.50 MB, one request, no credentials | **Yes** — 2.39 MB gzipped, 10.3 MB expanded, one request, no credentials |
+| Redirects | none | `-current` → today's dated file, **same host**, S3-backed |
+| Contents | 1,656 entries; `catalogVersion` 2026.07.29 | 354,453 scored CVEs; `model_version:v2026.06.15` |
+| Shape | `{catalogVersion, dateReleased, count, vulnerabilities[]}`, each with `cveID`, vendor, product, `dateAdded`, `dueDate`, `knownRansomwareCampaignUse`, `cwes[]` | comment line carrying `model_version` and `score_date`, then `cve,epss,percentile` |
+| Freshness metadata | `Last-Modified` + `ETag`, and `dateReleased` inside the document | `score_date` **inside the file**, plus `Last-Modified`/`ETag` |
+| Cadence | irregular; measured from `dateAdded`: 36 release days and 69 entries in the last 90, 265 entries in the last year | daily, published shortly after 13:30 UTC |
+| Licence | **CC0 1.0** (`/sites/default/files/licenses/kev/license.txt`) — no attribution obligation; the CISA logo and DHS seal are separately reserved | free, no registration; **attribution requested** when used in a publication or product |
+
+Both therefore fit the OSV archives' existing shape exactly: one fixed URL, shown in the UI, no
+credentials, downloadable whole, and small enough to carry across on a USB stick — 4 MB against
+the npm archive's 200 MB.
+
+**Neither needs an API, and EPSS's own documentation says so.** FIRST states the EPSS API is
+"designed for lookup, not bulk access" and names the daily CSV as the right mechanism for keeping
+a local copy. The API is per-CVE, which is category 3 by shape, so the feed we are permitted to
+use is also the one its publisher recommends. Constraint 4 is untouched: neither feed is NVD.
+
+**Coverage, measured against the archives already on this machine.**
+
+| | Maven | npm |
+|---|---|---|
+| Advisories in the archive | 6,895 | 224,117 |
+| Carrying a CVE alias | 6,687 (97.0%) | 5,546 (2.5%) — the rest are `MAL-*` |
+| Distinct CVEs | 6,675 | 5,531 |
+| …in KEV | **52 (0.8%)** | 13 (0.2%) |
+| …scored by EPSS | **6,610 (99.0%)** | 5,439 (98.3%) |
+| …EPSS ≥ 0.10 | 617 | 153 |
+| …EPSS ≥ 0.50 | 292 | 50 |
+
+Against the maintainer's own two uploaded SBOMs (289 finding rows, 212 distinct CVEs): **4 in
+KEV** — `CVE-2020-1938`, `CVE-2022-22965`, `CVE-2023-44487`, `CVE-2025-24813` — and **211 of 212
+scored by EPSS**, the one gap being `CVE-2024-10039`. So KEV is a rare, loud mark and EPSS is a
+number on nearly every row. They are not two versions of the same column.
+
+**The GHSA-only rows.** KEV is keyed by CVE and EPSS is keyed by CVE, so a finding with no CVE
+cannot be looked up in either — not "absent from KEV", *unaskable*. 4 of the maintainer's 289
+rows and 208 of 6,895 Maven advisories (3.0%) are in that state, and on npm it is the normal case
+rather than the exception, since 97.5% of npm advisories are `MAL-*` with no CVE at all. **That
+needs a third rendering, distinct from both a set flag and a cleared one** — the same
+NONE-versus-CLEAN distinction the severity bands already carry, one column along. An empty KEV
+cell that means "no CVE to check" must not look like one that means "checked, not exploited".
+
+**A tempting shortcut that measurement rules out.** GitHub adds a reference URL pointing at the
+KEV catalog to advisories whose CVE is listed, so the flag appears to be derivable from archives
+we already download, at no new network cost. Tested against the authoritative feed:
+
+| | Maven | npm |
+|---|---|---|
+| Actually in KEV | 52 | 13 |
+| Flagged by the reference URL | 48 | 8 |
+| False alarms | **0** | **0** |
+| **Missed** | **4** | **5** |
+
+Perfect precision, and it misses 8% of Maven and 38% of npm. The Maven misses include
+`CVE-2022-22947` (Spring Cloud Gateway) and `CVE-2015-1427` (Elasticsearch) — both genuinely
+exploited. A signal that is silently absent on the rows that matter most is exactly the failure
+class this project designs against, so the real feed is the only honest source. Worth knowing the
+proxy exists, and worth not using it.
+
+**EPSS staleness is a different question from archive staleness, and smaller than it looks.**
+A daily-changing probability sounds like it would age fast. Measured, comparing today's file
+against three earlier ones:
+
+| Compared against | Scores that moved at all | Moved by ≥ 0.01 | Of the maintainer's 212 |
+|---|---|---|---|
+| Yesterday | 3,344 of 354,176 (0.9%) | 51 (0.01%) | **0 moved at all** |
+| One week ago | 23,446 (6.7%) | 289 (0.1%) | 12 moved, 1 by ≥ 0.01 |
+| One month ago | 84,149 (24.5%) | 1,746 (0.5%) | 59 moved, 1 by ≥ 0.01 |
+
+So a month-old EPSS file misstates one of the maintainer's rows by more than a hundredth. The
+material change is the **model version**, which moves every score at once and happens roughly
+annually — v5 (`v2026.06.15`) started publishing on 2026-06-15. That is what a freshness line has
+to be able to say, and the file states its own `score_date` and `model_version`, so it can be read
+from the data rather than inferred from a file's modification time.
+
+**What this phase must *not* do**: feed either date into `ScanService.staleReason`. That marks an
+SBOM's *findings* stale, because a refreshed OSV archive can change which advisories apply. A
+newer KEV or EPSS file changes a displayed column and nothing else, and is applied by re-reading a
+table rather than by re-running an external process. Two per-feed "as of" lines, not a third
+`StaleReason`.
+
+- [ ] **Recommended shape, if this is built**: mirror the OSV archive/index split exactly. Store
+      each downloaded file under the data directory (so it is USB-portable and has something for
+      B12's purge to erase), parse it into a table — `kev_entry` keyed by `cve_id`, `epss_score`
+      keyed by `cve_id` — and record the source's own identity beside it, as `osv_index_source`
+      already does. Join at query time on `vulnerability_finding.cve_id`, which is where the
+      existing `FindingQuery` already lives, so the view and the export cannot diverge.
+### Decided while specifying — 2026-08-01
+
+**`epss_score` holds the whole file, all 354,453 rows.** Storing only the CVEs currently in the
+database was the alternative and would have cost about 200 rows instead of 354k. It discloses
+nothing either way — the whole file is fetched regardless — but fetching is manual by constraint
+2, so a CVE discarded today stays blank until somebody presses the button again, and *"we threw
+this away"* renders identically to *"EPSS does not score this"*. That is the NONE-versus-CLEAN
+failure in a new column. Keeping everything also makes a refresh a straight reload with no
+dependency on what happens to be in `vulnerability_finding` at the time. The cost is roughly
+20–30 MB in a database already at 170 MB.
+
+**Both new columns carry their key information in the cell, not behind a tooltip.** Decided
+against an earlier recommendation to put the EPSS percentile in a `title` attribute. Two reasons
+it reversed cleanly. The score alone is genuinely hard to read — `0.033` looks negligible where
+*"87th percentile"* says it is worse than most of what you own — so the percentile is not
+decoration, it is what makes the number mean something. And the table redesign being specified
+alongside this makes every cell two-line anyway: the Component cell stacks group over artifact,
+the Severity cell stacks the CVSS band under the score, so a stacked EPSS cell is the shape the
+row already has rather than an exception in it. KEV follows the same rule — the mark and how long
+the flaw has been known sit in the cell together, since a CVE listed four years ago and one
+listed last week are very different states of being behind, and a tooltip is where information
+goes to be missed on the screen it matters on.
+
+**The remaining eleven, decided one at a time on 2026-08-01.** Reasoning for the arguable ones is
+in the decision log; this is the buildable list.
+
+| # | Decided |
+|---|---|
+| 1 | **The KEV cell** reads as a mark plus *"known exploited since <dateAdded>"*, with a distinct second mark for `knownRansomwareCampaignUse == Known`. The whole record is stored, so a later addition is a render change rather than a re-parse. **`requiredAction` and `dueDate` are never surfaced** — that deadline binds US federal agencies under BOD 26-04 and nobody else, and showing it would invent an obligation the reader does not have |
+| 2 | **Both files live in `~/.sbomscope/exploit/`**, beside `osv-db` rather than inside it, since nothing about them belongs to osv-scanner — which is handed that directory as `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` and walks it. Erased by **B12's existing archive target**, not a fifth checkbox: the four targets differ by orders of magnitude in what they cost to undo, and 4 MB is not a new order of magnitude |
+| 3 | **No KEV filter — sorting is the whole interaction.** With 4 of 212 rows listed, one click on the header is the same outcome as a filter, with no new state to persist, revive or put on the About sheet. **Consequence, recorded rather than discovered:** *"exploited, worst first"* is unavailable until **B10** lands, because it needs two criteria at once. That is a real link from this phase to that one |
+| 4 | **Both columns sortable, the clicked column leading and the existing scored/unscored/clean rank deciding the tail** — exactly `FIXED_VERSION`'s shape, for the reason B8 recorded: leading with the rank sorts by whether a finding carries a CVSS score before the column the reader actually clicked. Nulls last in both directions |
+| 5 | **Both columns in the export, and the About sheet records each feed's as-of date.** A KEV column in an undated workbook cannot distinguish *"not exploited"* from *"our copy predates the listing"* — the same defect the filter lines on that sheet already prevent. The dates are the feeds' own (`catalogVersion`/`dateReleased`, `score_date`), not download timestamps |
+| 6 | **Feed-absent is stated once above the table; the cell distinguishes only "not listed" from "no CVE".** Whether a feed has been downloaded is a fact about the installation and identical on every row, so repeating it 300 times says one thing 300 times — `ScanReadinessHint` is the precedent. The per-row distinction that genuinely varies is the NONE-versus-CLEAN one, and that is what the cell carries |
+| 7 | **Two additive migrations, V4 for KEV and V5 for EPSS**, each with its own source row recording that feed's identity, **written last** so an interrupted load leaves rows nothing considers usable — the same reasoning as `osv_index_source` and `all.zip.partial` |
+| 8 | **Both signals appear on the Component Inspector's advisory list**, through the shared presentation code. A KEV mark visible in the table and absent one click deeper is exactly the divergence `presentation.tsx` was extracted to make impossible |
+| 9 | **The scope badges are repointed at neutral tokens.** `badge--scope-application` uses `--severity-high` and `badge--root` uses `--severity-low` today, for values that are not severities; once GHSA ratings are coloured from that palette a row carries three coloured badges and one borrows risk hues for a non-risk meaning. Risk colour should mean risk everywhere on the row |
+| 10 | **One "Exploitation signals" Settings panel, two rows, no enabled toggle and no download gate.** Nothing to switch off — with no file downloaded the table says so — and the 2026-07-27 gate exists because 200 MB with no way to read it is a dead end, where 4 MB staged for an air-gapped machine is the normal case here. **EPSS attribution is static text in that panel**, plus the README and the glossary |
+| 11 | **The Component cell reserves the group line always**, so an unscoped npm package (`lodash`, no group) does not produce a one-line row among two-line ones. A frozen leading column is what the eye tracks while scrolling sideways, and ragged heights there cost more than the blank line does. To be **measured against `npm-frontend.cdx.json`** before it ships |
+
+**Settled earlier in the same conversation**, and belonging with the list above:
+
+- **GHSA ratings are coloured from the severity palette** — `CRITICAL→critical, HIGH→high,
+  MODERATE→medium, LOW→low`, and a null rating (records GitHub did not author) stays a muted dash
+  with no colour. An earlier recommendation to give them a deliberately different *treatment* was
+  **withdrawn**: the columns are separately labelled and the glossary already says they are
+  different scales, so a row where the two disagree reads as two sources disagreeing, which is
+  the reason both columns exist.
+- **The KEV cell links; the EPSS cell does not.** `…/known-exploited-vulnerabilities-catalog?field_cve=<CVE>`
+  derives from the CVE id alone, exactly as the NVD link does, and is the same URL GitHub itself
+  attaches to listed advisories — linked **only when the flag is set**, since a blank cell linking
+  to a search that finds nothing is a promise the page cannot keep. EPSS has no public per-CVE
+  page that is not the API, and the API is constraint 1's category 3 by shape, so it stays
+  unlinked and the explanation lives in the glossary. The asymmetry is the honest outcome, not an
+  inconsistency to iron out.
+- **Both columns join `COMPACT_DEFAULT` but are not `locked`.** Locked means *a row without this
+  cannot be acted on* — what, which version, which advisory, how bad. These two are
+  prioritisation, not identification, and locking them would stop somebody who has not downloaded
+  the feeds from removing two permanently empty columns.
+- **The Component cell stacks group over artifact**, group muted and small on line 1, artifact
+  below at weight 600 carrying the link. **Group above, deliberately**: `COMPONENT` sorts by
+  `LOWER(c.purl)`, which is group-then-artifact, so this makes the reading order down the column
+  the sort order. Prominence is weight, not position. Three riders: the link goes on the artifact
+  line only (there is no stable group page for npm, and a third URL out of `RegistryLinks.forPurl`
+  would reopen the B2 design where both destinations come from one parse); repeated groups are
+  **not** suppressed on runs, because a row has to survive filtering, paging and the export
+  standing alone; and the full `group:artifact` stays the link's accessible name, since two lines
+  otherwise copy as two lines where today the cell yields a coordinate that pastes straight into a
+  POM.
+- **The Severity cell stacks the CVSS band under the score** rather than beside it. The band is
+  CVSS's own word — `MODERATE` is GitHub's and stays in GitHub's column, which is what
+  `presentation.tsx` records the split for.
+- **The leading column cluster freezes**, row number and row action included: freezing Component
+  alone would let the Inspect button scroll away from the row it belongs to. Two traps to expect
+  — `.data-table` sets `border-collapse: collapse`, and collapsed borders on sticky cells are the
+  usual casualty; and the sticky cell needs an opaque background that still inherits row hover,
+  or the effect dies exactly on the column being pointed at. The header is already
+  `position: sticky; top: 0`, so the corner cell needs both axes and a higher `z-index`.
 
 ## Phase 4 — Vulnerability view
 
@@ -4257,3 +4468,233 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   stable shape filling in rather than a growing list. And 2.5 seconds after pressing Continue —
   the moment the panel used to blank — all 24 groups and 23 result cards were still on screen
   with 22 verdicts intact, while the attempt count climbed from 25 to 28.
+- 2026-08-01 — **Phase 3 is feasible, both feeds are category 2, and nothing is built pending the
+  maintainer's decision on ordering.** Full measurements in the Phase 3 section above; four
+  findings belong here because each would otherwise be re-derived.
+
+  **Both feeds download whole, which is the answer the phase's shape depended on.** KEV is 1.5 MB
+  of JSON and EPSS 2.4 MB gzipped, each from one fixed URL with no credentials — smaller than the
+  Maven OSV archive and a fraction of the npm one, so both inherit the USB-stick property this
+  product is built around. FIRST's own documentation says the EPSS API is for lookup rather than
+  bulk access and names the daily CSV as the right mechanism, so the file we are *permitted* to
+  use under constraint 1 is also the one its publisher recommends. Constraint 4 is untouched:
+  neither feed is NVD.
+
+  **Licences differ and only one creates an obligation.** KEV is CC0 1.0 with no attribution
+  requirement (the CISA logo and DHS seal stay reserved, which we would not use anyway). EPSS is
+  free and unregistered but **attribution is requested** in a product that uses it — a line in the
+  UI and the README, not a constraint on the design, and cheaper than the NVD redistribution
+  obligations that helped rule NVD out.
+
+  **The KEV flag looks derivable from data already on disk, and measurement says do not.** GitHub
+  attaches a KEV catalog reference URL to advisories whose CVE is listed, which would make the
+  column free. It has perfect precision over both archives and misses 4 of 52 Maven CVEs and 5 of
+  13 npm ones — including Spring Cloud Gateway's `CVE-2022-22947`. A quietly absent
+  actively-exploited mark on the rows that most deserve it is the failure this project keeps
+  designing out, so the real feed is the only honest source. Recorded so the shortcut is refused
+  once rather than reconsidered later.
+
+  **EPSS ages far more slowly than "daily" suggests, and its freshness is not the SBOM's.** Day
+  over day, 0.9% of scores move at all and 0.01% by ≥ 0.01; across the maintainer's own 212 CVEs,
+  nothing moved. What actually moves scores is a model version, roughly annually. So EPSS does not
+  need the seven-day clock and must not touch `ScanService.staleReason` — that flag means *the
+  findings may be wrong*, because a refreshed OSV archive changes which advisories apply, whereas
+  a newer KEV or EPSS file changes a displayed column and is applied by re-reading a table. Two
+  per-feed "as of" lines, read from `score_date`/`dateReleased` inside the documents themselves
+  rather than from a file modification time.
+
+  **One consequence for the table, decided by the data rather than by taste:** KEV marks 4 of the
+  maintainer's 212 CVEs and EPSS scores 211 of them, so they are not two spellings of one column.
+  And since both are keyed by CVE, the 3% of Maven findings that are GHSA-only are *unaskable*
+  rather than negative — they need a third rendering, distinct from a set flag and a cleared one,
+  for the same reason `NONE` is not `CLEAN`.
+- 2026-08-01 — **Phase 3 is specified in full and being built; thirteen decisions taken one at a
+  time.** The buildable list is the table in the Phase 3 section. Five of them carry reasoning
+  worth keeping, and two are qualifications of earlier decisions rather than new ones.
+
+  **KEV gets no filter, on the maintainer's call, against a recommendation for one.** The proposal
+  was a *"Known exploited only"* toggle in the view-options menu, placed there because B9
+  established the toolbar stays a single 39px row. The answer was that with 4 of 212 rows listed,
+  one click on a sortable header produces the same set with no new state to persist, revive or
+  record on the About sheet — and refusing state that earns nothing is the same discipline B18
+  applied to refusing five sortable columns. **The consequence is recorded rather than left to be
+  discovered:** *"exploited, worst first"* needs two criteria at once and is therefore unavailable
+  until **B10**. That is a genuine dependency from this phase onto that one, and B10 should be
+  read with it in mind.
+
+  **A recommendation to give GHSA ratings a different visual treatment was withdrawn after
+  pushback, and the pushback was right.** The argument had been that painting both badness columns
+  from one palette would make a row where they disagree read as a rendering fault. It does not:
+  the columns are separately labelled, the glossary already states they are different scales, and
+  the disagreement is the entire reason both columns exist — so rendering it in one visual language
+  is how a reader *notices* it rather than how they are misled. Same palette, same treatment.
+  Recorded as a reversal because the original reasoning was speculation about a reader presented
+  as a finding, which is the failure mode this log exists to catch.
+
+  **What survived that exchange was a defect in the existing CSS, found while arguing the wrong
+  point.** `badge--scope-application` is painted `--severity-high` and `badge--root`
+  `--severity-low`, for values that are not severities at all. Harmless while the palette had one
+  meaning; once GHSA ratings are coloured, a row carries three coloured badges of which one
+  borrows risk hues for a category. The scope badges move to neutral tokens, so risk colour means
+  risk everywhere on the row. `tokens.css` holds every colour in one place, which is what makes
+  this small.
+
+  **Feed-absent is a fact about the installation, not about a row.** All three empty states are
+  real and must stay distinguishable, but the first is identical on every row simultaneously —
+  stamping it into 300 cells says one thing 300 times and crowds out the distinction that actually
+  varies. It is stated once above the table, where `ScanReadinessHint` already sets the precedent
+  for a missing prerequisite, and the cell carries only *"not listed"* versus *"no CVE to ask
+  with"*. That keeps the NONE-versus-CLEAN discipline exactly where it bites.
+
+  **Two qualifications of earlier decisions, neither a reversal.** The 2026-07-27 rule gating
+  archive downloads on scanning being enabled **does not extend to these two feeds**: it exists
+  because offering 200 MB that nothing can read is a dead end, and 4 MB staged for an air-gapped
+  machine is this feature's normal case rather than its exotic one. And there is **no enabled
+  toggle** to match `ScannerSettings`: that flag gates an external process and a user-supplied
+  path, where here the honest empty state already says whether a file has been downloaded, and a
+  toggle whose only effect is hiding data already on disk earns nothing.
+
+  **One thing not decided by preference at all.** `requiredAction` and `dueDate` are stored and
+  never rendered. They are BOD 26-04 obligations binding on US federal agencies; putting that date
+  on a developer's screen would invent a deadline they do not have, which is a wrong statement
+  rather than a spare column.
+- 2026-08-01 — **Phase 3 is built, and three of its bugs were found by verifying rather than by
+  reading.** Each is worth keeping, because each is a case where correct-looking code made a
+  false statement.
+
+  **A probability was rounded up to certainty.** `formatEpssProbability` had a `>99.9%` branch
+  precisely to stop this, and the branch below it defeated it: `toFixed(0)` turned 0.99945 into
+  **"100%"**, stating certainty about a number EPSS never publishes as 1. Found on screen, on a
+  real row. Anything above 99% now keeps a decimal and the very top says `>99.9%`; the mirror
+  case is guarded too, since "0%" would read as *"this will not happen"*. `formatPercentile`
+  had the same defect and the same fix — an exact 1.0 is genuinely "100th" and 0.99973 is not.
+
+  **The feed-absent notice contradicted the rows underneath it.** `FeedStatus.loaded` means
+  "rows exist *and* were built from the file currently on disk", which is the right question for
+  Settings and the wrong one for the table: a catalogue loaded successfully and then moved on
+  disk still fills every cell it filled before. Keying the notice on it put *"the KEV catalogue
+  has not been downloaded, so that column is empty on every row"* directly above six rows
+  visibly marked **Exploited**. `hasData` was split out for the notice and the export's About
+  sheet — the question the *cells* answer — and `loaded` kept its stricter meaning for the Load
+  button. Found by moving the file and reloading, which was meant to be a check of the identity
+  comparison and caught something else instead.
+
+  **Two new columns were in the core set and on nobody's screen.** A stored column preference
+  cannot contain a column that did not exist when it was written, and `reviveColumns` had no way
+  to tell that from one somebody deliberately unticked — so Phase 3's columns appeared only for
+  a first-time visitor. The preference now records which columns were *known* when it was
+  written, and a column added to the core set since is unioned in exactly once; the next write
+  carries the marker, so unticking it afterwards sticks. This is the same class as B9's
+  `reviveQuery` fix and should have been anticipated from it.
+- 2026-08-01 — **The findings table is redesigned to pay for the two columns Phase 3 added**, and
+  the whole thing is a width-for-height trade measured at both ends.
+
+  **Measured, at a 935px table viewport, on the adversarial fixture:**
+
+  | | Before | After |
+  |---|---|---|
+  | Table width | 1609px | **1353px** |
+  | Horizontal overflow | 674px | **418px** |
+  | Component column | 390px | **199px** |
+  | Severity column | 110px | 88px |
+  | Known exploited | 189px | 153px |
+  | Row height | 43px | 50–51px |
+
+  256px recovered against the 295px the two new columns cost, for 7px per row. **Not a full
+  refund, and worth stating plainly**: the table is still around 40px wider than it was before
+  Phase 3, and the honest reading is that two extra columns cost something no rearrangement
+  entirely removes.
+
+  **Four changes, each earning its own part of that.** The Component cell stacks group over
+  artifact — *group above*, so reading order down the column matches `LOWER(c.purl)`, which
+  orders group first; prominence comes from weight, not position. The Severity cell stacks its
+  CVSS band under the score. KEV and EPSS became two-line cells for the same reason. And the row
+  number and the Inspect control merged into one cell, on the maintainer's suggestion, buying back
+  a cell's worth of padding and border.
+
+  **The group line is reserved even when there is no group.** An unscoped npm package (`lodash`)
+  has none, and a ragged column is worse here than elsewhere because this is the one that stays
+  put while the rest scrolls under it. Measured after: 19 rows at 51px and one at 50px — the
+  single-line KEV and EPSS states on a finding with no CVE — which is below the threshold worth
+  adding markup to remove, and is recorded rather than described as uniform.
+
+  **Repeated groups are deliberately not suppressed on runs.** A row has to stand alone: it
+  survives filtering, paging and the export, and one whose group is inherited from the row above
+  is wrong in all three.
+
+  **The scope badges left the severity palette**, as decided. They were `--severity-high` and
+  `--severity-low` for values that are not severities, which was harmless only while risk colour
+  had one meaning on a row; with the GHSA rating and the KEV mark both painted from it, a row
+  would have carried three coloured badges of which one meant "your own code". Risk colour now
+  means risk everywhere on the row, and scope is told apart by emphasis.
+
+  **The percentile is spelled out — `87th percentile`, not `87th`.** Raised from use: two bare
+  numbers stacked in one cell both read as probabilities, and nothing told the reader the second
+  was a rank among all scored CVEs rather than a second likelihood.
+
+  **Two failures found by verifying, both recorded in AGENTS.md.** A `useRef`/`useLayoutEffect`
+  pair was added *below* the page's early return, which changed the hook count the moment an SBOM
+  was selected and unmounted the entire page — a blank screen with nothing in the console. And the
+  frozen column's `left` was computed from declared cell widths, which an auto-layout table treats
+  as suggestions: `.rowaction` was declared 28px and rendered 47px, so the column sat 19px out and
+  slid under its neighbour. The offset is now measured before paint.
+- 2026-08-01 — **The frontend gets unit tests, on the maintainer's instruction, after the
+  formatter bug above.** There were none: `package.json` carried `dev`, `build`, `preview` and
+  `typecheck`, so `tsc --noEmit` was the only automated guard on the whole UI and everything
+  else rested on browser verification.
+
+  **Vitest with jsdom and Testing Library**, wired into the Maven build in the same phase as the
+  typecheck and before the build, for the same reason: a failing test should fail the build
+  rather than ship into the jar. `npm --prefix frontend test` runs them alone.
+
+  **The division of labour is deliberate and worth stating.** These cover pure functions and the
+  rendering logic that decides *what a cell claims* — the three empty states a KEV cell keeps
+  apart, the numeric edges of a probability. Layout, measurement and anything driven by the
+  rendering loop stay browser checks: jsdom has no layout at all, so the
+  `requestAnimationFrame`/`ResizeObserver`/`prefers-color-scheme` traps already recorded in
+  AGENTS.md apply there at least as hard. A green suite is not evidence about how anything looks.
+
+  **Two setup traps cost real time and are now in AGENTS.md.** Testing Library registers its
+  automatic cleanup only when `globals: true` is set — without it every render stacks into one
+  `document.body` and an assertion that something is *absent* finds the previous test's node,
+  which reads exactly like a component bug. And cleanup runs between tests, not between two
+  renders inside one, so a test that renders twice has to scope its queries to each render's own
+  container.
+
+  24 tests to start: the probability and percentile formatters at both ends of their range, the
+  three empty states of each cell, and the column-revive union above — which is to say, one test
+  per bug this session produced, plus the invariants they violated.
+- 2026-08-01 — **The advisory card's fact row was laid out by its content, and a KEV mark
+  changed its shape.** Reported from use with a screenshot: *"the cards in the advisory view are
+  not stable — EPSS gets pushed to a new line if an exploit is available."* Exactly right.
+  `.advisory__facts` was a wrapping flex, so each fact sized to its own content: a card reading
+  *"Exploited since 2025-04-01"* is wider than one reading *"not listed"*, and the extra width
+  pushed EPSS onto a second row. Measured before the change, across the 46 advisories of one
+  component: **four different heights (98, 99, 144, 163px)**, and the position of a fact
+  depended on what the fact beside it happened to say — so a reader comparing advisories down
+  the page had nothing in a fixed place to compare.
+
+  **Grid tracks instead, because they depend on the container rather than the content.** Verified
+  after: one distinct column layout across all 46 cards, KEV and EPSS on the same row in every
+  one of them, at the same x, whether the card is one of the 3 listed or the 43 unlisted.
+
+  **The fix was wrong once, and measuring caught it.** The first version keyed the wide five-track
+  layout off a `@media` breakpoint — the wrong measurement twice over, since this card renders both
+  in the Inspector's main column and at full page width. At a 1280px viewport the Inspector column
+  is 583px, so the media query never fired and the five tracks left **CVSS 74px** for a
+  44-character vector. It is a `@container` query now: below 760px of *card* width the facts are two
+  columns with CVSS spanning both, above it the five-track row. Measured at both: CVSS 558px in the
+  Inspector column against 74px before, and 690px on one row at 1920px viewport.
+- 2026-08-01 — **"99th percentile" was being read as a rank within the SBOM.** Asked directly:
+  *"is the percentile a global number or local scaled for my sbom?"* It is global — column three
+  of FIRST's file, that CVE's position among all 354,453 CVEs EPSS scores, computed by nobody
+  here and identical on an empty SBOM. The question being asked at all is the evidence the
+  wording was not carrying it.
+
+  Three changes rather than one, because the same claim needs different room in different places.
+  The tooltip now says it in full, including *"not a rank within this SBOM"*. `EpssCell` gains a
+  `detailed` variant so the Inspector card, which has the width, renders *"99th percentile of all
+  scored CVEs"* while the table keeps the short form. And the glossary entry states it outright
+  with the example that makes it land: **a 44% probability sits around the 99th percentile
+  globally**, because most CVEs score far lower — which is precisely the row that prompted the
+  question.

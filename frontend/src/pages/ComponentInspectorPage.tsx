@@ -7,7 +7,13 @@ import { ComponentFinder } from '../components/ComponentFinder';
 import { DependencyGraphPanel } from '../components/DependencyGraphPanel';
 import { UpgradePathsPanel } from '../components/UpgradePathsPanel';
 import { describePurl, shortNameOf } from '../components/purl';
-import { SeverityCell, formatAdvisoryDate, formatTimestamp } from '../findings/presentation';
+import {
+  EpssCell,
+  KevCell,
+  SeverityCell,
+  formatAdvisoryDate,
+  formatTimestamp,
+} from '../findings/presentation';
 import { neighbourAfterClosing, useSboms } from '../sboms/SbomProvider';
 import type { InspectorTabs } from '../sboms/SbomProvider';
 import { usePersistentState } from '../state/persisted';
@@ -58,6 +64,23 @@ function Advisory({ row }: { row: FindingRow }) {
           <dt>CVSS</dt>
           <dd className="mono">
             {row.cvssVector ?? (row.cvssVersion ? row.cvssVersion.replace('CVSS_', 'CVSS ') : '—')}
+          </dd>
+        </div>
+        {/* Rendered by the same components the table uses. A KEV mark visible in the list and
+            absent one click deeper is exactly the divergence this file's shared presentation
+            exists to make impossible — and this panel is where somebody decides what to do. */}
+        <div>
+          <dt>Known exploited</dt>
+          <dd>
+            <KevCell row={row} />
+          </dd>
+        </div>
+        <div>
+          <dt>EPSS</dt>
+          <dd>
+            {/* The card has room to say what the percentile is a percentile *of*; the table
+                cell does not, and keeps the short form with the same claim in its tooltip. */}
+            <EpssCell row={row} detailed />
           </dd>
         </div>
       </dl>

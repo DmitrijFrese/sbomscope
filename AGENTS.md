@@ -26,7 +26,9 @@ so a rejected idea does not get re-proposed.
 - **Backend**: Spring Boot 4.1.x on Java 21 (LTS) — the local server process. 21 is a
   floor, not a ceiling: it builds and runs on newer JDKs, but nothing may rely on a
   feature above 21, or the build breaks on the restricted machines this is aimed at.
-- **Frontend**: React + Vite, packaged into the backend jar and served from it.
+- **Frontend**: React + Vite, packaged into the backend jar and served from it. Unit tests
+  run on **Vitest** with jsdom and Testing Library, wired into the Maven build beside the
+  typecheck.
 - **Build**: Maven multi-module (parent + `frontend` + `backend`), one command
   producing a single runnable jar. Node 22.12+ and npm are expected on the PATH —
   the build does not install its own copy. The minimum is declared in
@@ -36,8 +38,10 @@ so a rejected idea does not get re-proposed.
   `src/main/resources/db/migration`.
 - **Excel export**: Apache POI (`poi-ooxml`, version pinned in the parent POM).
 - **Vulnerability data**: OSV, via the osv-scanner binary invoked as an external
-  process, reading a locally-downloaded OSV database. CISA KEV and EPSS are planned;
-  the NVD API is deliberately not used (constraint 4).
+  process, reading a locally-downloaded OSV database. **CISA KEV and EPSS are downloaded
+  whole** (Phase 3) — one fixed URL each, no credentials, loaded into `kev_entry` and
+  `epss_score` and joined onto findings by CVE. The NVD API is deliberately not used
+  (constraint 4).
 - **Upgrade paths, Tier 2**: for a question the offline OSV data cannot answer, the user's
   own `mvn` is invoked as an external process (never downloaded) to resolve a real
   dependency tree. See "External tool contract: the Maven probe" in
@@ -178,9 +182,14 @@ frontend/               React + Vite UI
     sboms/              SbomProvider: uploaded SBOMs, the current selection, and the
                         Component Inspector's open tabs per SBOM — in-memory above the
                         router, so they survive navigation but deliberately not a restart
-    findings/           severity-band and CVE-link presentation shared by several views
+    findings/           severity-band, KEV and EPSS presentation shared by the table and the
+                        Inspector, plus columns.ts. Unit tests live beside their subject as
+                        *.test.ts(x) — see Testing below
     state/              usePersistentState/usePersistentToggle: localStorage-backed state
-                        that survives navigation and reload (tab selection, sidebar width)
+                        that survives navigation and reload (tab selection, sidebar width).
+                        A stored value outlives the code that wrote it, so every one has a
+                        revive function — see reviveColumns for why that includes unioning
+                        in options added after the preference was saved
     theme/              ThemeProvider: light/dark/system resolution
     styles/             tokens.css holds every colour; app.css holds layout
 backend/                Spring Boot application, produces the runnable jar
@@ -190,6 +199,8 @@ backend/                Spring Boot application, produces the runnable jar
     export/             Excel writing and public registry links
     sbom/               CycloneDX parsing, storage, uploaded-document store
     scanner/            osv-scanner integration, OSV database, findings
+    exploit/            CISA KEV and FIRST EPSS (Phase 3): the two bulk feeds, their loaders
+                        and ExploitSignals, joined onto a finding by CVE — see ARCHITECTURE.md
     probe/              the Maven probe (Phase 8 Tier 2) — see ARCHITECTURE.md
     settings/           user-editable settings
     logging/            the activity log (~/.sbomscope/logs/activity.jsonl) and the
@@ -198,7 +209,8 @@ backend/                Spring Boot application, produces the runnable jar
   src/main/resources/
     application.yml     committed config
     db/migration/       Flyway migrations, V<n>__<description>.sql
-  src/test/resources/sboms/   real fixtures (see Testing below)
+  src/test/resources/sboms/     real SBOM fixtures (see Testing below)
+  src/test/resources/exploit/   real excerpts of the KEV and EPSS feeds
 docs/ARCHITECTURE.md    data model, flows, external tool contract
 docs/IMPLEMENTATION-PLAN.md  roadmap, risks, decision log
 ```
@@ -209,8 +221,14 @@ docs/IMPLEMENTATION-PLAN.md  roadmap, risks, decision log
 mvn clean package
 ```
 
-builds both modules, runs the frontend typecheck and all backend tests, and produces
-`backend/target/sbomscope.jar`.
+builds both modules, runs the frontend typecheck **and frontend unit tests**, runs all
+backend tests, and produces `backend/target/sbomscope.jar`.
+
+```bash
+npm --prefix frontend test
+```
+
+runs the frontend tests alone — `vitest run`, no watch mode.
 
 ```bash
 java -Djavax.net.ssl.trustStoreType=Windows-ROOT -jar backend/target/sbomscope.jar
@@ -251,6 +269,8 @@ so they exercise the quirks those tools actually emit. All live in
 | `npm-frontend.cdx.json` | `npm --prefix frontend sbom --sbom-format cyclonedx` — CycloneDX 1.5, 29 components |
 | `osv-report-maven.json` | osv-scanner v2.4.0 scanning the Maven fixture |
 | `vuln-multi-module.cdx.json` | An adversarial two-module Maven aggregate (see below) — CycloneDX 1.6, 62 components |
+| `exploit/kev-excerpt.json` | Six entries lifted verbatim from CISA's catalogue of 2026-07-29, two of them ransomware-confirmed |
+| `exploit/epss-excerpt.csv.gz` | Eight real EPSS lines as FIRST published them on 2026-07-31, comment header included |
 
 They are SBOMscope's own dependency trees, so regenerating them keeps the tests honest as
 the project changes. Integration tests use an in-memory H2 built by the same Flyway
@@ -284,6 +304,20 @@ sees an empty `sbom` table and deletes every document it finds — so running th
 real uploads. `sbomscope.data-directory` is overridden in `src/test/resources/application.yml`
 for that reason; if a test needs local storage, point it there too.
 
+**The frontend has unit tests, and the division of labour between them and the browser is
+deliberate.** Vitest with jsdom covers pure functions and the rendering logic that decides *what
+a cell claims* — the three empty states a KEV cell has to keep apart, the numeric edges of a
+probability. Anything to do with layout, measurement, visibility or the rendering loop stays a
+browser check, because the traps recorded below (`requestAnimationFrame`, `ResizeObserver`,
+`prefers-color-scheme`) apply at least as strongly in jsdom, which has no layout at all.
+
+Two things that cost time when the suite was added. **Testing Library's automatic cleanup only
+registers when `globals: true` is set** — without it every render stacks into one
+`document.body`, and a query asserting something is *absent* finds the previous test's node,
+which reads as a component bug and is not. And cleanup runs **between tests, not between two
+renders inside one**, so a test rendering twice must scope its queries to each render's own
+`container`.
+
 Verify UI work in the browser rather than assuming: check the console for errors and read
 the rendered DOM. Note that synthetic clicks from automation tooling do not always
 register with React — dispatching a real DOM `click()` is more reliable.
@@ -303,6 +337,23 @@ recorded zero events across a flip the query itself reported. Reload under each 
 what a component reads at mount; live tracking cannot be observed here at all. Note also that
 `window.matchMedia()` returns a **new** `MediaQueryList` each call, so dispatching a synthetic
 event on your own instance never reaches the listener the component registered.
+
+**A hook added below an early `return` blanks the whole page, silently.** `VulnerabilitiesPage`
+returns early when no SBOM is selected; a `useRef`/`useLayoutEffect` pair added after that point
+changed the hook count the moment one *was* selected, and React unmounted the page. The symptom
+is an empty `<div id="root">` with **nothing in the console** — the bundle loads, the fetches are
+never made, and it reads like a build problem. Put hooks above every early return, and when a
+page renders blank, check the hook order before checking anything else.
+
+**`width` on a table cell is a suggestion, so never do arithmetic on it.** With `table-layout:
+auto` a cell widens to fit its content: `.rowaction` was declared 28px and rendered 47px. Frozen
+(`position: sticky`) columns need a `left` equal to the real width of everything before them, so
+the declared-width version put the column 19px out and it drifted under its neighbour on a
+sideways scroll — invisible until you scroll and compare `getBoundingClientRect()`. The offset is
+measured in a `useLayoutEffect` and written as a custom property. Two related facts: sticky cells
+need `border-collapse: separate` (with collapsed borders the border belongs to the table, not the
+cell, and smears across the rows it passes), and they need an **opaque background that follows the
+row's state**, or the hover dies on exactly the column the pointer is nearest.
 
 **Check that an activation actually changed something before concluding a handler is broken.**
 Two "bugs" in one session were tests clicking an element that was already active, so the state

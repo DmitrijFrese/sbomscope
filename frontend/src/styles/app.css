@@ -773,9 +773,14 @@ body {
   border-radius: var(--radius-md);
 }
 
+/* `separate` rather than `collapse`, and that is not cosmetic: with collapsed borders the
+   border belongs to the table rather than to the cell, so a position:sticky cell scrolls away
+   from its own edges and the frozen column below would smear a line across the rows it passes.
+   border-spacing: 0 keeps it visually identical to the collapsed version. */
 .data-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 13px;
 }
 
@@ -812,13 +817,109 @@ body {
 
 /* Transient row numbers. Quiet enough not to compete with the data, and right-aligned
    with tabular figures so the column stays a straight edge as the numbers grow. */
-.data-table .rownum {
+/* Row number and Inspect in one cell, merged to buy back the horizontal padding and border
+   of a second one. The number is right-aligned against the control so the digits still form
+   a straight edge as they grow. */
+.data-table .rowlead {
   width: 1%;
   padding-right: var(--space-2);
+  white-space: nowrap;
+}
+
+.data-table .rowlead > * {
+  vertical-align: middle;
+}
+
+.rowlead__number {
+  display: inline-block;
+  min-width: 26px;
+  margin-right: var(--space-1);
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* ------------------------------------------------- the frozen column ----- */
+
+/* Two cells, not one. Freezing Component alone would let the Inspect control scroll away from
+   the row it belongs to, which is worse than freezing nothing: the control and the thing it
+   acts on would be in different places. */
+.data-table .rowlead,
+.data-table .frozen--component {
+  position: sticky;
+  z-index: 1;
+}
+
+/* The offset is measured, not arithmetic. An auto-layout table treats a cell's `width` as a
+   suggestion and widens it to fit, so adding declared widths up put the component column 19px
+   out and it drifted under its neighbour on a sideways scroll — caught by scrolling and
+   comparing rects, not by reading. A layout effect writes the real width; the fallback keeps
+   the block roughly right for the frame before it runs. */
+.data-table .rowlead { left: 0; }
+.data-table .frozen--component { left: var(--frozen-component-left, 62px); }
+
+/* A sticky cell paints over what scrolls under it, so it needs a background of its own —
+   and that background has to follow the row's state, or the hover would die on exactly the
+   column the pointer is nearest. */
+.data-table tbody .rowlead,
+.data-table tbody .frozen--component {
+  background: var(--bg-surface);
+}
+
+.data-table tbody tr:hover .rowlead,
+.data-table tbody tr:hover .frozen--component {
+  background: var(--bg-hover);
+}
+
+/* The header is already sticky vertically. These two corner cells are sticky on both axes at
+   once and must outrank both, or they slide under the column headers on a sideways scroll. */
+.data-table thead .rowlead,
+.data-table thead .frozen--component {
+  z-index: 2;
+}
+
+/* A hairline where the frozen block ends, so a reader can see that the rest of the row moved
+   rather than wondering why the columns no longer line up. Drawn with a shadow rather than a
+   border because a border would take part in the layout and shift every column by a pixel. */
+.data-table .frozen--component {
+  box-shadow: 1px 0 0 var(--border);
+}
+
+/* ------------------------------------------------ the component cell ----- */
+
+/* Group above artifact. Above, deliberately: COMPONENT sorts by LOWER(c.purl), which orders
+   group first, so this makes reading order down the column the same as sort order. Prominence
+   comes from weight rather than from position. */
+.component-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.25;
+  /* B16's lesson, one column along: a flex item's default min-width is min-content, and the
+     min-content of a coordinate is its longest unbreakable run - which is what forced the
+     finder to scroll sideways and stranded its tint. */
+  min-width: 0;
+}
+
+/* Truncated rather than wrapped. A wrapped group would give back the height this whole
+   redesign is spending, and the full value is on the title and in the accessible name. */
+.component-cell__group {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Reserved even when there is no group - an unscoped npm package has none - so every row
+     is one height. Ragged heights cost more in the column that stays put while the rest of
+     the table scrolls under it. */
+  min-height: 14px;
+}
+
+.component-cell__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .badge {
@@ -832,28 +933,39 @@ body {
   border-radius: 999px;
 }
 
-/* Application code reads as the strongest signal — a finding there is yours to fix rather
-   than to upgrade — then declared dependencies, then what was pulled in for you. */
+/* Scope is a category, not a severity, and these no longer borrow the severity palette.
+   They did: application was --severity-high (orange) and root was --severity-low (green),
+   which was harmless only while risk colour had one meaning on a row. With the GHSA rating
+   and the KEV mark both painted from that palette, a row would otherwise carry three
+   coloured badges of which one meant "your own code" rather than "bad". Risk colour now
+   means risk everywhere on the row; scope is told apart by emphasis instead.
+
+   The ordering the old colours were reaching for survives: application reads strongest -
+   a finding there is yours to fix rather than to upgrade - then declared dependencies,
+   then what was pulled in for you. */
 .badge--scope-application {
-  color: var(--severity-high);
-  background: color-mix(in srgb, var(--severity-high) 12%, transparent);
-  border-color: var(--severity-high);
+  color: var(--text-primary);
+  background: var(--bg-subtle);
+  border-color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .badge--scope-direct {
-  color: var(--accent);
-  background: var(--accent-subtle);
-  border-color: var(--accent);
+  color: var(--text-secondary);
+  border-color: var(--border-strong);
 }
 
 .badge--scope-transitive {
   color: var(--text-muted);
 }
 
+/* The one component the document is about. Still distinct from the three scopes, still not
+   a risk colour. */
 .badge--root {
-  color: var(--severity-low);
-  border-color: var(--severity-low);
-  background: color-mix(in srgb, var(--severity-low) 12%, transparent);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+  background: var(--bg-subtle);
+  font-weight: 600;
 }
 
 /* ---------------------------------------------------------- progress ----- */
@@ -1383,10 +1495,15 @@ body {
 
 /* --------------------------------------------------------- severity ----- */
 
+/* Stacked rather than side by side. The band is the score's own label, so putting it under the
+   number costs a line the row is now spending anyway on the component cell and buys back the
+   width the two Phase 3 columns took. Measured before and after - see the plan. */
 .severity {
   display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.25;
 }
 
 .severity strong {
@@ -1416,6 +1533,101 @@ body {
 .severity__version {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* ------------------------------------------- exploitation signals ----- */
+
+/* Risk colour for a risk statement. Reusing the severity palette here is deliberate and is
+   the same rule that moved the scope badges off it: colour from this palette means risk
+   everywhere on a row. "Actively exploited" is the loudest risk statement available, and it
+   is rare enough - 4 of 212 CVEs on a real SBOM - not to compete with the severity column. */
+/* Two lines, like the component and severity cells beside it: the mark on one, how long it
+   has been known on the other. Stacking is what narrows the column. */
+.kev {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.kev__mark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.kev strong {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-inverse);
+  background: var(--severity-critical);
+}
+
+/* The same pairing as the graph flag above, and through the token rather than the literal
+   #0e1116 it was first written as — a hex that happens to equal the dark canvas today is a
+   copy of a value, not a reference to it. */
+:root[data-theme='dark'] .kev strong {
+  color: var(--bg-canvas);
+}
+
+.kev__since {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* A second mark rather than a second colour: it qualifies the first rather than competing
+   with it, and CISA only ever asserts it positively. */
+.kev__ransomware {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--severity-critical) 45%, transparent);
+  color: var(--severity-critical);
+}
+
+.kev__link,
+.kev__link:hover {
+  text-decoration: none;
+}
+
+/* Quieter than a plain muted dash, because it is a different statement: the catalogue was
+   checked and does not list this. The dash means the question could not be asked at all. */
+.kev--unlisted {
+  font-size: 11px;
+}
+
+/* Uncoloured on purpose. It is a likelihood rather than a severity, and FIRST states that no
+   threshold carries any authority - so a band drawn here would be our invention presented as
+   theirs. Tabular figures so a column of them reads as a column. */
+.epss {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.epss strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.epss__percentile {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* The model or catalogue version, beside the date it belongs to. */
+.feed__version {
+  margin-left: var(--space-2);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 .text-muted {
@@ -1622,14 +1834,9 @@ body {
 /* Like the row number, a fixed narrow cell rather than a column: it holds one control and
    must not take width from the data. Sized down from the standard icon button so adding it
    does not make every row in the table taller. */
-.rowaction {
-  width: 28px;
-  padding-left: 0;
-  padding-right: 0;
-  text-align: center;
-}
-
-.rowaction .icon-button {
+/* The Inspect control shares the row-number cell now, but keeps its reduced size: at the
+   standard 32px it would set the row height for the whole table. */
+.rowlead .icon-button {
   width: 24px;
   height: 24px;
 }
@@ -2307,8 +2514,14 @@ body {
   border-radius: 999px;
 }
 
+/* --bg-canvas, not --bg-base: the latter has never existed. `var()` with no fallback is
+   invalid at computed-value time, so `color` fell back to inherit and this rule did nothing —
+   leaving white on the dark theme's light red at 2.8:1, below the 4.5:1 floor. The token it
+   meant is the canvas, and the fix takes it to about 6.8:1. Found by an IDE warning, which was
+   right about this one and wrong about --frozen-component-left two hundred lines up: that one
+   is written at runtime by a layout effect and carries a fallback. */
 :root[data-theme='dark'] .graph-node__flag {
-  color: var(--bg-base);
+  color: var(--bg-canvas);
 }
 
 .route-list {
@@ -2535,11 +2748,63 @@ body {
   color: var(--text-secondary);
 }
 
+/* Explicit tracks, not a wrapping flex.
+
+   As a flex row each fact sized to its own content, so a card whose KEV cell read "Exploited
+   since 2025-04-01" was wider than one reading "not listed" and pushed EPSS onto a second row.
+   Measured before the change: four different heights across the cards of one component (98, 99,
+   144 and 163px), and the position of a fact depended on what the fact beside it happened to
+   say. A reader comparing advisories down the page had nothing in a fixed place to compare.
+
+   Grid tracks depend on the container, not the content, so every card now has the same columns
+   in the same places whatever any of them says. Only CVSS flexes, because the vector is the one
+   value here that is genuinely long and worth the slack. */
+/* Two rows in a narrow card, one row in a wide one, and CVSS gets a whole row to itself when
+   space is short. The vector is 44 monospace characters and the only value here that needs
+   real width; sharing a track with four short ones squeezed it to 74px and eight lines. */
 .advisory__facts {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: var(--space-2) var(--space-5);
   margin: var(--space-3) 0 0;
+}
+
+.advisory__facts > :nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+/* A container query, not a media query. The first attempt keyed the wide layout off the
+   viewport, which is the wrong measurement twice over: this card renders both in the Inspector's
+   main column and at full page width, and at 1280px of viewport the Inspector column is about
+   574px. Measured, the five tracks then left CVSS 74px. What decides the layout is how wide the
+   card is, so that is what is asked. */
+.advisory {
+  container-type: inline-size;
+}
+
+@container (min-width: 760px) {
+  .advisory__facts {
+    grid-template-columns:
+      minmax(72px, max-content)
+      minmax(84px, max-content)
+      minmax(0, 1fr)
+      152px
+      104px;
+  }
+
+  .advisory__facts > :nth-child(3) {
+    grid-column: auto;
+  }
+}
+
+/* In a card the two halves stack; in a table row they sit on one line. Same component, and the
+   difference is the space available rather than a different claim. */
+.advisory__facts .kev,
+.advisory__facts .epss {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
 }
 
 .advisory__facts dt {

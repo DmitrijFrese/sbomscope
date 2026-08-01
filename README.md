@@ -7,10 +7,10 @@ vulnerabilities, whether your code actually uses them, what upgrade would fix th
 and get all of it into a spreadsheet your security team can actually read.
 
 > **Status: working, in active development.** Upload, offline vulnerability scanning, the
-> findings view, the Excel export, the Component Inspector, the dependency graph, and upgrade
+> findings view, the Excel export, the Component Inspector, the dependency graph, upgrade
 > paths (offline advisory-derived fixes, plus driving your own `mvn` for the questions that
-> need it) all work today. Workspace usage detection and the exploitation-signal columns
-> (CISA KEV, EPSS) are not built yet. See
+> need it) and the exploitation-signal columns (CISA KEV, EPSS) all work today. Workspace
+> usage detection is not built yet. See
 > [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for exactly what is done.
 
 ---
@@ -44,11 +44,14 @@ does but **what that traffic says about you**:
 
 - **It never downloads executable code.** You place the osv-scanner binary and point
   SBOMscope at it.
-- **It downloads bulk public data when you ask it to** — the OSV advisory archives, from one
-  fixed URL shown in the interface, with no credentials. Asking for *every* Maven advisory
-  discloses nothing about which libraries you happen to have, which is why it can be a whole
-  archive rather than a series of questions, and why you can copy it across on a USB stick to
-  a machine with no network at all.
+- **It downloads bulk public data when you ask it to** — the OSV advisory archives, CISA's
+  Known Exploited Vulnerabilities catalogue and FIRST's EPSS scores, each from one fixed URL
+  shown in the interface, with no credentials. Asking for *every* Maven advisory, or *every*
+  exploited vulnerability, discloses nothing about which libraries you happen to have, which is
+  why each can be a whole file rather than a series of questions, and why you can copy them
+  across on a USB stick to a machine with no network at all. EPSS publishes a per-CVE lookup
+  API and SBOMscope deliberately does not use it — asking about one CVE would say which one you
+  care about, and FIRST's own guidance names the bulk file as the right mechanism anyway.
 - **It never asks anyone about your specific dependencies.** "Which versions of
   `com.acme:internal-billing` exist" would identify that artifact as something you use. When
   upgrade analysis needs an answer like that, SBOMscope drives a build tool you already have
@@ -83,8 +86,8 @@ because it can run fully offline against locally-cached data.
 |---|---|---|
 | CVE matching (npm + Maven) | [OSV-Scanner](https://google.github.io/osv-scanner/) in `--offline` mode — a single portable binary, no installer or admin rights. Its database already blends OSV and GitHub Advisories, and supplies a numeric CVSS score and the GHSA→CVE mapping. | working |
 | Excel export | Built in-house (Apache POI) | working |
-| Actively-exploited flag | [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | planned |
-| Exploitation probability | [EPSS](https://www.first.org/epss/) (FIRST.org) | planned |
+| Actively-exploited flag | [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) — the whole catalogue, one file, ~1.5 MB | working |
+| Exploitation probability | [EPSS](https://www.first.org/epss/) (FIRST.org) — the whole daily score file, ~2.4 MB | working |
 | Dependency graph | The SBOM's own CycloneDX `dependencies` graph | working |
 | Workspace usage detection | Built in-house | planned |
 | Upgrade paths | Local OSV data for the offline tier; your own `mvn`, driven as an external process, for the questions offline data cannot answer | working |
@@ -152,6 +155,13 @@ Component · CVE ID (→ NVD) · Severity (CVSS score + rating) · EPSS score ·
 Exploited (KEV) · Fix available · Recommended upgrade · Direct/Transitive · Workspace
 usage status
 
+**An empty exploitation cell is never a clearance.** KEV is a positive list, so absence means
+CISA has not confirmed exploitation — not that a flaw cannot be exploited. The column says
+*not listed* rather than "No" for that reason, and shows a dash where a finding carries no CVE
+at all, because both feeds are keyed by CVE and for those rows the question cannot be asked
+rather than answered. A feed you have not downloaded is reported once above the table instead
+of being repeated into every row.
+
 Only columns SBOMscope can populate from a real data source are included by design.
 Manual judgment fields (mitigation notes, comments) are deliberately absent — add those
 in Excel after export, rather than having the tool maintain an annotation store.
@@ -190,8 +200,10 @@ java -jar backend/target/sbomscope.jar
 
 Then open <http://localhost:8080>.
 
-Your data lives in `~/.sbomscope/` — the H2 database, uploaded SBOM documents, and the
-vulnerability database. Nothing is written into the project directory.
+Your data lives in `~/.sbomscope/` — the H2 database (`db/`), uploaded SBOM documents
+(`sboms/`), the OSV vulnerability archives (`osv-db/`), the exploitation feeds (`exploit/`),
+the Maven probe's isolated repository (`probe-repo/`) and the logs (`logs/`). Nothing is
+written into the project directory.
 
 SBOMscope works immediately as an SBOM inventory. Vulnerability scanning is off until
 you turn it on.
@@ -219,6 +231,23 @@ against a refreshed archive.
 
 On a machine with no internet access, copy the database directory across from a machine
 that has it; the layout is all osv-scanner needs.
+
+### Exploitation signals (CISA KEV and EPSS)
+
+Severity says how bad a flaw would be; these two say whether anyone is exploiting it. Open
+**Settings → Exploitation signals** and press Download on each — about 1.5 MB and 2.4 MB, from
+one fixed public URL each, with no credentials and nothing about your dependencies in the
+request. There is nothing to switch on: the columns fill in as soon as the data is there.
+
+Both files can also be carried across to a disconnected machine. Drop them into
+`~/.sbomscope/exploit/` under the names shown in Settings and press **Load** — being on disk
+and being loaded are separate states, and SBOMscope will not re-download something it already
+has.
+
+Each feed reports the date its *own data* claims, not when you fetched it — CISA's catalogue
+version and EPSS's score date and model version — so a file copied from elsewhere still
+describes itself honestly. EPSS data is provided by [FIRST.org](https://www.first.org/epss/);
+the KEV catalogue is published by CISA under CC0 1.0.
 
 ### Working on the frontend
 

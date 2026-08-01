@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import {
@@ -25,9 +25,11 @@ import { ScanReadinessHint } from '../components/ScanReadinessHint';
 import { SearchField } from '../components/SearchField';
 import { ViewOptionsMenu } from '../components/ViewOptionsMenu';
 import { ComponentIcon } from '../components/icons';
-import { COLUMNS, COMPACT_DEFAULT, reviveColumns } from '../findings/columns';
+import { COLUMNS, COMPACT_DEFAULT, reviveStoredColumns, storeColumns } from '../findings/columns';
 import type { ColumnId } from '../findings/columns';
 import {
+  EpssCell,
+  KevCell,
   SeverityCell,
   formatAdvisoryDate,
   formatTimestamp,
@@ -110,6 +112,18 @@ function TruncatedCell({ value, className }: { value: string | null; className?:
   );
 }
 
+/**
+ * The two exploitation feeds, tied to the column each one fills.
+ *
+ * <p>Named here rather than derived from the API response so the notice can be written before
+ * the feeds are known — the response lists what *is* loaded, and the interesting set is what is
+ * not.
+ */
+const EXPLOIT_FEEDS: { id: string; label: string; column: ColumnId }[] = [
+  { id: 'KEV', label: 'The CISA KEV catalogue', column: 'kev' },
+  { id: 'EPSS', label: 'EPSS scores', column: 'epss' },
+];
+
 /** One cell, chosen by column id. Kept beside the column list it switches over. */
 function renderCell(column: ColumnId, row: FindingRow) {
   switch (column) {
@@ -117,17 +131,42 @@ function renderCell(column: ColumnId, row: FindingRow) {
     // whenever the artifact exists, the version page may not exist at all for a
     // vendor-patched build. A reader who lands on the artifact page can find their
     // version; one who lands on a 404 cannot.
+    // Stacked, group above artifact. Group *above* is what keeps the column honest: COMPONENT
+    // sorts by LOWER(c.purl), which is group-then-artifact, so reading order down the column is
+    // the sort order. Prominence is weight, not position — the artifact name is what the reader
+    // is looking for and carries the link.
+    //
+    // The group line is reserved even when there is none (an unscoped npm package), so every row
+    // is the same height. Ragged heights cost more here than elsewhere: this is the column that
+    // stays put while the rest of the table scrolls sideways.
+    //
+    // Repeated groups are deliberately not suppressed on runs. A row has to stand alone — it
+    // survives filtering, paging and the export — and one whose group is inherited from the row
+    // above is wrong in all three.
     case 'component':
       return (
-        <>
+        <span className="component-cell">
+          <span className="component-cell__group" title={row.group ?? undefined}>
+            {row.group ?? ' '}
+          </span>
           {row.registryArtifactUrl ? (
-            <a className="mono" href={row.registryArtifactUrl} target="_blank" rel="noreferrer">
-              {row.coordinates}
+            <a
+              className="component-cell__name mono"
+              href={row.registryArtifactUrl}
+              target="_blank"
+              rel="noreferrer"
+              // Two lines otherwise read as two fragments, and the full coordinate is the thing
+              // anybody actually wants to hear. Same reasoning as B16's accessible names.
+              aria-label={row.coordinates}
+            >
+              {row.name}
             </a>
           ) : (
-            <span className="mono">{row.coordinates}</span>
+            <span className="component-cell__name mono" aria-label={row.coordinates}>
+              {row.name}
+            </span>
           )}
-        </>
+        </span>
       );
     case 'version':
       if (!row.version) {
@@ -195,6 +234,10 @@ function renderCell(column: ColumnId, row: FindingRow) {
       );
     case 'published':
       return <>{row.publishedAt ? formatAdvisoryDate(row.publishedAt) : '—'}</>;
+    case 'kev':
+      return <KevCell row={row} />;
+    case 'epss':
+      return <EpssCell row={row} />;
     case 'summary':
       return <TruncatedCell value={row.summary} className="cell-summary" />;
     case 'purl':
@@ -208,17 +251,19 @@ function SortableHeader({
   field,
   query,
   onSort,
+  className,
 }: {
   label: string;
   field: SortField;
   query: FindingQuery;
   onSort: (field: SortField) => void;
+  className?: string;
 }) {
   const active = query.sort === field;
   const direction = active ? (query.ascending ? 'ascending' : 'descending') : 'none';
 
   return (
-    <th scope="col" aria-sort={direction}>
+    <th scope="col" aria-sort={direction} className={className}>
       <button type="button" className="sort-header" onClick={() => onSort(field)}>
         {label}
         <span className="sort-header__arrow" aria-hidden="true">
@@ -251,10 +296,18 @@ export function VulnerabilitiesPage() {
   const [error, setError] = useState<{ message: string; fromPattern: boolean } | null>(null);
 
   const [details, setDetails] = usePersistentState<boolean>('findings.details', false);
-  const [compactColumns, setCompactColumns] = usePersistentState<ColumnId[]>(
+  // Stored as a record rather than a bare array so it can carry which columns existed when it
+  // was written — without that, a column added to the core set later is indistinguishable from
+  // one the reader unticked, and would never appear for anybody who had used the page before.
+  const [storedColumns, setStoredColumns] = usePersistentState(
     'findings.compactColumns',
-    COMPACT_DEFAULT,
-    reviveColumns,
+    storeColumns(COMPACT_DEFAULT),
+    reviveStoredColumns,
+  );
+  const compactColumns = storedColumns.columns;
+  const setCompactColumns = useCallback(
+    (columns: ColumnId[]) => setStoredColumns(storeColumns(columns)),
+    [setStoredColumns],
   );
 
   // Details is every column; Compact is the chosen subset, always in canonical order.
@@ -352,6 +405,33 @@ export function VulnerabilitiesPage() {
     }
   }
 
+  /**
+   * Where the frozen columns stop, measured rather than assumed.
+   *
+   * <p>The two leading cells are `position: sticky`, and the component column needs a `left`
+   * equal to their combined width. That width cannot be declared: an auto-layout table treats
+   * `width` on a cell as a suggestion and widens it to fit, so the arithmetic version put the
+   * column 19px out and it slid under its neighbour on a sideways scroll.
+   *
+   * <p>`useLayoutEffect` rather than an effect or a `ResizeObserver`: it runs before paint, so
+   * the column never renders at the wrong offset, and it runs regardless of visibility — where
+   * AGENTS.md records that observers and `requestAnimationFrame` never fire in a hidden pane.
+   *
+   * <p><b>Above the early return, and that is not stylistic.</b> Hooks must run in the same
+   * order on every render; placing these below it meant the hook count changed the moment an
+   * SBOM was selected, and React unmounted the whole page. A blank screen with nothing in the
+   * console, found by loading it.
+   */
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    const leading = table?.querySelector('thead tr')?.children;
+    if (!table || !leading || leading.length < 2) return;
+
+    const first = (leading[0] as HTMLElement).getBoundingClientRect().width;
+    table.style.setProperty('--frozen-component-left', `${first}px`);
+  });
+
   if (!selected) {
     return (
       <>
@@ -369,6 +449,20 @@ export function VulnerabilitiesPage() {
   const rows = status?.rows ?? [];
   const filtered = status?.filteredCount ?? 0;
   const neverScanned = status !== null && status.scannedComponents === 0;
+
+  /**
+   * Feeds whose column is on screen but whose data was never downloaded.
+   *
+   * <p>Gated on the column being visible, so switching a column off also silences the notice
+   * about it — being told that a feed is missing while not looking at it is noise, and this
+   * notice competes for the space above the table with the staleness one.
+   */
+  const missingFeeds = EXPLOIT_FEEDS.filter(
+    (feed) =>
+      visibleColumns.some((column) => column.id === feed.column) &&
+      status !== null &&
+      !status.exploitFeedsLoaded.includes(feed.id),
+  );
   const pageCount = Math.max(1, Math.ceil(filtered / query.pageSize));
   const firstOnPage = filtered === 0 ? 0 : query.page * query.pageSize + 1;
   const lastOnPage = Math.min(filtered, (query.page + 1) * query.pageSize);
@@ -448,6 +542,23 @@ export function VulnerabilitiesPage() {
               published constantly — re-scan for an up-to-date answer.
             </>
           )}
+        </div>
+      )}
+
+      {/* Whether a feed has been downloaded is a fact about the installation, identical on
+          every row at once — stamping it into each cell would say one thing three hundred times
+          and crowd out the distinction that actually varies ("not listed" versus "no CVE to ask
+          with"). Stated once, here, where ScanReadinessHint already sets the precedent for a
+          missing prerequisite. Shown only where the column is actually on screen, so a reader
+          who has switched both off is not told about data they are not looking at. */}
+      {status && missingFeeds.length > 0 && (
+        <div className="notice">
+          {missingFeeds.map((feed) => feed.label).join(' and ')}{' '}
+          {missingFeeds.length === 1 ? 'has' : 'have'} not been downloaded, so{' '}
+          {missingFeeds.length === 1 ? 'that column is' : 'those columns are'} empty on every row.
+          An empty cell here means “not downloaded”, not “not exploited”. Download{' '}
+          {missingFeeds.length === 1 ? 'it' : 'them'} under{' '}
+          <strong>Settings → Exploitation signals</strong>.
         </div>
       )}
 
@@ -535,20 +646,18 @@ export function VulnerabilitiesPage() {
       {filtered > 0 && (
         <>
           <div className="table-scroll">
-            <table className="data-table">
+            <table className="data-table" ref={tableRef}>
               <thead>
                 <tr>
-                  {/* Not a column: absent from the picker, from Details, and from the
-                      export, where Excel supplies its own numbering. It exists to give a
-                      row a name you can say out loud. */}
-                  <th scope="col" className="rownum" aria-label="Row number">
-                    #
-                  </th>
-                  {/* Like the row number, not a column: absent from the picker, from
-                      Details and from the export. Leading rather than trailing so it
-                      stays reachable when a wide column set scrolls the table sideways. */}
-                  <th scope="col" className="rowaction">
-                    <span className="visually-hidden">Inspect</span>
+                  {/* Two things in one cell, merged to buy back width: the row number, which
+                      exists to give a row a name you can say out loud, and the Inspect
+                      control. Neither is a column — both are absent from the picker, from
+                      Details and from the export, where Excel supplies its own numbering.
+                      Leading rather than trailing so the control stays reachable when a wide
+                      column set scrolls the table sideways, which is also why it is frozen. */}
+                  <th scope="col" className="rowlead">
+                    <span aria-hidden="true">#</span>
+                    <span className="visually-hidden">Row number and inspect</span>
                   </th>
                   {visibleColumns.map((column) =>
                     column.sort ? (
@@ -558,9 +667,14 @@ export function VulnerabilitiesPage() {
                         field={column.sort}
                         query={query}
                         onSort={toggleSort}
+                        className={column.id === 'component' ? 'frozen frozen--component' : undefined}
                       />
                     ) : (
-                      <th key={column.id} scope="col">
+                      <th
+                        key={column.id}
+                        scope="col"
+                        className={column.id === 'component' ? 'frozen frozen--component' : undefined}
+                      >
                         {column.label}
                       </th>
                     ),
@@ -572,8 +686,8 @@ export function VulnerabilitiesPage() {
                   <tr key={`${row.purl}-${row.osvId ?? 'clean'}`}>
                     {/* Numbered across the whole result, not per page, so "row 437" still
                         means something on page 22. */}
-                    <td className="rownum">{firstOnPage + index}</td>
-                    <td className="rowaction">
+                    <td className="rowlead">
+                      <span className="rowlead__number">{firstOnPage + index}</span>
                       <Link
                         className="icon-button"
                         to={`/component-inspector?purl=${encodeURIComponent(row.purl)}`}
@@ -584,7 +698,12 @@ export function VulnerabilitiesPage() {
                       </Link>
                     </td>
                     {visibleColumns.map((column) => (
-                      <td key={column.id}>{renderCell(column.id, row)}</td>
+                      <td
+                        key={column.id}
+                        className={column.id === 'component' ? 'frozen frozen--component' : undefined}
+                      >
+                        {renderCell(column.id, row)}
+                      </td>
                     ))}
                   </tr>
                 ))}

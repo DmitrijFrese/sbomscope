@@ -31,6 +31,16 @@ public enum ExportColumn {
     CVSS_VECTOR("cvssVector", "CVSS vector", 46),
     FIXED_VERSION("fixedVersion", "Fixed in", 14),
     PUBLISHED("published", "Published", 18),
+    /**
+     * Two columns rather than one, deliberately: on screen the mark and its date share a cell,
+     * but a spreadsheet is where somebody filters and sorts, and a date buried in prose is not
+     * a date any more.
+     */
+    KEV("kev", "Known exploited", 18),
+    KEV_LISTED("kevListedOn", "KEV listed on", 16, "kev"),
+    /** Written as a number so it sorts as one — the same reason SEVERITY is not text. */
+    EPSS("epss", "EPSS", 10),
+    EPSS_PERCENTILE("epssPercentile", "EPSS percentile", 16, "epss"),
     /** Wide and untruncated — a spreadsheet has the room the table does not. */
     SUMMARY("summary", "Summary", 90),
     PURL("purl", "Package URL", 60);
@@ -38,11 +48,32 @@ public enum ExportColumn {
     private final String id;
     private final String label;
     private final int width;
+    private final String detailOf;
 
     ExportColumn(String id, String label, int width) {
+        this(id, label, width, null);
+    }
+
+    ExportColumn(String id, String label, int width, String detailOf) {
         this.id = id;
         this.label = label;
         this.width = width;
+        this.detailOf = detailOf;
+    }
+
+    /**
+     * The browser column this one is a detail of, or null where it stands alone.
+     *
+     * <p>Four export columns serve two on screen: the table puts a mark and its date in one
+     * cell because a row is read, where a spreadsheet is sorted and filtered and a date buried
+     * in prose has stopped being a date. That split would otherwise break the mechanism that
+     * keeps the two in step — the browser sends the column ids it is showing, and an id it has
+     * never heard of can never be selected, so with "visible columns only" switched on the
+     * detail columns would silently vanish while their parents stayed. A detail travels with
+     * its parent instead.
+     */
+    public String detailOf() {
+        return detailOf;
     }
 
     public String id() {
@@ -83,7 +114,9 @@ public enum ExportColumn {
 
         List<ExportColumn> selected = new ArrayList<>();
         for (ExportColumn column : values()) {
-            if (wanted.contains(column.id.toLowerCase(Locale.ROOT))) {
+            if (wanted.contains(column.id.toLowerCase(Locale.ROOT))
+                    || (column.detailOf != null
+                            && wanted.contains(column.detailOf.toLowerCase(Locale.ROOT)))) {
                 selected.add(column);
             }
         }

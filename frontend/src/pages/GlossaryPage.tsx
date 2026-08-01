@@ -245,6 +245,23 @@ export function GlossaryPage() {
                 <td>OSV record</td>
               </tr>
               <tr>
+                <td>Known exploited</td>
+                <td>
+                  Whether CISA lists this CVE as actively exploited, and since when.{' '}
+                  <strong>Empty is not a clearance</strong> — see below. A dash means the finding
+                  has no CVE, so a CVE-keyed catalogue cannot be asked about it.
+                </td>
+                <td>CISA KEV catalogue</td>
+              </tr>
+              <tr>
+                <td>EPSS</td>
+                <td>
+                  Probability of exploitation in the next 30 days, with its percentile among all
+                  scored CVEs. <strong>unscored</strong> means EPSS does not cover that CVE.
+                </td>
+                <td>FIRST.org EPSS</td>
+              </tr>
+              <tr>
                 <td>Summary</td>
                 <td>The advisory's one-line description</td>
                 <td>OSV record</td>
@@ -260,20 +277,81 @@ export function GlossaryPage() {
       </section>
 
       <section className="panel">
-        <h2 className="panel__title">Not here yet</h2>
+        <h2 className="panel__title">Exploitation signals</h2>
+        <p className="panel__hint">
+          Severity says how bad a flaw would be. These two say whether anyone is actually
+          exploiting it, which is a different question and often the one that decides what you
+          do on a Monday morning.
+        </p>
         <dl className="glossary">
           <dt>KEV</dt>
           <dd>
-            CISA's Known Exploited Vulnerabilities catalogue — a flag meaning this flaw is
-            being exploited in the wild, which usually outranks the CVSS score for deciding
-            what to fix first. Planned.
+            CISA's Known Exploited Vulnerabilities catalogue — a list of flaws confirmed to be
+            exploited in the wild. It is a small list: 1,656 entries in total, of which 52 touch
+            the Maven advisory set at all. A mark here usually outranks the CVSS score for
+            deciding what to fix first.
+          </dd>
+
+          <dt>An empty KEV cell is not a clearance</dt>
+          <dd>
+            <strong>This is the most important line on this page.</strong> KEV is a positive
+            list: absence means CISA has not confirmed exploitation, not that a flaw cannot be
+            exploited or that anyone has checked. Most exploited vulnerabilities are not in it.
+            The column shows <em>not listed</em> rather than “No” for exactly that reason, and
+            shows a dash where the finding has no CVE — the catalogue is keyed by CVE, so for
+            roughly 3% of Maven advisories the question cannot be asked at all.
+          </dd>
+
+          <dt>Ransomware</dt>
+          <dd>
+            A second mark on a KEV entry CISA has confirmed was used in a ransomware campaign —
+            332 of the 1,656. Positive only: its absence means no confirmation, not that
+            ransomware is not involved.
           </dd>
 
           <dt>EPSS</dt>
           <dd>
-            Exploit Prediction Scoring System (FIRST.org) — the probability a vulnerability
-            will be exploited in the next 30 days. Answers a different question from CVSS,
-            which measures impact rather than likelihood. Planned.
+            Exploit Prediction Scoring System (FIRST.org) — the probability a vulnerability will
+            be exploited in the next 30 days. Answers a different question from CVSS, which
+            measures impact rather than likelihood, and from KEV, which reports what has already
+            been observed. Nearly every CVE has one: 99% of the Maven advisory set.
+          </dd>
+
+          <dt>The percentile beside the score</dt>
+          <dd>
+            Where that score sits among <strong>every CVE EPSS scores worldwide</strong> — about
+            354,000 of them — and <strong>not</strong> a rank within your SBOM. It comes verbatim
+            from FIRST's file; SBOMscope computes nothing, and the number would be identical on an
+            empty SBOM. That distinction matters more than it sounds: a 44% probability sits
+            around the 99th percentile globally, because most CVEs score far lower. It is what
+            makes the score readable — 0.033 sounds negligible, and “87th percentile” says it is
+            worse than most vulnerabilities that exist.
+          </dd>
+
+          <dt>There is no official threshold</dt>
+          <dd>
+            FIRST states plainly that 0.10 is commonly cited and carries no special authority.
+            The right cut-off depends on how much remediation you can sustain. SBOMscope
+            therefore does not colour or band this column — any line drawn here would be our
+            invention wearing FIRST's name.
+          </dd>
+
+          <dt>Why a score changed</dt>
+          <dd>
+            Scores drift a little each day — measured, under 1% of them move at all day to day.
+            What moves everything at once is a new <strong>model version</strong>, which happens
+            roughly once a year. Two scores from different models are two methodologies rather
+            than two states of one vulnerability, which is why Settings shows the model version
+            beside the date.
+          </dd>
+
+          <dt>Where the data comes from</dt>
+          <dd>
+            Both are public bulk downloads, fetched only when you ask and never automatically:
+            the whole KEV catalogue (about 1.5 MB) and the whole EPSS score file (about 2.4 MB).
+            Asking for <em>every</em> exploited vulnerability says nothing about which libraries
+            you have, which is why they can be whole files — and why they can be carried onto a
+            machine with no network at all.
           </dd>
         </dl>
       </section>

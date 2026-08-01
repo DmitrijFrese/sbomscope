@@ -89,6 +89,22 @@
             </configuration>
           </execution>
 
+          <!-- Unit tests, in the same phase and before the build for the same reason the
+               typecheck is: a failing test should fail the Maven build rather than ship into
+               the jar. Execution order within a phase follows declaration order, so this sits
+               between the typecheck and the build deliberately. -->
+          <execution>
+            <id>npm-test</id>
+            <goals><goal>exec</goal></goals>
+            <phase>generate-resources</phase>
+            <configuration>
+              <arguments>
+                <argument>run</argument>
+                <argument>test</argument>
+              </arguments>
+            </configuration>
+          </execution>
+
           <execution>
             <id>npm-build</id>
             <goals><goal>exec</goal></goals>

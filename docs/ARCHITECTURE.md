@@ -60,6 +60,19 @@ osv_index                the OSV archives, parsed for candidate-version evaluati
 
 osv_index_source         which archive produced it, so a refresh invalidates it
   ecosystem, identity, advisories, packages, built_at
+
+kev_entry                CISA's Known Exploited Vulnerabilities catalogue (V4)
+  cve_id, vendor_project, product, vulnerability_name, date_added,
+  short_description, required_action, due_date, known_ransomware, notes, cwes
+
+kev_source               which download produced it — one row, enforced
+  catalog_version, date_released, entry_count, loaded_entries, identity, loaded_at
+
+epss_score               FIRST's daily exploitation probabilities (V5)
+  cve_id, score, percentile
+
+epss_source              which file produced it — one row, enforced
+  model_version, score_date, loaded_scores, identity, loaded_at
 ```
 
 `osv_index` (V2) is **derived data**: rebuildable from the archive at any time, and erasing
@@ -79,6 +92,18 @@ that exception is closed: see constraint 8 in [AGENTS.md](../AGENTS.md) — ever
 here on is additive, `V1__baseline.sql` included. `V2__osv_index.sql` is additive rather than folded in: the
 baseline is now installed with real data behind it, and folding would cost a database nobody
 needs to lose for a table nothing supersedes.
+
+`kev_entry` and `epss_score` (V4, V5) are **derived data** on the same terms as `osv_index`:
+rebuildable from a downloaded file at any time, and erased with it. Each has its own source row
+recording the feed's own identity — `catalogVersion`/`dateReleased` for KEV,
+`model_version`/`score_date` for EPSS — because those are the feeds' claims about themselves and
+are what the UI states as an as-of date. Both source rows are **written last**, so a load
+interrupted halfway leaves rows nothing considers usable. That matters more for KEV than
+anywhere else in this schema: every entry missing from a half-loaded catalogue renders as *"not
+known to be exploited"*.
+
+Two migrations rather than one, because KEV and EPSS are independent feeds with different
+shapes, cadences and licences, and additive-only means a later split would not be available.
 
 ### Dependency scope
 
@@ -170,6 +195,17 @@ descending means "worst first" exactly as the numeric score does. Ranking the ra
 was tried and caught by verification: descending opened on LOW while the Severity column beside
 it opened on CRITICAL, which is two badness columns on one table disagreeing about which way a
 click points.
+
+`KEV` and `EPSS` (Phase 3) join `kev_entry` and `epss_score` into the shared `ROW_SOURCE` on
+`f.cve_id` and order by `kev_date_added` and `epss_score`, nulls last in both directions. **KEV
+orders by the date CISA listed it, not by a flag** — descending then opens on the most recently
+listed rather than on an arbitrary member of one group, and four-years-ago against last-week is a
+real difference in how far behind you are. Both are aliased in the projection rather than ordered
+by the underlying column, because `SELECT DISTINCT` requires every `ORDER BY` expression to be in
+the result — the trap `FIXED_VERSION` hit first. **KEV has no filter at all**, deliberately: with
+a handful of listed rows one header click is the same outcome with no state to persist, revive or
+record on the About sheet. The cost is that *"exploited, worst first"* needs two criteria and
+waits for B10.
 
 `PUBLISHED` orders by `published_at`, nulls last in both directions. **Sorting by CVE id was
 considered for the same purpose and rejected**: the year in `CVE-2020-9547` orders correctly
@@ -560,6 +596,78 @@ session, including the ones where nobody asks an upgrade question.
 
 ---
 
+## Bulk public data: the exploitation feeds
+
+Two whole-file downloads, on request only, from one fixed URL each with no credentials —
+constraint 1's category 2, for the same reason the OSV archives are: asking for *every* exploited
+vulnerability discloses nothing about which libraries are held.
+
+```
+https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+https://epss.empiricalsecurity.com/epss_scores-current.csv.gz
+        ↓
+~/.sbomscope/exploit/
+```
+
+Beside `osv-db` rather than inside it: that directory's layout belongs to osv-scanner, which is
+handed it as `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` and walks it. Written to `<name>.partial` and
+moved into place, exactly as `all.zip` is.
+
+**Measured 2026-08-01**, recorded so nobody re-measures them:
+
+| | KEV | EPSS |
+|---|---|---|
+| Size | 1.50 MB JSON | 2.39 MB gzipped, 10.3 MB expanded |
+| Contents | 1,656 entries | 354,453 scored CVEs |
+| Cadence | irregular — 36 release days and 69 entries in 90 days | daily, just after 13:30 UTC |
+| Licence | CC0 1.0, no attribution obligation | free, **attribution requested** |
+| Intersection with the Maven OSV set | 52 of 6,675 CVEs (0.8%) | 6,610 (99.0%) |
+
+**The JSON is taken over the CSV CISA also publishes**, and not for taste: the JSON states
+`catalogVersion`, `dateReleased` and `count` at the top of the document, so the feed describes
+its own freshness. A CSV has nowhere to put that, which would put us back to inferring an as-of
+date from a file's modification time. (Its CSV also lives under a different path — `/files/csv/`,
+not `/files/feeds/` — so swapping the extension is a 404.)
+
+**Neither feed's lookup API is used.** EPSS publishes a per-CVE API, and asking about one CVE
+would say which one is held — category 3 by shape. FIRST's own documentation independently says
+the API is "designed for lookup, not bulk access" and names the daily file as the right mechanism
+for keeping a local copy, so the permitted path and the recommended one are the same.
+
+**A KEV flag appears derivable from data already on disk, and is not.** GitHub attaches a KEV
+catalogue reference URL to advisories whose CVE is listed. Tested against the authoritative feed:
+perfect precision, and it misses 4 of 52 Maven CVEs and 5 of 13 npm ones — including Spring Cloud
+Gateway's `CVE-2022-22947`. A silently absent exploited-mark on the rows that most deserve one is
+the failure class this project designs against, so the real feed is the only source. Recorded so
+the shortcut is refused once rather than reconsidered.
+
+**Present and loaded are separate states, and so are loaded and current.** `FeedStatus.present`
+is the file on disk; `hasData` is rows in the database; `loaded` is rows built from *that* file,
+compared by path/size/mtime exactly as `osv_index_source.identity` is. The distinction is not
+academic: the notice above the findings table asks `hasData`, because that is the question the
+cells answer, while Settings asks `loaded`, because that is what decides whether re-loading is
+worth offering. Keying the notice on `loaded` put *"this column is empty on every row"* above six
+rows that were visibly marked.
+
+**The EPSS percentile is a global rank and is repeatedly misread as a local one.** It arrives as
+column three of FIRST's file and is that CVE's position among all ~354,000 CVEs EPSS scores —
+nothing computes it here, and it would be the same number on an empty SBOM. Asked in use, which
+is why the tooltip now says *"not a rank within this SBOM"* and `EpssCell` has a `detailed`
+variant spelling out *"of all scored CVEs"* where there is width for it. A 44% probability sits
+near the 99th percentile globally, because most CVEs score far lower; that surprise is the whole
+reason the percentile is worth showing beside the score.
+
+**Freshness is the feed's own claim, never a download timestamp** — the same reasoning that made
+`ARCHIVE_REFRESHED` read the archive's modification time: a file carried across on a USB stick
+has to describe itself correctly. **Neither feed touches `ScanService.staleReason`.** That flag
+means *the findings may be wrong*, because a refreshed OSV archive changes which advisories
+apply; a newer KEV or EPSS file changes a displayed column and is applied by re-reading a table.
+EPSS also ages far more slowly than "daily" suggests — measured, 0.9% of scores move day over day
+and 0.01% by more than 0.01. What moves every score at once is a **model version**, roughly
+annually, which is why it is stored and shown beside the date.
+
+---
+
 ## Key flows
 
 **Upload** — `SbomController.upload` → `SbomService.importSbom`. The document is written
@@ -659,6 +767,17 @@ that pressing Continue does not blank a panel mid-read, and gating on completion
 exactly what it preserves. And **an unprobed row means two different things**: "not reached yet"
 while the run is in flight, "the budget ran out before this major" once it is not. The panel is
 told which.
+
+**Exploitation signals** — `ExploitFeedService.startRefresh` downloads then loads, on a single
+background thread with polled `FeedProgress`; `startLoad` reads a file already on disk, which is
+the air-gapped path and the ordinary one for anybody who copied a file across. Both replace their
+feed wholesale rather than merging: CISA does remove entries, and one surviving only because
+nothing deleted it would be a claim nobody is making any more — the same rule a re-scan follows.
+The signals reach a row through `ExploitSignals`, joined at query time and never stored with a
+finding, because what CISA and FIRST say about a CVE is the same statement whichever SBOM reached
+it. `FindingRow.signals` is never null. **`getDouble` returns 0.0 for SQL NULL**, and for a
+probability that is a real value meaning "will not happen", so both numbers are read through
+`getObject`.
 
 **Component severity for the finder** — `VulnerabilityRepository.worstBandByPurl`, riding on
 `GET /sboms/{id}/components` rather than a call of its own, so the finder's marks and its rows

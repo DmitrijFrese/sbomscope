@@ -164,7 +164,32 @@ public record FindingQuery(
          * {@code MEDIUM}. Ranked by a stated {@code CASE} rather than alphabetically, which
          * would put CRITICAL, HIGH, LOW, MODERATE — an order with no meaning at all.
          */
-        GHSA_RATING
+        GHSA_RATING,
+        /**
+         * By whether CISA lists the CVE as actively exploited, most recently listed first.
+         *
+         * <p>This is the whole interaction for KEV: a filter was considered and deliberately
+         * not built, because with 4 of 212 rows listed one click on the header produces the
+         * same set with no state to persist, revive or record on the About sheet.
+         *
+         * <p>Ordered by {@code date_added} rather than by a boolean, so descending brings the
+         * most recently listed to the top rather than an arbitrary order within one group —
+         * and listed-four-years-ago against listed-last-week is a real difference in how far
+         * behind you are. Rows CISA does not list sort last in both directions: "not listed"
+         * is not a position on this axis.
+         *
+         * <p><b>Consequence worth knowing:</b> "exploited, worst first" needs two criteria at
+         * once and is therefore unavailable until secondary sort (B10) lands.
+         */
+        KEV,
+        /**
+         * By EPSS probability, highest first when descending.
+         *
+         * <p>Nulls last in both directions, as {@code FIXED_VERSION} and {@code PUBLISHED} are:
+         * a CVE EPSS does not score has no probability, and letting those lead an ascending
+         * sort would answer "least likely to be exploited" with "the ones nobody scored".
+         */
+        EPSS
     }
 
     /** Bands with an actual vulnerability behind them, i.e. everything except CLEAN. */

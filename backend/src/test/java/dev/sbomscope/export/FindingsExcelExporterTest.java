@@ -12,6 +12,7 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 
+import dev.sbomscope.exploit.ExploitFeedService;
 import dev.sbomscope.sbom.DependencyScope;
 import dev.sbomscope.sbom.StoredSbom;
 import dev.sbomscope.scanner.FindingQuery;
@@ -34,7 +35,13 @@ class FindingsExcelExporterTest {
     private static final int CVSS_VECTOR = 8;
     private static final int FIXED_IN = 9;
     private static final int PUBLISHED = 10;
-    private static final int SUMMARY = 11;
+    // Phase 3 inserted four columns here — Known exploited and its date, EPSS and its
+    // percentile — so everything after Published moved right by four.
+    private static final int KEV = 11;
+    private static final int KEV_LISTED = 12;
+    private static final int EPSS = 13;
+    private static final int EPSS_PERCENTILE = 14;
+    private static final int SUMMARY = 15;
 
     private final FindingsExcelExporter exporter = new FindingsExcelExporter();
 
@@ -66,8 +73,21 @@ class FindingsExcelExporterTest {
     /** The default export: every column, described as a whole-inventory run. */
     private byte[] exportAll(List<FindingRow> rows, Instant lastScannedAt) throws Exception {
         return exporter.export(sbom, rows, lastScannedAt, ExportColumn.all(),
-                ExportDescription.of(false, FindingQuery.everything(), ExportColumn.all()));
+                ExportDescription.of(false, FindingQuery.everything(), ExportColumn.all()),
+                NO_FEEDS);
     }
+
+    /**
+     * Neither feed downloaded — the state most installations are in, and the one the About
+     * sheet has to describe rather than leave blank.
+     */
+    private static final List<ExploitFeedService.FeedStatus> NO_FEEDS = List.of(
+            new ExploitFeedService.FeedStatus("KEV", "CISA Known Exploited Vulnerabilities",
+                    "https://example.invalid/kev.json", "/tmp/kev.json",
+                    false, 0L, false, false, null, null, 0),
+            new ExploitFeedService.FeedStatus("EPSS", "FIRST Exploit Prediction Scoring System",
+                    "https://example.invalid/epss.csv.gz", "/tmp/epss.csv.gz",
+                    false, 0L, false, false, null, null, 0));
 
     @Test
     void producesAReadableWorkbookWithBothSheets() throws Exception {
@@ -239,7 +259,7 @@ class FindingsExcelExporterTest {
         List<ExportColumn> chosen = ExportColumn.parse(List.of("severity", "component", "cveId"));
 
         try (Workbook workbook = open(exporter.export(sbom, List.of(withCve), Instant.now(),
-                chosen, ExportDescription.of(true, FindingQuery.defaults(), chosen)))) {
+                chosen, ExportDescription.of(true, FindingQuery.defaults(), chosen), NO_FEEDS))) {
             var header = workbook.getSheet("Findings").getRow(0);
 
             assertThat(header.getCell(0).getStringCellValue()).isEqualTo("Component");
@@ -295,7 +315,8 @@ class FindingsExcelExporterTest {
                 EnumSet.of(DependencyScope.DIRECT), 20, 0);
 
         try (Workbook workbook = open(exporter.export(sbom, List.of(withCve), Instant.now(),
-                ExportColumn.all(), ExportDescription.of(true, narrowed, ExportColumn.all())))) {
+                ExportColumn.all(), ExportDescription.of(true, narrowed, ExportColumn.all()),
+                NO_FEEDS))) {
             String about = about(workbook.getSheet("About this export"));
 
             assertThat(about).contains("Current view");

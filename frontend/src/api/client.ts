@@ -567,7 +567,17 @@ export function fetchBumpProgress(sbomId: string, purl: string): Promise<BumpPro
  */
 export interface FindingRow {
   purl: string;
+  /** `group:name`, still sent because several views want the whole coordinate. */
   coordinates: string;
+  /**
+   * The two halves, supplied separately so the table can stack them.
+   *
+   * `group` is null for an npm package with no scope (`lodash`). The cell reserves its line
+   * regardless, so rows keep one height — which matters more than usual for the column that
+   * stays put while the table scrolls sideways.
+   */
+  group: string | null;
+  name: string;
   version: string | null;
   root: boolean;
   scope: DependencyScope;
@@ -601,6 +611,23 @@ export interface FindingRow {
    * component name still reaches the artifact page.
    */
   registryVersionUrl: string | null;
+  /**
+   * The date CISA added this CVE to the Known Exploited Vulnerabilities catalogue.
+   *
+   * Null is **not** a clearance. It covers two states, which the cell tells apart using what it
+   * already has: a row with no `cveId` cannot be looked up in a CVE-keyed catalogue at all, and
+   * a row with one simply is not listed. The third state — nobody downloaded the catalogue — is
+   * identical on every row at once and arrives as `exploitFeedsLoaded` on the status instead.
+   */
+  kevListedOn: string | null;
+  /** CISA has confirmed ransomware use. A positive signal only: false is not a denial. */
+  kevRansomware: boolean;
+  /** Probability of exploitation in the next 30 days, or null where EPSS does not score it. */
+  epssScore: number | null;
+  /** Where that score sits among all scored CVEs — what makes 0.033 mean something. */
+  epssPercentile: number | null;
+  /** CISA's page for this CVE. Present only when listed, so no cell links to an empty search. */
+  kevUrl: string | null;
 }
 
 /**
@@ -613,13 +640,22 @@ export interface FindingRow {
  * lexically follows `CVE-2020-10001`. `GHSA_RATING` is GitHub's own word, not the CVSS band,
  * and the two disagree often enough that both are worth sorting by.
  */
+/**
+ * `KEV` orders by the date CISA listed the CVE, not by a flag — descending then opens on the
+ * most recently listed rather than on an arbitrary member of one group. It is deliberately the
+ * whole KEV interaction: a filter was considered and refused, because with a handful of listed
+ * rows one header click is the same outcome with no state to persist. `EPSS` orders by the
+ * probability. Both put rows with nothing to say last in either direction.
+ */
 export type SortField =
   | 'COMPONENT'
   | 'SEVERITY'
   | 'FIXED_VERSION'
   | 'SCOPE'
   | 'PUBLISHED'
-  | 'GHSA_RATING';
+  | 'GHSA_RATING'
+  | 'KEV'
+  | 'EPSS';
 
 /**
  * NONE and CLEAN are deliberately distinct: NONE is a real vulnerability whose advisory
@@ -720,6 +756,15 @@ export interface ScanStatus {
   severityCounts: Partial<Record<SeverityBand, number>>;
   /** Rows matching the current filter — the size an unpaged export would have. */
   filteredCount: number;
+  /**
+   * Which exploitation feeds have data behind them, e.g. `['KEV', 'EPSS']`.
+   *
+   * Carried here rather than fetched separately so the notice above the table and the cells
+   * below it cannot describe different states. A feed missing from this list means its column
+   * is empty on *every* row for one reason — nobody downloaded it — which is a fact about the
+   * installation and belongs stated once, not stamped into three hundred cells.
+   */
+  exploitFeedsLoaded: string[];
   /** The current page only. */
   rows: FindingRow[];
 }
@@ -845,6 +890,89 @@ export function startDatabaseDownload(ecosystem: string): Promise<DownloadProgre
 
 export function fetchDownloadProgress(): Promise<DownloadProgress> {
   return request<DownloadProgress>('/settings/scanner/database/progress');
+}
+
+// --- exploitation signals ----------------------------------------------------
+
+/**
+ * One feed's state.
+ *
+ * `present` and `loaded` are separate on purpose: a file copied across on a USB stick is
+ * present and not loaded, and re-downloading it to fix that would be pointless on a connected
+ * machine and impossible on a disconnected one.
+ */
+export interface ExploitFeedStatus {
+  /** `KEV` or `EPSS`. */
+  feed: string;
+  label: string;
+  /** Shown verbatim, so nothing is ever downloaded from an address the reader cannot see. */
+  sourceUrl: string;
+  path: string;
+  present: boolean;
+  sizeBytes: number;
+  /**
+   * There are rows for this feed, whatever is on disk now — the question the *cells* answer,
+   * and therefore the one the findings notice asks. Data loaded from a catalogue survives that
+   * catalogue being moved or deleted.
+   */
+  hasData: boolean;
+  /**
+   * Rows exist **and** were built from the file currently on disk. The stricter claim, and the
+   * right one here: it is what decides whether the Load button is worth offering.
+   */
+  loaded: boolean;
+  /**
+   * The feed's **own** claim about when its data is from — `dateReleased` for KEV,
+   * `score_date` for EPSS — never a download timestamp. That is what makes it equally true
+   * of a file carried across by hand.
+   */
+  asOf: string | null;
+  /** `catalogVersion` for KEV, `model_version` for EPSS. */
+  version: string | null;
+  rows: number;
+}
+
+export type FeedState = 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+export type FeedPhase = 'DOWNLOAD' | 'LOAD';
+
+export interface FeedProgress {
+  feed: string | null;
+  state: FeedState;
+  phase: FeedPhase;
+  bytesDownloaded: number;
+  /** -1 when the server sent no Content-Length. */
+  totalBytes: number;
+  /** Rows written so far while loading. Counts up with no ceiling. */
+  rowsLoaded: number;
+  message: string | null;
+  startedAt: string | null;
+}
+
+export interface ExploitFeedsResponse {
+  feeds: ExploitFeedStatus[];
+  progress: FeedProgress;
+}
+
+export function fetchExploitFeeds(): Promise<ExploitFeedsResponse> {
+  return request<ExploitFeedsResponse>('/exploit-feeds');
+}
+
+export function fetchFeedProgress(): Promise<FeedProgress> {
+  return request<FeedProgress>('/exploit-feeds/progress');
+}
+
+/** Downloads and loads. The one action here that touches the network. */
+export function refreshExploitFeed(feed: string): Promise<FeedProgress> {
+  return request<FeedProgress>(`/exploit-feeds/${encodeURIComponent(feed)}/refresh`, {
+    method: 'POST',
+  });
+}
+
+/** Loads a file already on disk — the air-gapped path. */
+export function loadExploitFeed(feed: string): Promise<FeedProgress> {
+  return request<FeedProgress>(`/exploit-feeds/${encodeURIComponent(feed)}/load`, {
+    method: 'POST',
+  });
 }
 
 // --- logging -----------------------------------------------------------------

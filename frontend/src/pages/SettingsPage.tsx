@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 
+import { ExploitFeedPanel } from '../components/ExploitFeedPanel';
 import { ExportSettingsPanel } from '../components/ExportSettingsPanel';
 import { MavenSettingsPanel } from '../components/MavenSettingsPanel';
 import { PurgePanel } from '../components/PurgePanel';
@@ -38,6 +39,11 @@ export function SettingsPage() {
       </div>
 
       <ScannerSettingsPanel />
+
+      {/* Directly after the scanner: both are vulnerability data the user downloads, and this
+          one enriches exactly what that one produces. Before the Maven probe, which is a
+          different kind of thing entirely — an external process rather than a file. */}
+      <ExploitFeedPanel />
 
       <MavenSettingsPanel />
 

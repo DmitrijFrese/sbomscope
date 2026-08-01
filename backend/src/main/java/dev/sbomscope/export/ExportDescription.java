@@ -88,6 +88,11 @@ public record ExportDescription(
             // Named as GitHub's scale rather than "rating", so a reader does not take it for the
             // CVSS band in the Severity column beside it.
             case GHSA_RATING -> "GHSA rating, " + direction + " (unrated last)";
+            // "not listed last" rather than "unlisted last": a reader must not take the tail of
+            // this sort for a set of rows CISA has cleared. Ordered by the date CISA listed it,
+            // which is what the label says.
+            case KEV -> "Known exploited, " + direction + " by the date CISA listed it (not listed last)";
+            case EPSS -> "EPSS probability, " + direction + " (unscored last)";
         };
     }
 

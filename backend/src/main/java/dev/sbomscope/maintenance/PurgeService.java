@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import dev.sbomscope.exploit.ExploitFeedService;
 import dev.sbomscope.logging.ActivityLogger;
 import dev.sbomscope.sbom.SbomFileStore;
 import dev.sbomscope.sbom.SbomService;
@@ -44,14 +45,16 @@ public class PurgeService {
     private final SbomFileStore files;
     private final SettingsService settings;
     private final ActivityLogger activityLog;
+    private final ExploitFeedService exploitFeeds;
 
     PurgeService(JdbcTemplate jdbc, SbomService sboms, SbomFileStore files, SettingsService settings,
-                 ActivityLogger activityLog) {
+                 ActivityLogger activityLog, ExploitFeedService exploitFeeds) {
         this.jdbc = jdbc;
         this.sboms = sboms;
         this.files = files;
         this.settings = settings;
         this.activityLog = activityLog;
+        this.exploitFeeds = exploitFeeds;
     }
 
     /**
@@ -80,7 +83,13 @@ public class PurgeService {
             removed.put(PurgeTarget.SETTINGS.name(), rows + " settings reset to defaults");
         }
         if (targets.contains(PurgeTarget.OSV_DATABASE)) {
-            removed.put(PurgeTarget.OSV_DATABASE.name(), purgeDatabaseArchives(databaseDirectory));
+            // The exploitation feeds ride on this target rather than earning a fifth checkbox.
+            // The four exist because they differ by orders of magnitude in what they cost to
+            // undo, and 4 MB of KEV and EPSS is not a new order of magnitude beside a 200 MB
+            // npm archive. Their rows go with their files, being derived data pointing at
+            // nothing once the file is gone.
+            removed.put(PurgeTarget.OSV_DATABASE.name(),
+                    purgeDatabaseArchives(databaseDirectory) + "; " + exploitFeeds.purge());
         }
 
         log.warn("Purge completed: {}", removed);

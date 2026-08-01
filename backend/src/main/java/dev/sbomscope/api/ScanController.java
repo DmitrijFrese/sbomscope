@@ -27,6 +27,7 @@ import dev.sbomscope.export.FindingsExcelExporter;
 import dev.sbomscope.sbom.SbomService;
 import dev.sbomscope.sbom.StoredSbom;
 import dev.sbomscope.scanner.ScanService;
+import dev.sbomscope.exploit.ExploitFeedService;
 import dev.sbomscope.scanner.FindingQuery;
 import dev.sbomscope.settings.SettingsService;
 
@@ -38,13 +39,15 @@ class ScanController {
     private final SbomService sboms;
     private final SettingsService settings;
     private final FindingsExcelExporter exporter;
+    private final ExploitFeedService exploitFeeds;
 
     ScanController(ScanService scans, SbomService sboms, SettingsService settings,
-                   FindingsExcelExporter exporter) {
+                   FindingsExcelExporter exporter, ExploitFeedService exploitFeeds) {
         this.scans = scans;
         this.sboms = sboms;
         this.settings = settings;
         this.exporter = exporter;
+        this.exploitFeeds = exploitFeeds;
     }
 
     /**
@@ -89,10 +92,38 @@ class ScanController {
             Map<FindingQuery.SeverityBand, Integer> severityCounts,
             /** Rows matching the current filter — the size an unpaged export would have. */
             int filteredCount,
+            /**
+             * Which exploitation feeds have data behind them.
+             *
+             * <p>Rides on this response rather than being fetched separately, for the same
+             * reason the scanning marker rides on the SBOM list: the notice above the table and
+             * the cells below it must describe the same state, and two sources would be free to
+             * disagree about which. It is here at all because "never downloaded" is a fact about
+             * the installation and identical on every row — stamping it into each cell would say
+             * one thing three hundred times and crowd out the distinction that actually varies.
+             */
+            List<String> exploitFeedsLoaded,
             /** The requested page only. */
             List<RowResponse> rows) {}
 
     record ScanRunResponse(int componentsScanned, int findings, Instant scannedAt, String scannerVersion) {}
+
+    /**
+     * Feed ids with rows behind them — {@code hasData}, deliberately not {@code loaded}.
+     *
+     * <p>The notice this drives says "that column is empty on every row", so it has to ask the
+     * question the cells answer: <em>is there data</em>. {@code loaded} is the stricter "and it
+     * matches the file on disk", which is right for Settings and wrong here — a catalogue loaded
+     * successfully and then moved on disk still fills every cell it filled before. Keying this on
+     * {@code loaded} put the notice above six rows that were visibly marked, found by verifying
+     * rather than by reading.
+     */
+    private List<String> loadedFeeds() {
+        return exploitFeeds.status().stream()
+                .filter(ExploitFeedService.FeedStatus::hasData)
+                .map(ExploitFeedService.FeedStatus::feed)
+                .toList();
+    }
 
     private void requireSbom(UUID id) {
         if (sboms.findById(id).isEmpty()) {
@@ -160,7 +191,8 @@ class ScanController {
 
         byte[] workbook = exporter.export(
                 sbom, scans.rows(id, query), scans.lastScannedAt(id).orElse(null),
-                columns, ExportDescription.of(visibleScope, query, columns));
+                columns, ExportDescription.of(visibleScope, query, columns),
+                exploitFeeds.status());
 
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(
@@ -224,6 +256,7 @@ class ScanController {
                 scans.countFindings(id, FindingQuery.defaults()),
                 scans.countsByBand(id),
                 scans.countRows(id, query.withoutPaging()),
+                loadedFeeds(),
                 scans.rows(id, query).stream().map(RowResponse::from).toList());
     }
 
