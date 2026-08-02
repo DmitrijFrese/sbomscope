@@ -18,6 +18,8 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
@@ -58,6 +60,7 @@ public class MavenDependencyResolver implements DependencyResolver {
     // MavenToolSettings.dependencyTreeGoal() for why it is pinned and why that is configurable.
 
     private final ActivityLogger activityLog;
+    private final String probeRepository;
 
     /** Runs {@code mvn --version}, both to confirm the path works and to record what ran. */
     public String version(String executablePath) {
@@ -87,7 +90,14 @@ public class MavenDependencyResolver implements DependencyResolver {
     }
 
     MavenDependencyResolver(ActivityLogger activityLog) {
+        this(activityLog, defaultProbeRepository());
+    }
+
+    @Autowired
+    MavenDependencyResolver(ActivityLogger activityLog,
+                            @Value("${sbomscope.probe-repository}") String probeRepository) {
         this.activityLog = activityLog;
+        this.probeRepository = probeRepository;
     }
 
     /**
@@ -137,7 +147,7 @@ public class MavenDependencyResolver implements DependencyResolver {
                                  String... extraArgs) {
         List<String> command = new ArrayList<>(List.of(
                 settings.executablePath(), "-B", "-q", goal,
-                "-Dmaven.repo.local=" + defaultProbeRepository()));
+                "-Dmaven.repo.local=" + probeRepository));
         command.addAll(List.of(extraArgs));
         if (settings.hasProfiles()) {
             command.add("-P" + settings.profiles().trim());
@@ -161,7 +171,7 @@ public class MavenDependencyResolver implements DependencyResolver {
                         + "repository (%s), never your ~/.m2, so it has to fetch this itself — on a "
                         + "machine with no route to a repository it cannot. Full output is in "
                         + "sbomscope.log. Maven said: %s")
-                        .formatted(label, goal, defaultProbeRepository(), result.lastMeaningfulLine()));
+                        .formatted(label, goal, probeRepository, result.lastMeaningfulLine()));
     }
 
     /** No dependencies: the check is about the tooling, not about resolving anything. */

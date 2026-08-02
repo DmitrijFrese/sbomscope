@@ -32,6 +32,18 @@ export function ShieldIcon(props: IconProps) {
   );
 }
 
+/** The product mark: inspect one package, not a generic search or a second nav cube. */
+export function BrandIcon(props: IconProps) {
+  return (
+    <Icon {...props} strokeWidth="1.7">
+      <circle cx="10" cy="10" r="6.5" />
+      <path d="M14.8 14.8L21 21" />
+      <path d="M10 6.2l3.1 1.7v3.6L10 13.2l-3.1-1.7V7.9L10 6.2z" />
+      <path d="M6.9 7.9L10 9.7l3.1-1.8M10 9.7v3.5" />
+    </Icon>
+  );
+}
+
 /**
  * A package: the Component Inspector's subject is one library, not a directory of files.
  * Three strokes on purpose — the nav renders these at 18px, where an overlaid magnifier or

@@ -76,10 +76,10 @@ epss_source              which file produced it — one row, enforced
 ```
 
 `osv_index` (V2) is **derived data**: rebuildable from the archive at any time, and erasing
-the archives should take it with them. It exists because the archives name their entries by
-advisory id rather than by package, so finding one library's advisories means parsing all of
-them — 5.2 s and ~152 MB retained for npm, measured. Parsed once into a table instead, a
-lookup is an indexed `SELECT` and nothing is held in memory.
+the archives takes it and `osv_index_source` with them. It exists because the archives name
+their entries by advisory id rather than by package, so finding one library's advisories means
+parsing all of them — 5.2 s and ~152 MB retained for npm, measured. Parsed once into a table
+instead, a lookup is an indexed `SELECT` and nothing is held in memory.
 
 `osv_index_source.identity` is the archive's path, size and modification time. It is compared
 rather than trusted, so replacing a download invalidates the index by itself, and it is
@@ -104,6 +104,25 @@ known to be exploited"*.
 
 Two migrations rather than one, because KEV and EPSS are independent feeds with different
 shapes, cadences and licences, and additive-only means a later split would not be available.
+
+### Local-data purge boundaries
+
+Purge empties owned tables and files; it never removes the live H2 database file or Flyway's
+schema history. The **Offline vulnerability data** target is one recovery unit: OSV archives,
+`osv_index`, `osv_index_source`, and the KEV and EPSS files and rows all go together because
+each store is derived and restored by its source's existing load/index action.
+
+Log history is a separate, exact-name target. It writes the purge activity event first, then
+best-effort deletes only `sbomscope.log.1`–`.5` and `activity.jsonl.1`–`.3`, reporting removed,
+absent and failed names. The active `sbomscope.log` and `activity.jsonl` stay open and are never
+claimed as removed; the configured log directory is never traversed recursively.
+
+The Maven probe cache is also separate. It owns only the configured
+`sbomscope.probe-repository` (by default `~/.sbomscope/probe-repo`), validates that the resolved
+leaf remains `probe-repo`, and never touches `~/.m2`. `BumpProbeService` gives cache maintenance
+and probe submission one shared gate: cleanup is rejected while work is queued or running, and
+new work cannot enter while deletion is in progress. Rebuilding the cache may need repository
+access, which the warning states before deletion.
 
 ### Dependency scope
 
@@ -362,21 +381,24 @@ an external process, never downloaded by SBOMscope, exactly like osv-scanner abo
 by `MavenToolSettings` (`enabled`, `executablePath`, `maxProbes`, `runBudgetMinutes`,
 `profiles`) in Settings.
 
-**Isolated repository, never `~/.m2`.** Every probe resolves into
-`~/.sbomscope/probe-repo` (`SettingsService.defaultProbeRepository`). A failed probe's
+**Isolated repository, never `~/.m2`.** Every probe resolves through
+`sbomscope.probe-repository`, which defaults under the data directory to
+`~/.sbomscope/probe-repo`. A failed probe's
 `.lastUpdated` markers must not be able to make a later real build refuse to retry a download,
 so the user's own local repository is never touched.
 
-> **Known limitation — this cannot work fully air-gapped.** `-Dmaven.repo.local` *overrides* the
+> **Known, accepted limitation — this cannot work fully air-gapped.** `-Dmaven.repo.local` *overrides* the
 > local repository, so a correctly configured Maven gives the probe the user's mirrors and
 > credentials from `settings.xml` but **not** the contents of their `~/.m2`. With a reachable
 > mirror the plugin simply downloads into `probe-repo`, which is why this works on an ordinary
 > machine. With no reachable repository there is nowhere for it to come from, so every probe
 > fails at plugin resolution (`ProbeFailureReason.PLUGIN_UNAVAILABLE`) while a full `~/.m2` sits
 > unused. Pinning the plugin versions below makes the required set finite and knowable, so
-> seeding is possible in principle. **Unresolved** — see the 2026-07-30 entry in the plan's
-> decision log, which records a measured candidate fix (`maven.repo.local.tail`) and why it is
-> not a complete answer on its own.
+> seeding is possible in principle, but it still would not provide unseen candidate artifacts.
+> A measured `maven.repo.local.tail` read-through likewise helps only for artifacts already
+> cached. The design question was closed on 2026-08-02: keep the isolation and report the probe
+> unavailable when neither the isolated repository nor a configured mirror can supply what it
+> needs. See the plan's decision log.
 
 **Every `mvn` invocation goes through `MavenInvocation`**, which captures the command line and
 the complete output into `sbomscope.log`: the command at INFO so it can be pasted into a
@@ -413,6 +435,25 @@ result reads as "upstream has not fixed this" unless the panel can say otherwise
 declaring ancestors are listed with that reason and never ranked — ranking them splits one budget
 N ways for versions that cannot change the outcome. `BumpScope` carries all of it, plus which
 module the answer was verified against and which owning modules were not probed.
+
+**Route accounting is exact even though route presentation is capped.** For each
+`(component, module)` pair, `DependencyGraphService` enumerates every simple route with a
+per-path cycle guard, counts direct routes and groups transitive routes by their first declared
+dependency. Only the ten shortest paths are retained for the dependency-graph UI.
+`UpgradeAdvice.ModuleImpact` therefore reports `COMPLETE`, `PARTIAL` or `UNAFFECTED` from the
+uncapped counts: a direct upgrade is complete only in modules declaring the target, a parent
+`dependencyManagement` pin is complete across modules by construction, and an ancestor bump
+names the exact routes it covers. A component classified globally as `DIRECT` may still be
+probed when another module owns it transitively; the probe selects that transitive owner rather
+than refusing from the aggregate scope.
+
+Exact simple-path enumeration can be exponential in a graph with many diamonds. The per-path
+cycle guard guarantees termination on cyclic SBOMs, but it does not make that work polynomial;
+retaining only ten paths bounds the response size, not the traversal cost. This is a deliberate
+correctness trade: remedy coverage may not be inferred from a truncated walk. If a real SBOM
+makes the cost unacceptable, the replacement must either compute the same exact counts by a
+different representation or expose coverage as unavailable. Reintroducing a cap and presenting
+its floor as a total would recreate the false-fix failure B14 removed.
 
 **Whole-module, not single-dependency.** A component reached by two routes appears in the SBOM
 as one resolved node with two parents, and the SBOM does not record which declaration Maven

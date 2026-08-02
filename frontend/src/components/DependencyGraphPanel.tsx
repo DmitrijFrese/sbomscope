@@ -103,11 +103,11 @@ function ModulePanel({ module: entry, targetPurl }: { module: ModuleRoutes; targ
       </h3>
 
       {shown === 0 ? (
-        /* Reachability found the module but enumeration could not produce a route within
-           its budget. The module still appears — which of your modules are affected is the
-           answer; by which hop is the detail. */
+        /* Defensive mismatch: reachability found the module but complete route enumeration
+           produced none. The module still appears because which modules are affected is the
+           more important claim. */
         <p className="panel__hint">
-          Reached from here, but this graph has too many routes to enumerate.
+          Reached from here, but no route could be materialised.
         </p>
       ) : (
         <ul className="route-list">

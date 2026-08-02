@@ -23,6 +23,7 @@ import dev.sbomscope.settings.MavenToolSettings;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Exercises the whole-module probe and its hierarchical search against a fake
@@ -58,6 +59,15 @@ class BumpProbeServiceTest {
         return new ComponentGraph(List.of(routes), 1, false, null);
     }
 
+    /** One module declares the target itself, so there is no ancestor to bump. */
+    private ComponentGraph directGraph() {
+        GraphNode module = node("dev.sbomscope.vulntest:module-a", "1.0.0", DependencyScope.APPLICATION);
+        GraphNode target = node(TARGET.groupId() + ":" + TARGET.artifactId(), "1.0", DependencyScope.DIRECT);
+        ComponentGraph.ModuleRoutes routes = new ComponentGraph.ModuleRoutes(
+                module, List.of(List.of(module, target)), 1, false);
+        return new ComponentGraph(List.of(routes), 1, false, null);
+    }
+
     /** One module, two routes reaching the same target through two different ancestors. */
     private ComponentGraph twoAncestorGraph(String aCoordinates, String aVersion, String bCoordinates, String bVersion) {
         GraphNode module = node("dev.sbomscope.vulntest:module-a", "1.0.0", DependencyScope.APPLICATION);
@@ -86,13 +96,13 @@ class BumpProbeServiceTest {
 
     private BumpRequest request(StoredComponent target, ComponentGraph graph,
                                  UpgradeAdviceService.TargetEvaluator evaluator) {
-        List<GraphNode> moduleDeps = graph.reachedFrom().isEmpty()
-                ? List.of()
-                : graph.reachedFrom().getFirst().routes().stream()
+        List<GraphNode> moduleDeps = graph.primaryTransitiveOwner()
+                .map(owner -> owner.routes().stream()
                         .filter(route -> route.size() >= 2)
                         .map(route -> route.get(1))
                         .distinct()
-                        .toList();
+                        .toList())
+                .orElse(List.of());
         return new BumpRequest(UUID.randomUUID(), target, graph, moduleDeps,
                 List.of(new AdvisoryFix("GHSA-test", "CVE-2024-0001", null, "3.1.9")), null, evaluator);
     }
@@ -201,11 +211,88 @@ class BumpProbeServiceTest {
         BumpProbeService service = service(fakeResolver(Map.of(), List.of()));
 
         BumpProgress result = service.start(
-                request(direct, singleAncestorGraph("com.acme:lib", "1.0"), evaluatorWhereCleanVersionsAre()),
+                request(direct, directGraph(), evaluatorWhereCleanVersionsAre()),
                 MAVEN_SETTINGS);
 
         assertThat(result.state()).isEqualTo(BumpProgress.State.FAILED);
-        assertThat(result.message()).contains("Nothing pulls this in on your behalf");
+        assertThat(result.message()).contains("No module pulls this component in transitively");
+    }
+
+    @Test
+    void aComponentDirectInOneModuleCanStillBeProbedWhereItIsTransitive() throws InterruptedException {
+        GraphNode directModule = node("dev.sbomscope:module-a", "1.0", DependencyScope.APPLICATION);
+        GraphNode transitiveModule = node("dev.sbomscope:module-b", "1.0", DependencyScope.APPLICATION);
+        GraphNode ancestor = node("com.acme:starter", "2.0", DependencyScope.DIRECT);
+        GraphNode targetNode = node(TARGET.groupId() + ":" + TARGET.artifactId(), "3.1.4", DependencyScope.DIRECT);
+        ComponentGraph graph = new ComponentGraph(List.of(
+                new ComponentGraph.ModuleRoutes(
+                        directModule, List.of(List.of(directModule, targetNode)), 1, false),
+                new ComponentGraph.ModuleRoutes(
+                        transitiveModule, List.of(List.of(transitiveModule, ancestor, targetNode)), 1, false)),
+                2, false, null);
+        StoredComponent globalDirect = new StoredComponent(UUID.randomUUID(), targetNode.bomRef(),
+                TARGET.groupId(), TARGET.artifactId(), "3.1.4", targetNode.purl(),
+                "library", false, DependencyScope.DIRECT);
+        BumpProbeService service = service(fakeResolver(
+                Map.of("calibration", ProbeOutcome.failed(ProbeFailureReason.NOT_FOUND, "not found anywhere")),
+                List.of()));
+
+        service.start(request(globalDirect, graph, evaluatorWhereCleanVersionsAre()), MAVEN_SETTINGS);
+        BumpProgress result = awaitCompletion(service, globalDirect, graph);
+
+        assertThat(result.state()).isEqualTo(BumpProgress.State.COMPLETED);
+        assertThat(result.remedy().note()).contains("Not found in any configured repository");
+    }
+
+    @Test
+    void cacheMaintenanceBlocksNewProbeSubmissions() {
+        BumpProbeService service = service(fakeResolver(Map.of(), List.of()));
+        ComponentGraph graph = singleAncestorGraph("com.acme:starter", "2.0");
+        StoredComponent target = transitiveTarget("3.1.4");
+
+        BumpProgress attempted = service.withIdleProbeRepository(
+                () -> service.start(request(target, graph, evaluatorWhereCleanVersionsAre()), MAVEN_SETTINGS));
+
+        assertThat(attempted.state()).isEqualTo(BumpProgress.State.FAILED);
+        assertThat(attempted.message()).contains("cache is being cleared");
+    }
+
+    @Test
+    void cacheMaintenanceIsRejectedWhileAProbeIsRunning() throws InterruptedException {
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        DependencyResolver blocking = new DependencyResolver() {
+            @Override
+            public ProbeOutcome resolve(List<ModuleDependency> dependencies, Map<MavenArtifact, String> overrides,
+                                        MavenArtifact target, ProbeContext context) {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return ProbeOutcome.failed(ProbeFailureReason.NOT_FOUND, "released");
+            }
+
+            @Override
+            public List<String> knownVersions(MavenArtifact declaring, ProbeContext context) {
+                return List.of();
+            }
+        };
+        BumpProbeService service = service(blocking);
+        ComponentGraph graph = singleAncestorGraph("com.acme:starter", "2.0");
+        StoredComponent target = transitiveTarget("3.1.4");
+        service.start(request(target, graph, evaluatorWhereCleanVersionsAre()), MAVEN_SETTINGS);
+        assertThat(entered.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        try {
+            assertThatThrownBy(() -> service.withIdleProbeRepository(() -> "should not run"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("queued and running Maven probe");
+        } finally {
+            release.countDown();
+        }
+        awaitCompletion(service, target, graph);
     }
 
     @Test

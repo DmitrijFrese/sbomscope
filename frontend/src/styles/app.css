@@ -71,6 +71,13 @@ body {
   white-space: nowrap;
 }
 
+.topmenu__brand-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
 .topmenu__nav {
   display: flex;
   align-items: center;
@@ -2004,7 +2011,10 @@ body {
 }
 
 .finder .search-field .finder__input {
-  padding-right: 34px;
+  /* Match the toolbar field: the native clear cross needs to stay left of both mode
+     controls. This was still reserving room for the original single `.*` button, so the
+     cross and `!` occupied the same horizontal space once negation was added. */
+  padding-right: 62px;
 }
 
 /* Finder fixed on the left, answer on the right. The finder earns its column by staying
@@ -2416,6 +2426,17 @@ body {
   border-color: var(--accent);
   background: var(--accent-subtle);
   opacity: 1;
+}
+
+.remedy__scope {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.remedy__scope li + li {
+  margin-top: var(--space-1);
 }
 
 .remedy__title {

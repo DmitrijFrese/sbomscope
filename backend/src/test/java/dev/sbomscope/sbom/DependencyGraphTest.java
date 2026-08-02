@@ -145,6 +145,38 @@ class DependencyGraphTest {
     }
 
     @Test
+    void remedyCountsAreExactBeyondTheTenRouteDisplayCap() {
+        aggregateBuild();
+        library("declaration-a", DependencyScope.DIRECT);
+        library("declaration-b", DependencyScope.DIRECT);
+        library("target", DependencyScope.TRANSITIVE);
+        depends("backend", "declaration-a");
+        depends("backend", "declaration-b");
+
+        for (int i = 0; i < 20; i++) {
+            String branch = "a-" + i;
+            library(branch, DependencyScope.TRANSITIVE);
+            depends("declaration-a", branch);
+            depends(branch, "target");
+        }
+        for (int i = 0; i < 15; i++) {
+            String branch = "b-" + i;
+            library(branch, DependencyScope.TRANSITIVE);
+            depends("declaration-b", branch);
+            depends(branch, "target");
+        }
+
+        ModuleRoutes reached = graphOf("target").reachedFrom().getFirst();
+
+        assertThat(reached.routes()).as("presentation stays capped").hasSize(10);
+        assertThat(reached.totalRoutes()).as("correctness does not use that cap").isEqualTo(35);
+        assertThat(reached.truncated()).isFalse();
+        assertThat(reached.declarations())
+                .extracting(entry -> entry.declaration().bomRef() + ":" + entry.routes())
+                .containsExactlyInAnyOrder("declaration-a:20", "declaration-b:15");
+    }
+
+    @Test
     void aCycleAboveTheComponentTerminates() {
         // Real documents contain them, and following one does not stop on its own.
         aggregateBuild();

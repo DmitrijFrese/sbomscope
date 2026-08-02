@@ -393,9 +393,9 @@ class SbomController {
         // The most-affected module first, matching how the graph itself is already ordered —
         // its full direct set, not just the one route reaching this component, since Maven's
         // nearest-wins resolution needs every competing declaration to decide correctly.
-        List<GraphNode> moduleDependencies = graph.reachedFrom().isEmpty()
-                ? List.of()
-                : graphs.directDependencies(id, graph.reachedFrom().getFirst().module().bomRef());
+        List<GraphNode> moduleDependencies = graph.primaryTransitiveOwner()
+                .map(owner -> graphs.directDependencies(id, owner.module().bomRef()))
+                .orElse(List.of());
 
         return new BumpRequest(
                 id,

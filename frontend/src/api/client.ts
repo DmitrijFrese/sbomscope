@@ -188,8 +188,17 @@ export interface ModuleRoutes {
   /** The shortest few, each running module → … → component inclusive. */
   routes: GraphNode[][];
   totalRoutes: number;
-  /** Enumeration hit its limit, so totalRoutes is a floor rather than a count. */
+  /** Defensive compatibility flag; exact enumeration normally leaves this false. */
   truncated: boolean;
+  /** Exact direct routes, computed independently of the route display cap. */
+  directRoutes: number;
+  /** Exact transitive route count through every declaration in this module. */
+  declarations: DeclarationRoutes[];
+}
+
+export interface DeclarationRoutes {
+  declaration: GraphNode;
+  routes: number;
 }
 
 export interface GraphTreeNode {
@@ -242,6 +251,19 @@ export interface Remedy {
   clears: string[];
   /** Advisories it cannot address, because they name no fix at all. */
   leaves: string[];
+  note: string | null;
+  moduleImpacts: ModuleImpact[];
+}
+
+export type RemedyCoverage = 'COMPLETE' | 'PARTIAL' | 'UNAFFECTED';
+
+export interface ModuleImpact {
+  module: string;
+  /** The declaration changed by a bump; null for upgrade and pin. */
+  through: string | null;
+  coverage: RemedyCoverage;
+  routesCovered: number;
+  routesTotal: number;
   note: string | null;
 }
 
@@ -860,7 +882,13 @@ export function saveExportSettings(settings: ExportSettings): Promise<ExportSett
 
 // --- maintenance -----------------------------------------------------------
 
-export type PurgeTarget = 'SBOMS' | 'FINDINGS' | 'SETTINGS' | 'OSV_DATABASE';
+export type PurgeTarget =
+  | 'SBOMS'
+  | 'FINDINGS'
+  | 'SETTINGS'
+  | 'OSV_DATABASE'
+  | 'ROLLED_LOGS'
+  | 'MAVEN_PROBE_CACHE';
 
 export interface PurgeResult {
   /** Target name to a sentence describing what went, so the confirmation states facts. */
@@ -1094,6 +1122,9 @@ export interface BumpScope {
   otherAncestors: string[];
   /** False when the tree could not be read and the ancestor fell back to the shortest route. */
   decidedByMaven: boolean;
+  /** Exact route coverage, independent of the graph panel's display cap. */
+  routesCovered: number;
+  routesTotal: number;
 }
 
 /** Running, queued, and recently finished — live rows first, then this session's history. */

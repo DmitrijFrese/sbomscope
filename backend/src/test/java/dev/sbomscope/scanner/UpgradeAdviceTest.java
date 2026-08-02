@@ -70,6 +70,21 @@ class UpgradeAdviceTest {
         return new ComponentGraph(List.of(), 1, false, null);
     }
 
+    private ComponentGraph mixedDirectAndTransitiveGraph() {
+        GraphNode moduleA = new GraphNode("ma", "dev.sbomscope:module-a", "1.0", null,
+                false, DependencyScope.APPLICATION, false);
+        GraphNode moduleB = new GraphNode("mb", "dev.sbomscope:module-b", "1.0", null,
+                false, DependencyScope.APPLICATION, false);
+        GraphNode ancestor = new GraphNode("a", "org.example:starter", "2.0", null,
+                false, DependencyScope.DIRECT, false);
+        GraphNode target = new GraphNode("t", "tools.jackson.core:jackson-databind", "3.1.4",
+                PURL, false, DependencyScope.DIRECT, true);
+        return new ComponentGraph(List.of(
+                new ComponentGraph.ModuleRoutes(moduleA, List.of(List.of(moduleA, target)), 1, false),
+                new ComponentGraph.ModuleRoutes(moduleB, List.of(List.of(moduleB, ancestor, target)), 1, false)),
+                2, false, null);
+    }
+
     private Remedy remedy(UpgradeAdvice advice, RemedyKind kind) {
         return advice.remedies().stream().filter(r -> r.kind() == kind).findFirst().orElseThrow();
     }
@@ -104,6 +119,31 @@ class UpgradeAdviceTest {
         Remedy pin = remedy(advice, RemedyKind.PIN);
         assertThat(pin.available()).isTrue();
         assertThat(pin.snippet()).contains("<dependencyManagement>").contains("3.1.5");
+    }
+
+    @Test
+    void aGlobalDirectScopeDoesNotHideTheModuleWhereTheComponentIsTransitive() {
+        UpgradeAdvice advice = service.adviseFor(
+                maven(DependencyScope.DIRECT), List.of(finding("GHSA-a", "3.1.5", "6.5")),
+                mixedDirectAndTransitiveGraph(), NO_ARCHIVE);
+
+        Remedy upgrade = remedy(advice, RemedyKind.UPGRADE);
+        assertThat(upgrade.available()).isTrue();
+        assertThat(upgrade.note()).contains("module-a").contains("module-b").contains("not affected");
+        assertThat(upgrade.moduleImpacts())
+                .extracting(impact -> impact.module() + ":" + impact.coverage())
+                .containsExactly("dev.sbomscope:module-a:COMPLETE", "dev.sbomscope:module-b:UNAFFECTED");
+
+        Remedy bump = remedy(advice, RemedyKind.BUMP_ANCESTOR);
+        assertThat(bump.target()).isEqualTo("org.example:starter");
+        assertThat(bump.moduleImpacts()).singleElement().satisfies(impact -> {
+            assertThat(impact.module()).isEqualTo("dev.sbomscope:module-b");
+            assertThat(impact.routesCovered()).isEqualTo(1);
+            assertThat(impact.routesTotal()).isEqualTo(1);
+        });
+
+        assertThat(advice.suggested()).as("the direct upgrade is incomplete across modules")
+                .isEqualTo(RemedyKind.PIN);
     }
 
     @Test

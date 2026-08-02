@@ -14,17 +14,19 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import dev.sbomscope.logging.ActivityLogger;
 import dev.sbomscope.sbom.ComponentGraph;
-import dev.sbomscope.sbom.DependencyScope;
 import dev.sbomscope.sbom.GraphNode;
 import dev.sbomscope.sbom.StoredComponent;
 import dev.sbomscope.scanner.OsvArchiveMatcher.AdvisoryHit;
@@ -86,6 +88,9 @@ public class BumpProbeService {
     private final DependencyResolver resolver;
     private final EffectivePomCache effectivePoms;
     private final ActivityLogger activityLog;
+    private final String probeRepository;
+    private final Object repositoryGate = new Object();
+    private boolean repositoryMaintenance;
 
     /** Single thread: Maven invocations are heavyweight, and this serialises them like the
      *  OSV database downloads already are. */
@@ -165,9 +170,9 @@ public class BumpProbeService {
             this.purl = request.component().purl();
             this.component = request.component().coordinates()
                     + (request.component().version() == null ? "" : "@" + request.component().version());
-            this.module = request.graph().reachedFrom().isEmpty()
-                    ? null
-                    : request.graph().reachedFrom().getFirst().module().coordinates();
+            this.module = request.graph().primaryTransitiveOwner()
+                    .map(owner -> owner.module().coordinates())
+                    .orElse(null);
         }
 
         ProbeTaskView view() {
@@ -266,9 +271,41 @@ public class BumpProbeService {
     }
 
     BumpProbeService(DependencyResolver resolver, EffectivePomCache effectivePoms, ActivityLogger activityLog) {
+        this(resolver, effectivePoms, activityLog, defaultProbeRepository());
+    }
+
+    @Autowired
+    BumpProbeService(DependencyResolver resolver, EffectivePomCache effectivePoms,
+                     ActivityLogger activityLog,
+                     @Value("${sbomscope.probe-repository}") String probeRepository) {
         this.resolver = resolver;
         this.effectivePoms = effectivePoms;
         this.activityLog = activityLog;
+        this.probeRepository = probeRepository;
+    }
+
+    /**
+     * Runs cache maintenance only while no Maven work is queued or running, and prevents a
+     * new probe from entering until the action finishes. The shared gate closes the race that
+     * a check-then-delete implementation would leave between seeing an empty queue and walking
+     * the repository.
+     */
+    public <T> T withIdleProbeRepository(Supplier<T> action) {
+        synchronized (repositoryGate) {
+            boolean live = tasks.values().stream().anyMatch(task -> task.outcome == null);
+            if (repositoryMaintenance || live) {
+                throw new IllegalStateException(
+                        "Stop or wait for every queued and running Maven probe before clearing its cache.");
+            }
+            repositoryMaintenance = true;
+        }
+        try {
+            return action.get();
+        } finally {
+            synchronized (repositoryGate) {
+                repositoryMaintenance = false;
+            }
+        }
     }
 
     @EventListener
@@ -292,13 +329,9 @@ public class BumpProbeService {
      * as a parameter instead of reaching for settings itself.
      */
     public BumpProgress start(BumpRequest request, MavenToolSettings mavenSettings) {
-        if (request.component().scope() != DependencyScope.TRANSITIVE) {
-            return BumpProgress.idle().failed("Nothing pulls this in on your behalf.");
-        }
-
         String key = cacheKeyFor(request.graph(), request.component());
         if (key == null) {
-            return BumpProgress.idle().failed("Nothing in this SBOM declares this component.");
+            return BumpProgress.idle().failed("No module pulls this component in transitively.");
         }
 
         if (!mavenSettings.usable()) {
@@ -306,22 +339,25 @@ public class BumpProbeService {
                     "Configure the Maven probe in Settings, and enable it, before checking here.");
         }
 
-        BumpProgress existing = progressByKey.get(key);
-        if (existing != null && (existing.running() || existing.state() == BumpProgress.State.COMPLETED)) {
-            return existing;
-        }
+        synchronized (repositoryGate) {
+            if (repositoryMaintenance) {
+                return BumpProgress.idle().failed("The Maven probe cache is being cleared. Try again shortly.");
+            }
+            BumpProgress existing = progressByKey.get(key);
+            if (existing != null && (existing.running() || existing.state() == BumpProgress.State.COMPLETED)) {
+                return existing;
+            }
 
-        // Whether this reports RUNNING or QUEUED is decided here, once, from whatever
-        // activeKey happens to hold right now — a snapshot, not a reservation. The executor's
-        // own FIFO queue is what actually decides execution order; this can only under- or
-        // over-report queueing by one poll if it races another start(), never get the order
-        // of execution itself wrong.
-        BumpProgress initial = activeKey.get() == null ? BumpProgress.starting() : BumpProgress.queued();
-        progressByKey.put(key, initial);
-        ProbeTask task = new ProbeTask(key, request);
-        tasks.put(task.id, task);
-        task.future = executor.submit(() -> runProbe(key, request, mavenSettings, task));
-        return progressByKey.get(key);
+            // Whether this reports RUNNING or QUEUED is decided here, once, from whatever
+            // activeKey happens to hold right now — a snapshot, not a reservation. The executor's
+            // own FIFO queue is what actually decides execution order.
+            BumpProgress initial = activeKey.get() == null ? BumpProgress.starting() : BumpProgress.queued();
+            progressByKey.put(key, initial);
+            ProbeTask task = new ProbeTask(key, request);
+            tasks.put(task.id, task);
+            task.future = executor.submit(() -> runProbe(key, request, mavenSettings, task));
+            return progressByKey.get(key);
+        }
     }
 
     /**
@@ -369,12 +405,17 @@ public class BumpProbeService {
         }
 
         BumpProgress resumed = existing.resuming();
-        progressByKey.put(key, activeKey.get() == null ? resumed : BumpProgress.queued());
-        ProbeTask task = new ProbeTask(key, request);
-        tasks.put(task.id, task);
-        task.future = executor.submit(
-                () -> runContinue(key, request, mavenSettings, existing.candidates(), existing.remedy(), task));
-        return progressByKey.get(key);
+        synchronized (repositoryGate) {
+            if (repositoryMaintenance) {
+                return BumpProgress.idle().failed("The Maven probe cache is being cleared. Try again shortly.");
+            }
+            progressByKey.put(key, activeKey.get() == null ? resumed : BumpProgress.queued());
+            ProbeTask task = new ProbeTask(key, request);
+            tasks.put(task.id, task);
+            task.future = executor.submit(
+                    () -> runContinue(key, request, mavenSettings, existing.candidates(), existing.remedy(), task));
+            return progressByKey.get(key);
+        }
     }
 
     /** A row the search never settled: a major it never reached, or one it stopped partway. */
@@ -383,10 +424,9 @@ public class BumpProbeService {
     }
 
     private String cacheKeyFor(ComponentGraph graph, StoredComponent component) {
-        if (graph.reachedFrom().isEmpty()) {
-            return null;
-        }
-        return graph.reachedFrom().getFirst().module().bomRef() + "->" + component.coordinates();
+        return graph.primaryTransitiveOwner()
+                .map(owner -> owner.module().bomRef() + "->" + component.coordinates())
+                .orElse(null);
     }
 
     /**
@@ -422,23 +462,30 @@ public class BumpProbeService {
      */
     private void recordScope(String key, BumpRequest request, List<GraphNode> ancestorNodes,
                               GraphNode chosen, ProbeOutcome calibration) {
-        List<ComponentGraph.ModuleRoutes> owners = request.graph().reachedFrom();
-        List<String> otherModules = owners.stream()
-                .skip(1)
-                .map(owner -> owner.module().coordinates())
+        ComponentGraph.ModuleRoutes owner = request.graph().primaryTransitiveOwner().orElseThrow();
+        List<String> otherModules = request.graph().reachedFrom().stream()
+                .filter(candidate -> !candidate.module().bomRef().equals(owner.module().bomRef()))
+                .map(candidate -> candidate.module().coordinates())
                 .toList();
         List<String> otherAncestors = ancestorNodes.stream()
                 .filter(node -> !node.coordinates().equals(chosen.coordinates()))
                 .map(GraphNode::coordinates)
                 .toList();
 
+        int routesCovered = owner.declarations().stream()
+                .filter(declaration -> declaration.declaration().coordinates().equals(chosen.coordinates()))
+                .mapToInt(ComponentGraph.DeclarationRoutes::routes)
+                .sum();
+
         BumpScope scope = new BumpScope(
-                owners.isEmpty() ? null : owners.getFirst().module().coordinates(),
+                owner.module().coordinates(),
                 otherModules,
                 chosen.coordinates(),
                 chosen.version(),
                 otherAncestors,
-                chosen.coordinates().equals(calibration.targetDeclaredBy()));
+                chosen.coordinates().equals(calibration.targetDeclaredBy()),
+                routesCovered,
+                owner.totalRoutes());
 
         progressByKey.compute(key, (k, current) ->
                 (current == null ? BumpProgress.starting() : current).withScope(scope));
@@ -446,15 +493,10 @@ public class BumpProbeService {
 
     /** Every distinct Maven ancestor, within the most-affected module, that reaches the target. */
     private List<GraphNode> distinctAncestorsInPrimaryModule(ComponentGraph graph) {
-        if (graph.reachedFrom().isEmpty()) {
-            return List.of();
-        }
         Map<String, GraphNode> byCoordinates = new LinkedHashMap<>();
-        for (List<GraphNode> route : graph.reachedFrom().getFirst().routes()) {
-            if (route.size() < 2) {
-                continue;
-            }
-            GraphNode ancestor = route.get(1);
+        for (ComponentGraph.DeclarationRoutes declaration : graph.primaryTransitiveOwner()
+                .map(ComponentGraph.ModuleRoutes::declarations).orElse(List.of())) {
+            GraphNode ancestor = declaration.declaration();
             if (ancestor.purl() != null && ancestor.purl().startsWith("pkg:maven/")) {
                 byCoordinates.putIfAbsent(ancestor.coordinates(), ancestor);
             }
@@ -955,7 +997,7 @@ public class BumpProbeService {
     }
 
     private ProbeContext buildContext(MavenToolSettings mavenSettings, String workspacePath) {
-        String isolatedRepository = defaultProbeRepository();
+        String isolatedRepository = probeRepository;
         EffectivePomFragments lifted = null;
         if (workspacePath != null && !workspacePath.isBlank()) {
             lifted = effectivePoms.forWorkspace(
@@ -1067,7 +1109,7 @@ public class BumpProbeService {
             case PLUGIN_UNAVAILABLE -> ("Maven ran, but could not obtain the plugin the probe needs. "
                     + "The probe resolves into its own repository (%s), never your ~/.m2, so on a "
                     + "machine that cannot reach a repository it has no way to obtain that plugin. "
-                    + "The full Maven output is in sbomscope.log.").formatted(defaultProbeRepository());
+                    + "The full Maven output is in sbomscope.log.").formatted(probeRepository);
             // Says nothing about the artifact, so it must not read as though it did. The most
             // common cause here is TLS-inspecting security software, whose fix is an environment
             // variable and not a JVM flag — the probe's mvn is a child process, and children

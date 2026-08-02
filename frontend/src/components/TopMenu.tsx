@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 
 import { fetchServerStatus } from '../api/client';
 import type { ServerStatus } from '../api/client';
-import { BookIcon, ComponentIcon, LogIcon, SettingsIcon, ShieldIcon } from './icons';
+import { BookIcon, BrandIcon, ComponentIcon, LogIcon, SettingsIcon, ShieldIcon } from './icons';
 
 const NAV_ITEMS = [
   { to: '/vulnerabilities', label: 'Vulnerabilities', Icon: ShieldIcon },
@@ -38,6 +38,7 @@ export function TopMenu() {
   return (
     <header className="topmenu">
       <div className="topmenu__brand">
+        <BrandIcon className="topmenu__brand-icon" />
         <span className="topmenu__brand-label">SBOMscope</span>
       </div>
 

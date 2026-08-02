@@ -30,8 +30,19 @@ const TARGETS: readonly TargetOption[] = [
   },
   {
     value: 'OSV_DATABASE',
-    label: 'Offline OSV database',
-    hint: 'The downloaded archives. Replacing them means downloading roughly 10 MB for Maven and 200 MB for npm — which a machine with no internet access cannot do at all.',
+    label: 'Offline vulnerability data',
+    hint: 'OSV archives and index, plus KEV and EPSS files and rows. Replacing OSV means downloading roughly 10 MB for Maven and 200 MB for npm — which a machine with no internet access cannot do at all.',
+    costly: true,
+  },
+  {
+    value: 'ROLLED_LOGS',
+    label: 'Rolled log history',
+    hint: 'The eight inactive numbered logs. The active sbomscope.log and activity.jsonl remain while the application is running; stop SBOMscope to remove those too.',
+  },
+  {
+    value: 'MAVEN_PROBE_CACHE',
+    label: 'Maven probe cache',
+    hint: 'The isolated probe-repo, never ~/.m2. No probe may be queued or running. Later probes must download missing plugins, metadata and candidate artifacts again and may be unavailable while disconnected.',
     costly: true,
   },
 ];
@@ -39,7 +50,7 @@ const TARGETS: readonly TargetOption[] = [
 /**
  * Erases local data, behind a typed confirmation.
  *
- * <p>Separate choices rather than one button, because the four differ by orders of
+ * <p>Separate choices rather than one button, because they differ by orders of
  * magnitude in what they cost to undo: re-uploading an SBOM is a drag and drop, while
  * replacing the npm archive is a 200 MB download that the target environment for this
  * tool may not be able to perform at all.

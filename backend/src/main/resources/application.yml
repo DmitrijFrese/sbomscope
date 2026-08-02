@@ -31,6 +31,9 @@ sbomscope:
   # uses (sbomscope.data-directory), so tests that already isolate that property get log
   # isolation for free instead of needing a second override.
   logs-directory: ${sbomscope.data-directory:${user.home}/.sbomscope}/logs
+  # Internal rather than user-editable: Maven and the purge service must name the same
+  # app-owned repository, while tests redirect the whole data directory safely under target/.
+  probe-repository: ${sbomscope.data-directory:${user.home}/.sbomscope}/probe-repo
 
 server:
   port: 8080

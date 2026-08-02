@@ -45,6 +45,9 @@
     <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
     <exec-maven-plugin.version>3.6.3</exec-maven-plugin.version>
 
+    <!-- Spring Boot 4.1.0 manages 3.1.4, which is affected by GHSA-5gvw-p9qm-jgwh.
+         Keep the narrow patch override here until the Boot BOM moves to 3.1.5 or newer. -->
+    <jackson-databind.version>3.1.5</jackson-databind.version>
     <poi.version>5.5.1</poi.version>
   </properties>
 
@@ -64,6 +67,14 @@
         <groupId>dev.sbomscope</groupId>
         <artifactId>sbomscope-frontend</artifactId>
         <version>${project.version}</version>
+      </dependency>
+
+      <!-- One shared-parent pin covers the three transitive routes through the backend's
+           Spring Boot JSON, web and Flyway starters. -->
+      <dependency>
+        <groupId>tools.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>${jackson-databind.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

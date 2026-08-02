@@ -176,6 +176,8 @@ function RemedyCard({
 
       {remedy.note && <p className="remedy__note">{remedy.note}</p>}
 
+      <ModuleImpacts impacts={remedy.moduleImpacts} />
+
       {remedy.snippet && <Snippet code={remedy.snippet} />}
 
       {remedy.available && (
@@ -189,6 +191,27 @@ function RemedyCard({
         tone="left"
       />
     </section>
+  );
+}
+
+function ModuleImpacts({ impacts }: { impacts: Remedy['moduleImpacts'] }) {
+  if (impacts.length === 0) return null;
+  return (
+    <ul className="remedy__scope">
+      {impacts.map((impact) => (
+        <li key={`${impact.module}-${impact.through ?? impact.coverage}`}>
+          <span className="mono">{impact.module}</span>
+          {impact.through && (
+            <>
+              {' '}via <span className="mono">{impact.through}</span>
+            </>
+          )}
+          :{' '}
+          <strong>{impact.coverage.toLowerCase()}</strong>
+          {impact.through && ` — ${impact.routesCovered} of ${impact.routesTotal} routes`}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -313,6 +336,13 @@ function BumpScopeCaption({ scope }: { scope: BumpScope }) {
           </>
         )}
         .
+      </p>
+
+      <p className="panel__hint">
+        This change covers <strong>{scope.routesCovered} of {scope.routesTotal}</strong>{' '}
+        {scope.routesTotal === 1 ? 'route' : 'routes'} in{' '}
+        <span className="mono">{scope.module}</span> —{' '}
+        {scope.routesCovered === scope.routesTotal ? 'complete for this module.' : 'partial for this module.'}
       </p>
 
       {/* The sentence that turns an inexplicable "still affected" into an understandable one.
@@ -586,15 +616,29 @@ function BumpAncestorCard({
   const dataAvailable = hasResult
     ? candidates.some((candidate) => candidate.clean) || completionRemedy?.available === true
     : remedy.available;
+  // A bump earns the suggestion only after the probe has established both halves: it found a
+  // clean result, and that result covers every route in every owning module. A partial success
+  // remains useful evidence but is never promoted as the fix.
+  const verifiedComplete =
+    completed &&
+    progress?.scope !== null &&
+    progress?.scope !== undefined &&
+    progress.scope.otherModules.length === 0 &&
+    (completionRemedy?.available === true ||
+      (candidates.some((candidate) => candidate.clean) &&
+        progress.scope.routesCovered === progress.scope.routesTotal));
+  const showSuggested = dataAvailable && (suggested || verifiedComplete);
 
   return (
-    <section className="remedy" data-available={dataAvailable} data-suggested={suggested && dataAvailable}>
+    <section className="remedy" data-available={dataAvailable} data-suggested={showSuggested}>
       <h3 className="remedy__title">
         {REMEDY_LABELS.BUMP_ANCESTOR}
-        {suggested && dataAvailable && <span className="badge badge--suggested">suggested</span>}
+        {showSuggested && <span className="badge badge--suggested">suggested</span>}
       </h3>
 
       {!hasResult && remedy.note && <p className="remedy__note">{remedy.note}</p>}
+
+      {!hasResult && <ModuleImpacts impacts={remedy.moduleImpacts} />}
 
       {/* Rendered when there are steps even with no candidates: a run that failed during
           calibration has attempts worth reading and nothing else, and dropping them would leave
@@ -816,7 +860,7 @@ export function UpgradePathsPanel({ sbomId, purl }: { sbomId: string; purl: stri
               purl={purl}
               remedy={remedy}
               suggested={advice.suggested === remedy.kind}
-              checkable={advice.scope === 'TRANSITIVE' && advice.declaredBy.length > 0}
+              checkable={advice.declaredBy.length > 0}
               advisories={advice.advisories}
             />
           ) : (

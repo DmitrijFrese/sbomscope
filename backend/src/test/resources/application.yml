@@ -12,6 +12,7 @@
 sbomscope:
   data-directory: ${project.build.directory:target}/sbomscope-test-data
   logs-directory: ${sbomscope.data-directory}/logs
+  probe-repository: ${sbomscope.data-directory}/probe-repo
 
 spring:
   datasource:

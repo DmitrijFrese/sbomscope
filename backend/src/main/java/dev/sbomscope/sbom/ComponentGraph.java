@@ -33,22 +33,61 @@ public record ComponentGraph(
         boolean targetIsOwnCode,
         TreeNode tree) {
 
+    /** Most-affected module where the target is genuinely transitive, for the Maven probe. */
+    public java.util.Optional<ModuleRoutes> primaryTransitiveOwner() {
+        return reachedFrom.stream().filter(owner -> !owner.declarations().isEmpty()).findFirst();
+    }
+
     /**
      * How one of your modules reaches this component.
      *
      * @param routes       the shortest few, each running module → … → component inclusive
-     * @param totalRoutes  how many were found. Routes are capped, modules are not: where one
-     *                     module reaches the component several ways only the shortest are
-     *                     worth reading, but every module that reaches it must be listed
-     * @param truncated    enumeration hit its limit, so {@code totalRoutes} is a floor rather
-     *                     than a count. A graph dense with diamonds has more distinct paths
-     *                     than can be walked, so this is stated instead of guessed at
+     * @param totalRoutes  exact number found. The UI caps only the routes it displays; remedy
+     *                     coverage is computed from the complete enumeration
+     * @param truncated    retained in the API for compatibility. Enumeration itself is now
+     *                     complete; true is reserved for the defensive case where reachability
+     *                     found an owner but no concrete route could be materialised
      */
     public record ModuleRoutes(
             GraphNode module,
             List<List<GraphNode>> routes,
             int totalRoutes,
-            boolean truncated) {}
+            boolean truncated,
+            /** Routes where the module declares the target itself. */
+            int directRoutes,
+            /** Every direct dependency through which transitive routes enter this module. */
+            List<DeclarationRoutes> declarations) {
+
+        /** Compatibility constructor for hand-built graphs in callers and tests. */
+        public ModuleRoutes(GraphNode module, List<List<GraphNode>> routes,
+                            int totalRoutes, boolean truncated) {
+            this(module, routes, totalRoutes, truncated, directRoutesFrom(routes), declarationsFrom(routes));
+        }
+
+        public boolean directlyDeclared() {
+            return directRoutes > 0;
+        }
+
+        private static int directRoutesFrom(List<List<GraphNode>> routes) {
+            return (int) routes.stream().filter(route -> route.size() == 2).count();
+        }
+
+        private static List<DeclarationRoutes> declarationsFrom(List<List<GraphNode>> routes) {
+            java.util.Map<String, DeclarationRoutes> byRef = new java.util.LinkedHashMap<>();
+            for (List<GraphNode> route : routes) {
+                if (route.size() < 3) {
+                    continue;
+                }
+                GraphNode declaration = route.get(1);
+                byRef.compute(declaration.bomRef(), (ref, existing) -> new DeclarationRoutes(
+                        declaration, existing == null ? 1 : existing.routes() + 1));
+            }
+            return List.copyOf(byRef.values());
+        }
+    }
+
+    /** Exact route count through one declaration, computed independently of the display cap. */
+    public record DeclarationRoutes(GraphNode declaration, int routes) {}
 
     /**
      * A node of the descendants tree.

@@ -24,6 +24,12 @@ public enum PurgeTarget {
     /** Scanner path, whether scanning is on, database directory, export preference. */
     SETTINGS,
 
-    /** The downloaded OSV archives. Expensive to replace — npm alone is around 200 MB. */
-    OSV_DATABASE
+    /** Offline OSV, KEV and EPSS source files and their derived database rows. */
+    OSV_DATABASE,
+
+    /** Inactive numbered log history only; the two files Logback is writing remain. */
+    ROLLED_LOGS,
+
+    /** SBOMscope's isolated Maven repository, never the user's ~/.m2. */
+    MAVEN_PROBE_CACHE
 }

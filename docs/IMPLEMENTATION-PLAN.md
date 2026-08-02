@@ -6,14 +6,16 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-08-01 · Status: **Phases 0–8 complete except 8's second pass. Phase 8 Tier 1 complete; Tier 2
+Last updated: 2026-08-02 · Status: **Phases 0–8 complete except blocker identification. Phase 8 Tier 1 complete; Tier 2
 passes A–D built and verified against a real `mvn`, plus the configurable probe budget,
 Maven profiles, configurable plugin versions, queued-vs-running status, full `mvn` command and
 output logging, continuable searches, and honest reporting of a budget-truncated major. One
-open question carried forward: the isolated probe repository cannot work on a fully air-gapped
-machine — see the decision log.
+known limitation is now closed rather than carried as a design question: the isolated probe
+repository cannot work on a fully air-gapped machine, and reports that honestly.
 
-**B-items built: B0, B1, B1a, B2, B3, B4, B5, B6, B7, B8, B9**, each verified in a running
+**B-items built: B0, B1, B1a, B2, B3, B4, B5, B6, B7, B8, B9, B12, B13, B14**, with B13's
+application icon, B14's exact per-module route completeness, and B12's completed purge surface.
+The earlier items were each verified in a running
 application rather than asserted. Scanning is now automatic on upload and at startup; registry
 links honour a purl's `repository_url` and split into artifact and version destinations; upload
 takes several files at once and reports per file; the stored document can be downloaded back;
@@ -43,10 +45,8 @@ only, per constraint 8.
 
 README, AGENTS.md and ARCHITECTURE were brought back in step with all of it on 2026-08-01.
 
-Next: **B10 (secondary sort), then B11 — which is the open decision and needs the maintainer —
-then B12, B13, and B14 (route completeness), which is specified in full** — then Phase 9.
-B10 now carries a second rider: KEV deliberately has no filter, so *"exploited, worst first"*
-needs the secondary sort before it is expressible at all.
+Next: **Phase 9 (workspace usage detection)**. B13, B14 and B12 were completed in that order on
+2026-08-02. B10 and B11 were dropped on the same date.
 
 ---
 
@@ -62,7 +62,7 @@ needs the secondary sort before it is expressible at all.
 | 5 | Excel export | **Done** |
 | 6 | Component Inspector: the shell | **Done** |
 | 7 | Dependency graph | **Done** |
-| 8 | Upgrade paths | **Tier 1 done; Tier 2 works, second pass planned** |
+| 8 | Upgrade paths | **Done except blocker identification** |
 | 9 | Workspace usage detection | Not started |
 | 10 | Packaging and distribution | Not started |
 | 11 | VEX — read a supplier's "not affected" | Not started |
@@ -366,8 +366,8 @@ in the decision log; this is the buildable list.
 | # | Decided |
 |---|---|
 | 1 | **The KEV cell** reads as a mark plus *"known exploited since <dateAdded>"*, with a distinct second mark for `knownRansomwareCampaignUse == Known`. The whole record is stored, so a later addition is a render change rather than a re-parse. **`requiredAction` and `dueDate` are never surfaced** — that deadline binds US federal agencies under BOD 26-04 and nobody else, and showing it would invent an obligation the reader does not have |
-| 2 | **Both files live in `~/.sbomscope/exploit/`**, beside `osv-db` rather than inside it, since nothing about them belongs to osv-scanner — which is handed that directory as `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` and walks it. Erased by **B12's existing archive target**, not a fifth checkbox: the four targets differ by orders of magnitude in what they cost to undo, and 4 MB is not a new order of magnitude |
-| 3 | **No KEV filter — sorting is the whole interaction.** With 4 of 212 rows listed, one click on the header is the same outcome as a filter, with no new state to persist, revive or put on the About sheet. **Consequence, recorded rather than discovered:** *"exploited, worst first"* is unavailable until **B10** lands, because it needs two criteria at once. That is a real link from this phase to that one |
+| 2 | **Both files live in `~/.sbomscope/exploit/`**, beside `osv-db` rather than inside it, since nothing about them belongs to osv-scanner — which is handed that directory as `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` and walks it. Erased by **B12's existing archive target**, not a separate feed checkbox: the data targets differ by orders of magnitude in what they cost to undo, and 4 MB is not a new order of magnitude |
+| 3 | **No KEV filter — sorting is the whole interaction.** With 4 of 212 rows listed, one click on the header promotes the complete, manageable set with no new state to persist, revive or put on the About sheet. Severity remains visible beside every promoted row; uncommon compound analysis belongs in the Excel export rather than another table interaction |
 | 4 | **Both columns sortable, the clicked column leading and the existing scored/unscored/clean rank deciding the tail** — exactly `FIXED_VERSION`'s shape, for the reason B8 recorded: leading with the rank sorts by whether a finding carries a CVSS score before the column the reader actually clicked. Nulls last in both directions |
 | 5 | **Both columns in the export, and the About sheet records each feed's as-of date.** A KEV column in an undated workbook cannot distinguish *"not exploited"* from *"our copy predates the listing"* — the same defect the filter lines on that sheet already prevent. The dates are the feeds' own (`catalogVersion`/`dateReleased`, `score_date`), not download timestamps |
 | 6 | **Feed-absent is stated once above the table; the cell distinguishes only "not listed" from "no CVE".** Whether a feed has been downloaded is a fact about the installation and identical on every row, so repeating it 300 times says one thing 300 times — `ScanReadinessHint` is the precedent. The per-row distinction that genuinely varies is the NONE-versus-CLEAN one, and that is what the cell carries |
@@ -612,9 +612,9 @@ different questions and a single visualisation serves one of them badly.
       always** — guaranteed by finding the module set with a separate linear reachability
       pass, which no graph can defeat, rather than as a by-product of route enumeration,
       which any dense graph can
-- [x] **Cap routes within a module, never the modules themselves.** The three shortest are
-      shown with the total beside them, and where enumeration hit its own limit the total is
-      written as a floor (`3 of 25+`) rather than as a count it did not finish making
+- [x] **Cap routes shown within a module, never the modules or their exact counts.** The ten
+      shortest are shown with the exact total beside them. Remedy coverage is computed from a
+      separate complete enumeration, never from this presentation list
 - [x] Lead with the count — *pulled in by 1 of your 2 modules*, before a single route is read
 - [x] The parent pom is never the top of a path, **and is not in the denominator either**.
       It aggregates rather than depends, so no route can top out at it; counting it as one of
@@ -632,14 +632,14 @@ different questions and a single visualisation serves one of them badly.
       rather than to the library in general
 - [x] No layout engine, and therefore no new frontend dependency: both shapes are ordinary
       lists and disclosure widgets (constraint 9)
-- [ ] Verify against a genuinely large SBOM. The guards are tested against constructed
-      graphs and the fixture is 61 components; the budgets they enforce have never actually
-      been reached
+- [ ] Verify against a genuinely large SBOM. The downward expansion guards are tested against
+      constructed graphs and the fixture is 61 components; exact upward simple-route
+      enumeration has not been stress-tested against a much larger diamond-heavy document
 
 **Done when**: selecting a transitive vulnerable library shows the full chain from the root
 project down to it, and what it pulls in below. — **Met.** Against the real Maven fixture,
-`jackson-databind` reports three routes from `sbomscope-backend`, shortest first, with the
-parent pom absent from all of them.
+`jackson-databind` reports its three routes from `sbomscope-backend`, shortest first and all
+within the ten-route presentation cap, with the parent pom absent from all of them.
 
 ## Phase 8 — Upgrade paths
 
@@ -726,9 +726,9 @@ Judging a version is reliable offline; **enumerating** versions is not. See R4.
         database; npm has 223,786 over 220,027 packages, so extrapolation suggests a few
         hundred MB. The trade is RAM for disk and it is the right one, but the number should
         be taken rather than guessed at
-  - [ ] **Purge does not clear the index.** Erasing the OSV archives leaves `osv_index`
-        behind, which is derived data pointing at files that no longer exist. It should go
-        with them
+  - [x] **Purge clears the index with the archives.** `osv_index` and
+        `osv_index_source` are derived from those files and now ride on the same
+        `OSV_DATABASE` target
 ### Bumping the declared dependency, properly
 
 `root → A (direct) → B → C`, with the vulnerability in C. Telling someone to move C is
@@ -853,26 +853,20 @@ never learns them.
 - [x] A timeout per probe, and a budget for the run. Maven can hang on an unreachable
       repository, and the panel must be able to give up and say so. 60s per probe, 5 minutes
       per component overall, 8 ascending-refinement probes at most
-- [ ] Per remedy: routes fixed of routes total, change size on the artifact *you* edit, and
-      whether the fix is upstream or a constraint you maintain. **Deferred from the first pass;
-      planned in the second pass below.** `DependencyGraphService` caps routes shown per module
-      at 3 and reports a floor past 25 (`ComponentGraph.ModuleRoutes.truncated`), so counting
-      "routes fixed" against the *shown* routes would undercount whenever a module reaches a
-      component more than three ways — exactly the kind of confident-but-wrong number this
-      project designs against. Needs an uncapped "routes through ancestor X" query
+- [x] Per remedy: exact routes fixed of routes total, independently of the ten-route display
+      cap, plus whether the result is complete, partial or unaffected in each module. B14 adds
+      the uncapped per-declaration count and renders its scope explicitly
+- [ ] Compare change size on the artifact *you* edit, and distinguish an upstream release from
+      a constraint you maintain, when ranking otherwise-complete remedies
 - [ ] Where no candidate resolves it, name the component in the chain that is holding it —
       the blocker, not just the failure. Deferred: identifying *why* a chain is stuck needs
       comparing resolved trees across candidates for provenance, which the first-pass probe
       does not retain. The whole-module probe below retains enough to make this answerable
 - [ ] Suggested remedy = clears every critical and high **and** fixes every route, at the
       smallest change size; ties broken toward the upstream fix over the local override.
-      Waiting on route completeness — `advice.suggested` is still Tier 1's UPGRADE/PIN choice
-      only, and a successful `BUMP_ANCESTOR` is never offered as the suggestion even when it
-      clears everything, because "fixes every route" cannot yet be checked
-- [ ] A remedy that fixes some routes and not others is reported as partial, never as a fix.
-      Same dependency — today a probed `BUMP_ANCESTOR` is either the full remedy (every
-      advisory the target carries today, cleared) or absent; there is no partial state,
-      because route completeness is what a partial fix would be measured against
+      B14 completed the route gate and now permits a verified-complete bump suggestion; the
+      remaining work is comparing its change size with the other complete remedies
+- [x] A remedy that fixes some routes and not others is reported as partial, never as a fix.
 
 ### Tier 2, second pass — search shape, and route completeness by construction
 
@@ -965,25 +959,25 @@ asks what that dependency brings *in isolation*, which is not a question anyone 
       alone first, then all of them together. Where several routes are live this is the real
       answer to "one suggestion for multiple routes": sometimes there is not one, and *"you have
       to move all of these together"* is an actionable output rather than a failure.
-- [ ] **When no combination resolves it, the pin is provably correct.** `dependencyManagement`
+- [x] **When no combination resolves it, the pin is provably correct.** `dependencyManagement`
       constrains the component at any depth regardless of which declaration would otherwise win,
       so it is route-complete by construction. That is the argument this phase has asserted since
-      it was written and has never been able to demonstrate. **Still not stated in the panel** —
-      the failure note says no combination resolves it, without drawing the conclusion.
-- [ ] **Offline route counts become the filter; the probe becomes the decision.** An uncapped
+      it was written; the per-module impact and parent-level snippet now state that construction
+      argument and distinguish it from a module-local pin.
+- [x] **Offline route counts become the filter; the probe becomes the decision.** An uncapped
       "how many routes reach this component, and how many pass through ancestor X" query in
       `DependencyGraphService` supplies a *necessary* condition cheaply — a bump that misses
       routes cannot be complete, so it need not be probed at all — while the probe supplies the
       *sufficient* one. This is also what the "routes fixed of routes total" figure needs, and it
-      must be uncapped: the display caps routes at three per module and reports a floor past
-      twenty-five, so counting against the shown routes would undercount silently.
-- [ ] **Which module the answer holds for has to be stated.** A component owned by several
+      must be uncapped: the display retains only ten routes per module, so counting against the
+      shown routes would undercount silently in a larger diamond.
+- [x] **Which module the answer holds for has to be stated.** A component owned by several
       modules may need a different remedy in each, because their direct sets differ. Built as
       *probe the most-affected module only* — `ComponentGraph.reachedFrom()` is already ordered
       by route count, so its first entry is used and the others are not probed. **The remedy does
-      not yet say which module it was verified against**, which is the honesty half of this item
-      and is still open. **Open**: whether to probe every owning module eagerly — it multiplies
-      cost by the module count.
+      now states which module Maven verified, which other modules remain unverified, and its
+      exact route coverage. Probing every owning module eagerly remains deliberately out: it
+      multiplies cost by the module count without a request for that work.
 
 Cost per candidate is unchanged: a larger generated POM, the same number of `dependency:tree`
 invocations.
@@ -1204,7 +1198,7 @@ reasoning worth showing.
       pin fixes all of them by construction; a bump fixes only those through the dependency
       bumped. The panel already recommends a pin but never says *why* it is the complete
       answer, and that reasoning is computable offline today. **Specified in full as
-      [B14](#b14--route-completeness-per-module--specified-2026-07-30-not-started) — read that
+      [B14](#b14--route-completeness-per-module--built-2026-08-02) — read that
       rather than this line**, which understates it: the work is per-module, three of the four
       remedies need a proof stated rather than a number counted, and the mixed direct/transitive
       case currently produces a false statement
@@ -1899,36 +1893,63 @@ unticking Transitive in the menu leaves only direct rows on screen, unticking th
 restores all three, and the toolbar stays a single 39px row — the constraint this item's
 placement decision was protecting.
 
-### B10 — Secondary sort
+### B10 — Secondary sort — **dropped 2026-08-02**
 
-`FindingQuery` gains an optional second criterion, appended to the `ORDER BY` and carried into
-the export description like the first. **Shift-click a second column header** — the
-established pattern, and it costs no toolbar chrome at all, which is the constraint. Show it
-as a small superscript rank on the two active headers so the state is visible rather than
-folklore.
+The existing search field plus one column sort covers focused investigation. For KEV, sorting
+the column promotes the small exploited set and leaves each row's severity visible beside it;
+the user does not need an exact secondary ordering to obtain an overview. Excel export already
+covers uncommon compound filtering and sorting. Shift-click, precedence markers, persistent
+sort state and matching export semantics would add complexity to an already dense table without
+a demonstrated recurring workflow. See the decision log.
 
-### B11 — Folder and tool pickers — **the open decision**
+### B11 — Folder and tool pickers — **dropped 2026-08-02**
 
-A browser cannot return an absolute filesystem path, so a picker must come from the backend.
-Two viable shapes, and **this one is not decided**:
+Manual absolute paths are adequate for the infrequent scanner, database and Maven-tool setup.
+A backend-rendered picker would expose a general filesystem-browsing API over localhost and add
+considerable surface for a convenience feature. A native `JFileChooser` would fail in headless
+environments and can open behind the browser, presenting an apparent hang. Neither earns that
+cost while the existing fields remain usable and file upload continues to use an ordinary
+browser file input. See the decision log.
 
-- **A backend-rendered directory browser.** Reliable, works headless, no native dependency.
-  It is a filesystem browser exposed over localhost, which is worth stating plainly even
-  though the process already reads and writes that filesystem on request.
-- **A native dialog** via `JFileChooser`. Feels better when it works; fails headless and can
-  open behind the browser window, which is a bad failure because it looks like a hang.
+### B12 — Purge gaps — **built 2026-08-02**
 
-File *upload* is unaffected — that is an ordinary file input.
+**`osv_index` and `osv_index_source` ride on the existing `OSV_DATABASE` target; they do not
+get their own purge target.** An index without its archive is derived data pointing at nothing,
+and rebuilding both is already one explicit Index action. Erasing the archives therefore also
+deletes both tables' rows. The exploitation feeds continue to ride on the same target for the
+existing reason: their small derived stores are not a fifth recovery-cost tier.
+Keep the backend target id for compatibility, but rename its visible option from **Offline OSV
+database** to **Offline vulnerability data** and enumerate OSV archives and index plus KEV and
+EPSS files and rows. The current label is incomplete for a destructive action that already
+erases all three sources.
 
-### B12 — Purge gaps
+**Rolled log history gets a separate purge target.** While SBOMscope is running, Logback holds
+`sbomscope.log` and `activity.jsonl` open. Keep those active files and state that limitation in
+the UI; delete only the eight exact inactive names SBOMscope owns: `sbomscope.log.1` through
+`.5`, and `activity.jsonl.1` through `.3`. Never recursively clear the configured log directory.
+Deletion is best-effort and the result reports each file removed or not removed, because a
+rollover or another process can race it. Record the purge activity entry **before** deleting the
+rolled files so that entry cannot trigger a rollover which immediately recreates old history.
+Describe the result as rolled files present at the time of the request, not all log history;
+complete removal requires stopping SBOMscope and deleting the log directory manually.
 
-Erasing the OSV archives should also erase `osv_index` and `osv_index_source`: an index
-without its archive is derived data pointing at nothing. **Bind it to the existing archive
-target rather than adding a fourth checkbox** — four targets were chosen because they differ
-by orders of magnitude in what they cost to undo, and an index is rebuilt by pressing one
-button. Also purge the probe repository and, separately, the logs.
+**The Maven probe cache gets its own purge target.** It deletes only SBOMscope's fixed,
+app-owned `~/.sbomscope/probe-repo`, never `~/.m2` and never a user-configured Maven repository.
+Reject the request if any probe is `QUEUED` or `RUNNING`; do not cancel work as a side effect of
+a cleanup request, and do not race Maven while it is writing the repository. The UI warning
+states that later probes must download plugins, metadata and candidate artifacts again through
+the user's configured repository, and may be unavailable while disconnected. Before recursive
+deletion, resolve and verify the exact target remains the expected probe-repository path. Report
+the files and bytes removed, or the failure, rather than claiming an unconditional success.
 
-### B13 — Application icon
+**Implemented 2026-08-02.** The existing offline-data target now removes both OSV index tables
+as well as the OSV, KEV and EPSS stores. Rolled logs are handled last, after their purge event is
+written, and only the eight fixed filenames are considered. The cache target and probe
+submission share one maintenance gate, closing the check-then-delete race as well as rejecting
+already queued or running work. Integration tests pin the database, filesystem and active-log
+contracts; the probe service has focused concurrency coverage for both sides of the gate.
+
+### B13 — Application icon — **built 2026-08-02**
 
 "Scope" is in the name, and both obvious glyphs are taken by navigation: the shield is
 Vulnerabilities, the cube is the Component Inspector. **A magnifier whose lens contains a
@@ -1936,7 +1957,11 @@ small cube** reads as "examine a package", is neither existing icon, and survive
 cube stays two or three strokes. Needed as a favicon and in the top-left brand slot, which is
 currently a bare wordmark.
 
-### Running several Maven probes at once — researched 2026-07-30, not started
+Implemented as one shared magnifier-and-cube SVG language: the React top-menu icon uses the
+existing icon component system, and `public/favicon.svg` carries the same geometry for browser
+tabs without adding a bitmap build step or a dependency.
+
+### Running several Maven probes at once — **dropped 2026-08-02**
 
 Asked while building B1a. Recorded because the research is the expensive part and would
 otherwise be redone.
@@ -1954,10 +1979,10 @@ repository cannot safely take concurrent writes. `QUEUED` exists to describe tha
   acquisitions. It also depends on the user's resolver version, which we do not control, the
   same reason plugin versions became configurable.
 - **One probe repository per worker.** Sidesteps locking entirely; costs duplicate downloads
-  (POMs, kilobytes) and **multiplies the air-gap seeding problem** — every repository would need
-  the pinned plugins seeded, which is the open question above, N times over.
+  (POMs, kilobytes) and **multiplies the accepted air-gap limitation** — every repository starts
+  without the pinned plugins and unseen candidate artifacts, N times over.
 
-**Recommendation: do not parallelise yet.** The binding constraint is not the thread. Measured
+**Decision: keep probes serial.** The binding constraint is not the thread. Measured
 here already: the cold-repository run spent about four minutes on twelve probes against about
 one minute warm, and that gap is network round-trips to the mirror — two concurrent probes
 against the same repository mostly duplicate them, and once warm the queue drains in seconds.
@@ -1965,11 +1990,12 @@ Concurrency would also quietly break something the serial design gets for free: 
 is wall-clock-meaningful per component today, and with N probes contending for CPU and network it
 stops meaning what it says.
 
-- [ ] If it becomes a felt problem — which several open Inspector tabs makes likelier — the cheap
-      first move is a **bounded pool of 2 with `file-lock`/`file-gav`, behind a setting defaulting
-      to 1**: measurable, reversible, and it keeps `QUEUED` honest rather than removing it.
+- [x] **No parallel-probe roadmap item.** The queue is visible in Monitoring → Processes and
+      accurately distinguishes queued from running work. That is a good user-facing solution;
+      adding repository locking, duplicated caches and altered budget semantics would make the
+      implementation worse without repairing a demonstrated failure.
 
-### B14 — Route completeness, per module — **specified 2026-07-30, not started**
+### B14 — Route completeness, per module — **built 2026-08-02**
 
 Re-homed here from Phase 8's *"The recommendation"* list, where it sat as one line reading
 *"needs no build tool, and should land first"*. That was right about the priority and wrong
@@ -2002,30 +2028,30 @@ transitively — an ordinary shape, and one no current fixture has:
 That is the failure class this project designs against everywhere else, and it is reachable
 today. It is also invisible to an ancestor-only version of this item.
 
-- [ ] **Key routes by (component, module), not by component.** The whole point is that the answer
+- [x] **Key routes by (component, module), not by component.** The whole point is that the answer
       differs per module; a per-component number would average away the case above.
-- [ ] **The query must be uncapped.** `DependencyGraphService` caps displayed routes at 3 per
-      module and reports a floor past 25 (`ComponentGraph.ModuleRoutes.truncated`), so counting
-      against what is *shown* undercounts silently whenever a module reaches a component more than
-      three ways — a confidently wrong number, which is worse than none.
-- [ ] **`UPGRADE` states its module scope**: *"Complete for `module-a`. `module-b` also pulls this
+- [x] **The query must be uncapped.** `DependencyGraphService` caps displayed routes at 10 per
+      module but carries an exact total and exact per-declaration counts, so coverage never
+      counts against what is *shown*. A component reached more than ten ways therefore keeps a
+      bounded presentation without producing a confidently wrong remedy number.
+- [x] **`UPGRADE` states its module scope**: *"Complete for `module-a`. `module-b` also pulls this
       in and this change does not affect it."*
-- [ ] **`PIN` states its construction argument** — asserted since this phase was written and never
+- [x] **`PIN` states its construction argument** — asserted since this phase was written and never
       once demonstrated — **with its own caveat**: a pin in one module's POM is complete for that
       module only, while one in the parent's `dependencyManagement` is complete across the build.
       Those are different remedies and the snippet should say which it is emitting.
-- [ ] **`BUMP_ANCESTOR` reports routes fixed of routes total**, and a remedy fixing some routes and
+- [x] **`BUMP_ANCESTOR` reports routes fixed of routes total**, and a remedy fixing some routes and
       not others is reported as **partial, never as a fix**.
-- [ ] **Replace the probe's blanket scope refusal.** A component that is `DIRECT` somewhere and
+- [x] **Replace the probe's blanket scope refusal.** A component that is `DIRECT` somewhere and
       transitive in the module being asked about is a legitimate probe, and the current message is
       wrong rather than conservative.
-- [ ] **Then, and only then, `advice.suggested` may offer a successful `BUMP_ANCESTOR`** — it
+- [x] **Then, and only then, `advice.suggested` may offer a successful `BUMP_ANCESTOR`** — it
       currently never does, because "fixes every route" could not be checked. This is the last
       thing standing between passes B–D and the bump remedy being suggestable.
-- [ ] **A fixture for the mixed case.** No committed SBOM has a component that is direct in one
-      module and transitive in another, which is why none of the above was caught by a test.
-      Per the testing rules: build the throwaway project outside the repository and commit only
-      the generated `.cdx.json`.
+- [x] **A regression case for the mixed shape.** A focused graph test constructs a component
+      direct in one module and transitive in another, which isolates the classification and
+      remedy logic under test. Parser behavior remains covered by the real generated SBOM
+      fixtures; no new manifest or hand-authored parser fixture was needed.
 
 **Cheaper than when it was first written**, because pass D made the probe retain provenance: the
 deciding declaration is now read from `dependency:tree`'s own indentation, so "which routes does
@@ -2033,6 +2059,13 @@ this actually fix" has an authoritative input rather than an inferred one.
 
 **Done when**: every remedy states which modules it holds for, a pin can show why it is complete,
 a partial bump is labelled partial, and the mixed-scope case above produces a true statement.
+
+**Done 2026-08-02.** `ModuleRoutes` retains only three paths for presentation but carries exact
+total, direct and per-declaration counts from a separate complete enumeration. `UpgradeAdvice`
+publishes per-module `COMPLETE`, `PARTIAL` and `UNAFFECTED` impacts; the frontend renders the
+proof or count. The Maven probe now selects a genuinely transitive owning module even when the
+component's aggregate scope is `DIRECT`, and a successful bump is promoted only when its exact
+coverage is complete and no other owning module remains unverified.
 
 ### B15 — Every search field takes a regular expression — **built 2026-07-31**
 
@@ -2338,11 +2371,11 @@ thirteen.** Answered no, after working out what each would actually order by:
 - [x] **Package URL rejected as a duplicate** — `COMPONENT` already orders by `LOWER(c.purl)`, so
       it would be the same sort under a second name. **Summary and CVSS vector rejected** as
       orderings of nothing.
-- [ ] **Version deferred to B10.** Sorting it lexically would put `1.10.0` before `1.9.0` —
-      precisely the defect B8 spent a migration and a backfill removing from "Fixed in", so
-      offering it would reintroduce a known-wrong answer in a new column. Doing it properly needs
-      `component.version_sort` (a V4 migration plus a backfill), and it only earns that as a
-      *secondary* sort under Component, which is what B10 is.
+- [x] **Version not added.** Sorting it lexically would put `1.10.0` before `1.9.0` — precisely
+      the defect B8 spent a migration and a backfill removing from "Fixed in", so offering it
+      would reintroduce a known-wrong answer in a new column. It was deferred to B10 because its
+      proposed use was as a secondary sort under Component; B10 was subsequently dropped. A
+      standalone version sort would need its own demonstrated workflow and a stored sort key.
 
 **A caught-by-verifying mistake worth keeping:** the rating rank was first written 0-for-worst,
 like `SCOPE_RANK`. Descending then opened on LOW while the Severity column beside it opened on
@@ -3960,7 +3993,8 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   always name the author, because `not_affected` is a claim and not a fact; and treat a
   statement made against an older version as stale rather than as an answer. Ordered below
   Phase 3 and B2; Tier A can move up alone the moment a real VEX document exists to test with.
-- 2026-07-30 — **Open, needs a decision: the isolated probe repository cannot work air-gapped.**
+- 2026-07-30 — **Open at the time, closed by the 2026-08-02 decision below: the isolated probe
+  repository cannot work air-gapped.**
   `~/.sbomscope/probe-repo` starts empty and `dependency:tree` needs the dependency plugin and
   its transitive dependencies from somewhere; the user's own `~/.m2` has them, and the isolation
   deliberately never touches it. On a machine with no route to any repository there is nowhere
@@ -4698,3 +4732,98 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   with the example that makes it land: **a 44% probability sits around the 99th percentile
   globally**, because most CVEs score far lower — which is precisely the row that prompted the
   question.
+- 2026-08-02 — **B10 secondary sorting is dropped.** This reverses the 2026-08-01 conclusion
+  that KEV created a dependency on compound sorting. KEV deliberately has no filter: sorting
+  its column brings the small set of exploited findings to the top, where severity remains
+  visible in the adjacent column and the set is small enough to inspect directly. An exact
+  *"KEV first, severity second"* order does not improve that workflow enough to justify another
+  interaction.
+
+  The same economy applies elsewhere. Search plus a single column sort covers focused work,
+  while the Excel export is the escape hatch for uncommon compound filters and intricate sort
+  orders. Supporting secondary sorting in the application would require discoverable precedence,
+  visible rank markers, persisted and revived state, query semantics and identical export
+  semantics in an already dense findings UI. No recurring real-world workflow currently earns
+  that complexity. Component-version sorting, previously deferred to B10, is not smuggled in as
+  part of the reversal; it would need a separate use case and a correct stored version-sort key.
+- 2026-08-02 — **B11 folder and tool pickers are dropped.** Scanner, OSV database and Maven-tool
+  locations are configured rarely, and their existing absolute-path fields are adequate. A
+  backend-rendered picker would make the local server a general filesystem browser and enlarge
+  the API and its security surface for limited convenience. A native `JFileChooser` avoids that
+  API but is unreliable in exactly the environments SBOMscope supports: it is unavailable when
+  headless and may open behind the browser, making a waiting request look hung. File upload is
+  unaffected because it already uses the browser's ordinary file input. Reconsider a narrower
+  directory picker only if repeated use demonstrates that manual paths are a material problem.
+- 2026-08-02 — **B12 keeps the OSV index under the existing offline-database purge target and
+  adds a separate rolled-log-history target.** `osv_index` and `osv_index_source` are derived
+  wholly from the archives and are unusable once those archives are erased. They therefore go
+  with `OSV_DATABASE`; a separate checkbox would let the user create a meaningless half-state
+  and would distinguish two things recovered by the same Index action. The backend id stays,
+  but the visible label becomes **Offline vulnerability data** and its warning names OSV, KEV
+  and EPSS explicitly; the old **Offline OSV database** label understates what that destructive
+  target already erases.
+
+  Rolled logs are different data with different semantics, so they get their own target. The
+  running appenders retain `sbomscope.log` and `activity.jsonl`; the purge names only the eight
+  inactive files fixed by the rolling policy (`sbomscope.log.1`–`.5`,
+  `activity.jsonl.1`–`.3`). It never recursively deletes the configured directory. Deletion is
+  best-effort and reports exact outcomes because rollover can race it. The purge event is written
+  before deletion, active files remain explicitly disclosed, and full log removal is documented
+  as an application-stopped operation. The probe repository was deliberately not bundled with
+  either target; its separate decision is closed in the later 2026-08-02 entry below.
+- 2026-08-02 — **B13 is first, and B14 follows immediately.** The application icon is kept as a
+  tiny, self-contained finishable item. Route completeness follows ahead of the remaining purge
+  work because the current mixed direct/transitive multi-module case can make a false statement
+  and leave a proposed remedy incomplete; it is correctness work, not polish.
+- 2026-08-02 — **Parallel Maven probes are dropped; the visible serial queue is the solution.**
+  Monitoring → Processes already distinguishes queued from running work, and the present queue
+  is understandable in use. Parallelism would add Maven Resolver locking or duplicate probe
+  repositories, amplify cold-cache traffic, and make a per-probe wall-clock budget mean something
+  different under contention. No demonstrated problem earns that complexity.
+- 2026-08-02 — **The air-gapped isolated probe repository is closed as an honest limitation.**
+  `-Dmaven.repo.local` intentionally keeps probe writes out of `~/.m2`; with no reachable Maven
+  repository, an empty `probe-repo` cannot obtain the pinned plugins or unseen candidate
+  artifacts. A read-through tail to `~/.m2` solves only artifacts already cached and therefore
+  cannot make the feature generally air-gapped. SBOMscope keeps the isolation, reports
+  `PLUGIN_UNAVAILABLE` distinctly, supports the user's configured internal mirror when one is
+  reachable, and otherwise reports the probe as unavailable. No seeding or import workflow is
+  carried as roadmap work without a concrete demand.
+- 2026-08-02 — **B12's final fork is closed: the Maven probe cache gets its own purge target.**
+  It is neither vulnerability data nor a preference, and rebuilding it has a different cost, so
+  it is not merged with any existing target. Explicit cleanup is useful for reclaiming space or
+  clearing damaged cache state; accepting fully air-gapped probing as unavailable means keeping
+  this cache forever is not an architectural solution.
+
+  Safety is part of the target's contract. It names only SBOMscope's fixed
+  `~/.sbomscope/probe-repo`, validates that resolved path before recursive deletion, and never
+  touches `~/.m2`. A request is rejected while any probe is queued or running rather than
+  cancelling work or racing Maven's writes. The warning states that plugins, metadata and
+  candidate artifacts may need repository access to return, and the result reports what was
+  actually removed.
+- 2026-08-02 — **B13, B14 and B12 are implemented in the agreed order.** The brand now has one
+  magnifier-and-cube mark shared conceptually by the top menu and SVG favicon. Route display
+  remains capped, while exact per-module and per-declaration counts drive explicit
+  complete/partial/unaffected remedy claims; the mixed direct/transitive case no longer causes
+  the probe to refuse a valid owning module. Purge now clears the OSV index with its sources,
+  deletes only the eight rolled filenames while retaining active logs, and clears only the
+  isolated Maven cache behind the same gate used by probe submission. Focused backend coverage
+  exercises all three boundaries, including both cache-maintenance races. Live verification
+  against `vuln-multi-module.cdx.json` showed the uncapped split directly: one declaring
+  ancestor covers 1 of 5 routes and the other 4 of 5, both remain partial, and the shared-parent
+  pin remains the suggestion. The packaged Settings page rendered all six purge targets without
+  overflow, and the brand/favicon loaded with no browser-console errors.
+- 2026-08-02 — **The dependency-graph presentation cap is raised from three routes to ten per
+  module.** Live use showed that the Inspector has room and that three hid meaningful variation:
+  the adversarial BOM's `jackson-databind@2.9.5` has five routes from `module-a`, but the panel
+  showed only the Keycloak route and two of the four Spring routes. Ten displays that ordinary
+  diamond in full while still bounding response and DOM size for pathological graphs. This is
+  presentation only; exact totals and remedy coverage remain uncapped and independent. Live
+  verification after the change showed all five Jackson routes and no withheld-route notice.
+- 2026-08-02 — **SBOMscope's own generated SBOM is clean after pinning Jackson Databind 3.1.5.**
+  A freshly downloaded Maven OSV archive found `GHSA-5gvw-p9qm-jgwh` / `CVE-2026-59889` in
+  Spring Boot 4.1.0's managed `tools.jackson.core:jackson-databind:3.1.4`. The Inspector showed
+  three backend routes and recommended one shared-parent dependency-management pin to the first
+  fixed version, 3.1.5. A regenerated 73-component SBOM resolved that version and reported zero
+  findings. This verification also exposed a test-isolation hole: the OSV default ignored
+  `sbomscope.data-directory`, so `PurgeTest` deleted the real archive. The default now derives
+  from the data directory and the destructive test asserts its target stays under `target`.

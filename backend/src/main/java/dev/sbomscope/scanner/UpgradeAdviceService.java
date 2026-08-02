@@ -15,6 +15,8 @@ import dev.sbomscope.sbom.GraphNode;
 import dev.sbomscope.sbom.StoredComponent;
 
 import dev.sbomscope.scanner.UpgradeAdvice.AdvisoryFix;
+import dev.sbomscope.scanner.UpgradeAdvice.Coverage;
+import dev.sbomscope.scanner.UpgradeAdvice.ModuleImpact;
 import dev.sbomscope.scanner.UpgradeAdvice.Remedy;
 import dev.sbomscope.scanner.UpgradeAdvice.RemedyKind;
 
@@ -67,9 +69,9 @@ public class UpgradeAdviceService {
         List<String> declaredBy = declaringDependencies(graph);
 
         List<Remedy> remedies = new ArrayList<>();
-        remedies.add(upgrade(component, pinTarget, clears, leaves));
-        remedies.add(pin(component, pinTarget, clears, leaves));
-        remedies.add(bumpAncestor(component, declaredBy));
+        remedies.add(upgrade(component, graph, pinTarget, clears, leaves));
+        remedies.add(pin(component, graph, pinTarget, clears, leaves));
+        remedies.add(bumpAncestor(component, graph, declaredBy));
         remedies.add(exclude());
 
         // Only worth asking when there is a target to ask about.
@@ -83,7 +85,7 @@ public class UpgradeAdviceService {
                 advisories,
                 declaredBy,
                 remedies,
-                suggest(component, pinTarget, advisories),
+                suggest(component, graph, pinTarget, advisories),
                 onTarget.isPresent(),
                 onTarget.orElse(List.of()));
     }
@@ -141,51 +143,59 @@ public class UpgradeAdviceService {
     public static List<GraphNode> declaringNodes(ComponentGraph graph) {
         Map<String, GraphNode> byCoordinates = new LinkedHashMap<>();
         for (ComponentGraph.ModuleRoutes module : graph.reachedFrom()) {
-            for (List<GraphNode> route : module.routes()) {
-                if (route.size() >= 2) {
-                    byCoordinates.putIfAbsent(route.get(1).coordinates(), route.get(1));
-                }
+            for (ComponentGraph.DeclarationRoutes declaration : module.declarations()) {
+                GraphNode node = declaration.declaration();
+                byCoordinates.putIfAbsent(node.coordinates(), node);
             }
         }
         return List.copyOf(byCoordinates.values());
     }
 
-    private Remedy upgrade(StoredComponent component, String pinTarget,
+    private Remedy upgrade(StoredComponent component, ComponentGraph graph, String pinTarget,
                            List<String> clears, List<String> leaves) {
 
-        if (component.scope() != DependencyScope.DIRECT) {
+        List<ModuleImpact> impacts = upgradeImpacts(graph);
+        boolean declaredDirectly = component.scope() == DependencyScope.DIRECT && impacts.isEmpty()
+                || impacts.stream().anyMatch(impact -> impact.coverage() == Coverage.COMPLETE);
+        if (component.scope() == DependencyScope.APPLICATION || !declaredDirectly) {
             return new Remedy(RemedyKind.UPGRADE, false, null, null, List.of(), List.of(),
                     component.scope() == DependencyScope.APPLICATION
                             ? "This is your own code. There is no version of it to move to."
                             : "You do not declare this dependency, so there is no version of it "
-                                    + "in your manifest to change.");
+                                    + "in your manifest to change.", impacts);
         }
         if (pinTarget == null) {
             return new Remedy(RemedyKind.UPGRADE, false, null, null, List.of(), leaves,
-                    "No advisory against this component names a fixed version.");
+                    "No advisory against this component names a fixed version.", impacts);
         }
         return new Remedy(RemedyKind.UPGRADE, true, pinTarget,
-                upgradeSnippet(component, pinTarget), clears, leaves, null);
+                upgradeSnippet(component, pinTarget), clears, leaves, upgradeScopeNote(impacts), impacts);
     }
 
-    private Remedy pin(StoredComponent component, String pinTarget,
+    private Remedy pin(StoredComponent component, ComponentGraph graph, String pinTarget,
                        List<String> clears, List<String> leaves) {
+
+        List<ModuleImpact> impacts = pinImpacts(graph);
 
         if (component.scope() == DependencyScope.APPLICATION) {
             return new Remedy(RemedyKind.PIN, false, null, null, List.of(), List.of(),
-                    "This is your own code, not a dependency to pin.");
+                    "This is your own code, not a dependency to pin.", impacts);
         }
         if (pinTarget == null) {
             return new Remedy(RemedyKind.PIN, false, null, null, List.of(), leaves,
                     "No advisory against this component names a fixed version, so there is "
-                            + "nothing to pin it to.");
+                            + "nothing to pin it to.", impacts);
         }
-        String snippet = pinSnippet(component, pinTarget);
+        String snippet = pinSnippet(component, pinTarget, graph.ownModuleCount() > 1);
         if (snippet == null) {
             return new Remedy(RemedyKind.PIN, false, pinTarget, null, clears, leaves,
-                    "SBOMscope does not know how to force a version in this ecosystem.");
+                    "SBOMscope does not know how to force a version in this ecosystem.", impacts);
         }
-        return new Remedy(RemedyKind.PIN, true, pinTarget, snippet, clears, leaves, null);
+        String note = graph.ownModuleCount() > 1
+                ? "Complete across the build when this is placed in the shared parent. A pin in one "
+                        + "module's manifest covers that module only."
+                : "Complete for this module.";
+        return new Remedy(RemedyKind.PIN, true, pinTarget, snippet, clears, leaves, note, impacts);
     }
 
     /**
@@ -196,10 +206,13 @@ public class UpgradeAdviceService {
      * in no advisory database. It is the one remedy that genuinely requires a lookup, and
      * naming what is missing is more use than omitting the option.
      */
-    private Remedy bumpAncestor(StoredComponent component, List<String> declaredBy) {
-        if (component.scope() != DependencyScope.TRANSITIVE) {
+    private Remedy bumpAncestor(StoredComponent component, ComponentGraph graph, List<String> declaredBy) {
+        List<ModuleImpact> impacts = bumpImpacts(graph);
+        if (declaredBy.isEmpty()) {
             return new Remedy(RemedyKind.BUMP_ANCESTOR, false, null, null, List.of(), List.of(),
-                    "Nothing pulls this in on your behalf.");
+                    component.scope() == DependencyScope.APPLICATION
+                            ? "This is your own code. Nothing pulls it in on your behalf."
+                            : "No module pulls this component in transitively.", impacts);
         }
         // The names are already listed above the remedies, so repeating them here produced a
         // sentence with three coordinates inside it and no room left for the point.
@@ -210,7 +223,7 @@ public class UpgradeAdviceService {
                         : "Whether a newer version of what declares this ships the fix cannot be "
                                 + "determined offline — it needs that dependency's own "
                                 + "dependencies at versions you do not have. Configure the Maven "
-                                + "probe in Settings and check from here to answer it.");
+                                + "probe in Settings and check from here to answer it.", impacts);
     }
 
     /**
@@ -232,12 +245,17 @@ public class UpgradeAdviceService {
      * Anything cleverer would be guessing at a project's appetite for breakage, which the
      * tool has no way to know.
      */
-    private RemedyKind suggest(StoredComponent component, String pinTarget, List<AdvisoryFix> advisories) {
+    private RemedyKind suggest(StoredComponent component, ComponentGraph graph,
+                               String pinTarget, List<AdvisoryFix> advisories) {
         if (advisories.isEmpty() || pinTarget == null
                 || component.scope() == DependencyScope.APPLICATION) {
             return null;
         }
-        return component.scope() == DependencyScope.DIRECT ? RemedyKind.UPGRADE : RemedyKind.PIN;
+        List<ModuleImpact> upgrade = upgradeImpacts(graph);
+        boolean completeEverywhere = upgrade.isEmpty()
+                ? component.scope() == DependencyScope.DIRECT
+                : upgrade.stream().allMatch(impact -> impact.coverage() == Coverage.COMPLETE);
+        return completeEverywhere ? RemedyKind.UPGRADE : RemedyKind.PIN;
     }
 
     // --- snippets ----------------------------------------------------------------------
@@ -272,9 +290,12 @@ public class UpgradeAdviceService {
      * asks for, and npm's {@code overrides} does the same for the tree below you. Both are
      * the documented way to do this, which is why the snippet can be handed over as-is.
      */
-    private String pinSnippet(StoredComponent component, String version) {
+    private String pinSnippet(StoredComponent component, String version, boolean aggregateBuild) {
         if (isMaven(component)) {
-            return """
+            String placement = aggregateBuild
+                    ? "<!-- Put this in the shared parent POM to cover every module. -->\n"
+                    : "";
+            return placement + """
                     <dependencyManagement>
                       <dependencies>
                         <dependency>
@@ -292,6 +313,66 @@ public class UpgradeAdviceService {
                     }""".formatted(npmName(component), version);
         }
         return null;
+    }
+
+    private List<ModuleImpact> upgradeImpacts(ComponentGraph graph) {
+        return graph.reachedFrom().stream()
+                .map(owner -> owner.directlyDeclared()
+                        ? new ModuleImpact(owner.module().coordinates(), null, Coverage.COMPLETE,
+                                owner.totalRoutes(), owner.totalRoutes(),
+                                "A direct declaration wins over every transitive route in this module.")
+                        : new ModuleImpact(owner.module().coordinates(), null, Coverage.UNAFFECTED,
+                                0, owner.totalRoutes(),
+                                "This module pulls the component in transitively; changing another module does not affect it."))
+                .toList();
+    }
+
+    private String upgradeScopeNote(List<ModuleImpact> impacts) {
+        List<String> complete = impacts.stream()
+                .filter(impact -> impact.coverage() == Coverage.COMPLETE)
+                .map(ModuleImpact::module)
+                .toList();
+        List<String> unaffected = impacts.stream()
+                .filter(impact -> impact.coverage() == Coverage.UNAFFECTED)
+                .map(ModuleImpact::module)
+                .toList();
+        if (unaffected.isEmpty()) {
+            return "Complete for " + String.join(", ", complete) + ".";
+        }
+        return "Complete for " + String.join(", ", complete) + ". "
+                + String.join(", ", unaffected)
+                + " also pulls this in transitively and is not affected by that change.";
+    }
+
+    private List<ModuleImpact> pinImpacts(ComponentGraph graph) {
+        return graph.reachedFrom().stream()
+                .map(owner -> new ModuleImpact(owner.module().coordinates(), null, Coverage.COMPLETE,
+                        owner.totalRoutes(), owner.totalRoutes(),
+                        graph.ownModuleCount() > 1
+                                ? "Complete when the pin is placed in the shared parent."
+                                : "Complete for this module."))
+                .toList();
+    }
+
+    private List<ModuleImpact> bumpImpacts(ComponentGraph graph) {
+        List<ModuleImpact> impacts = new ArrayList<>();
+        for (ComponentGraph.ModuleRoutes owner : graph.reachedFrom()) {
+            for (ComponentGraph.DeclarationRoutes declaration : owner.declarations()) {
+                int covered = declaration.routes();
+                Coverage coverage = owner.directRoutes() == 0 && covered == owner.totalRoutes()
+                        ? Coverage.COMPLETE : Coverage.PARTIAL;
+                impacts.add(new ModuleImpact(
+                        owner.module().coordinates(),
+                        declaration.declaration().coordinates(),
+                        coverage,
+                        covered,
+                        owner.totalRoutes(),
+                        coverage == Coverage.COMPLETE
+                                ? "This declaration carries every route in the module."
+                                : "This declaration carries only some routes; a successful bump is partial."));
+            }
+        }
+        return List.copyOf(impacts);
     }
 
     /** Scoped packages reach us either joined or split; npm always writes them joined. */

@@ -24,13 +24,13 @@ import dev.sbomscope.sbom.ComponentGraph.TreeNode;
  * here needs the network, the scanner, or any data beyond the uploaded file — which is why
  * this panel could be built while upgrade paths waits on R4.
  *
- * <p>Two guards run through everything below, because a dependency graph is neither a tree
+ * <p>Two rules run through everything below, because a dependency graph is neither a tree
  * nor acyclic in practice:
  *
  * <ul>
- *   <li><b>Path enumeration is exponential.</b> A graph full of diamonds has more distinct
- *       routes than can be walked, let alone read, so enumeration is bounded and says when
- *       it stopped rather than reporting a total it did not finish counting.</li>
+ *   <li><b>Route accounting and route display are separate.</b> Every simple route is counted
+ *       for remedy correctness, while only the ten shortest are retained for the UI. A
+ *       per-path visited set prevents cycles from making enumeration non-terminating.</li>
  *   <li><b>Expansion is bounded by expanding each component once.</b> Without that, the same
  *       shared subtree is rebuilt under every parent that reaches it.</li>
  * </ul>
@@ -41,22 +41,11 @@ public class DependencyGraphService {
     /**
      * How many routes are read out per module.
      *
-     * <p>Three, because after the shortest one the rest are usually the same story with an
-     * extra hop. This caps <em>routes</em>; the modules themselves are never capped.
+     * <p>Ten keeps ordinary diamonds fully readable while bounding a pathological module's
+     * response and DOM size. This caps <em>routes shown</em>; modules and exact counts are
+     * never capped.
      */
-    private static final int ROUTES_SHOWN = 3;
-
-    /**
-     * How far enumeration goes before it gives up counting.
-     *
-     * <p>Reaching this makes {@code totalRoutes} a floor rather than a total, and the caller
-     * is told so. Counting exactly would mean walking every path, which is the thing that
-     * does not terminate in reasonable time.
-     */
-    private static final int ROUTES_ENUMERATED = 25;
-
-    /** A whole-request ceiling, so one pathological component cannot hang the panel. */
-    private static final int ROUTE_STEPS_BUDGET = 200_000;
+    private static final int ROUTES_SHOWN = 10;
 
     private final SbomRepository repository;
 
@@ -195,9 +184,9 @@ public class DependencyGraphService {
      * defeated by a dense graph, which is what makes "every owning module is listed" a
      * guarantee rather than an intention.
      *
-     * <p>The second enumerates routes and is <b>bounded</b>. A module the second pass could
-     * not produce a route for still appears, marked truncated — because which modules are
-     * affected is the answer, and by which hop is the detail.
+     * <p>The second enumerates every simple route for exact per-module and per-declaration
+     * coverage. Only its display list is bounded to the shortest ten; correctness never
+     * depends on the display cap.
      */
     private List<ModuleRoutes> ancestors(
             List<StoredComponent> targets,
@@ -210,14 +199,12 @@ public class DependencyGraphService {
             return List.of();
         }
 
-        Map<String, List<List<String>>> routesByModule = new HashMap<>();
-        Map<String, Boolean> truncated = new HashMap<>();
-        int[] budget = { ROUTE_STEPS_BUDGET };
+        Map<String, RouteSummary> routesByModule = new HashMap<>();
 
         for (StoredComponent target : targets) {
             Deque<String> path = new ArrayDeque<>();
             path.push(target.bomRef());
-            walkUp(target.bomRef(), path, byRef, parents, routesByModule, truncated, budget);
+            walkUp(target.bomRef(), path, byRef, parents, routesByModule);
         }
 
         List<ModuleRoutes> result = new ArrayList<>();
@@ -226,24 +213,31 @@ public class DependencyGraphService {
             if (module == null) {
                 continue;
             }
-            List<List<String>> found = routesByModule.getOrDefault(moduleRef, List.of());
+            RouteSummary found = routesByModule.get(moduleRef);
 
-            List<List<String>> shortestFirst = new ArrayList<>(found);
-            shortestFirst.sort(Comparator.comparingInt(List::size));
-
-            List<List<GraphNode>> shown = shortestFirst.stream()
-                    .limit(ROUTES_SHOWN)
+            List<List<GraphNode>> shown = (found == null ? List.<List<String>>of() : found.shortest).stream()
                     .map(route -> route.stream()
                             .map(ref -> node(byRef.get(ref), vulnerablePurls))
                             .filter(java.util.Objects::nonNull)
                             .toList())
                     .toList();
 
+            List<ComponentGraph.DeclarationRoutes> declarations = found == null
+                    ? List.of()
+                    : found.byDeclaration.entrySet().stream()
+                            .map(entry -> new ComponentGraph.DeclarationRoutes(
+                                    node(byRef.get(entry.getKey()), vulnerablePurls), entry.getValue()))
+                            .filter(entry -> entry.declaration() != null)
+                            .sorted(Comparator.comparing(entry -> entry.declaration().coordinates()))
+                            .toList();
+
             result.add(new ModuleRoutes(
                     node(module, vulnerablePurls),
                     shown,
-                    found.size(),
-                    Boolean.TRUE.equals(truncated.get(moduleRef)) || found.isEmpty()));
+                    found == null ? 0 : found.total,
+                    found == null,
+                    found == null ? 0 : found.direct,
+                    declarations));
         }
 
         // Most affected module first: where several of your modules carry the same library,
@@ -297,14 +291,9 @@ public class DependencyGraphService {
             Deque<String> path,
             Map<String, StoredComponent> byRef,
             Map<String, List<String>> parents,
-            Map<String, List<List<String>>> routesByModule,
-            Map<String, Boolean> truncated,
-            int[] budget) {
+            Map<String, RouteSummary> routesByModule) {
 
         for (String parent : parents.getOrDefault(ref, List.of())) {
-            if (budget[0]-- <= 0) {
-                return;
-            }
             // Guards the current path only, not the whole search: a component legitimately
             // appears on many different routes, but never twice on one.
             if (path.contains(parent)) {
@@ -316,24 +305,47 @@ public class DependencyGraphService {
             }
 
             if (component.scope() == DependencyScope.APPLICATION) {
-                List<List<String>> routes =
-                        routesByModule.computeIfAbsent(parent, key -> new ArrayList<>());
-                if (routes.size() >= ROUTES_ENUMERATED) {
-                    truncated.put(parent, true);
-                    continue;
-                }
                 // The path is pushed onto, so iterating it runs from the step nearest this
                 // module down to the component — already the reading order. Only the module
                 // itself has to go on the front.
                 List<String> route = new ArrayList<>(path);
                 route.addFirst(parent);
-                routes.add(route);
+                routesByModule.computeIfAbsent(parent, key -> new RouteSummary()).accept(route);
                 continue;
             }
 
             path.push(parent);
-            walkUp(parent, path, byRef, parents, routesByModule, truncated, budget);
+            walkUp(parent, path, byRef, parents, routesByModule);
             path.pop();
+        }
+    }
+
+    /**
+     * Exact counts for correctness, plus only the shortest ten routes for presentation.
+     * Keeping these concerns separate is B14's central rule: display density may be capped,
+     * the statement about what a remedy covers may not.
+     */
+    private static final class RouteSummary {
+        private int total;
+        private int direct;
+        private final Map<String, Integer> byDeclaration = new HashMap<>();
+        private final List<List<String>> shortest = new ArrayList<>();
+
+        void accept(List<String> route) {
+            total++;
+            if (route.size() == 2) {
+                direct++;
+            } else if (route.size() >= 3) {
+                byDeclaration.merge(route.get(1), 1, Integer::sum);
+            }
+
+            shortest.add(List.copyOf(route));
+            shortest.sort(Comparator
+                    .comparingInt((List<String> candidate) -> candidate.size())
+                    .thenComparing(candidate -> String.join("\u0000", candidate)));
+            if (shortest.size() > ROUTES_SHOWN) {
+                shortest.removeLast();
+            }
         }
     }
 

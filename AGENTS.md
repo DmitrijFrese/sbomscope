@@ -254,6 +254,15 @@ Things that will bite otherwise:
   splits `-Djavax.net.ssl.trustStoreType=Windows-ROOT` at the first dot unless it is quoted.
   Both surface as a PKIX or "unknown lifecycle phase" failure that has nothing to do with the
   build.
+- **Node has its own system-CA switch.** On the same TLS-inspecting Windows machines, Java's
+  trust-store flag and `MAVEN_OPTS` do nothing for the `npm ci` that the Maven build launches.
+  `UNABLE_TO_VERIFY_LEAF_SIGNATURE` is fixed by putting `--use-system-ca` in `NODE_OPTIONS` for
+  that build. A failed install may leave a partial `frontend/node_modules`; follow-up
+  `ENOTEMPTY` cleanup warnings or an `EPERM` against the user's npm cache are install residue or
+  sandbox access, not a TypeScript/test failure — those phases have not run yet.
+- **Quote comma-separated Maven properties in PowerShell.** A focused test selector must be one
+  argument, for example `"-Dtest=PurgeTest,BumpProbeServiceTest"`; unquoted, PowerShell parses
+  the comma as an argument-list separator before Maven sees it.
 - **Never rewrite source files with a PowerShell regex pass.** PowerShell 5.1 reads as ANSI, so
   a round-trip mangles every non-ASCII character and adds a BOM. Edit the file properly.
 
@@ -303,6 +312,13 @@ then became destructive, because `StoredDocumentSweeper` starts with every Sprin
 sees an empty `sbom` table and deletes every document it finds — so running the suite erased
 real uploads. `sbomscope.data-directory` is overridden in `src/test/resources/application.yml`
 for that reason; if a test needs local storage, point it there too.
+
+That includes the **default OSV database directory**. `PurgeService` obtains it through
+`SettingsService`, so a default built directly from `user.home` bypasses the test data-directory
+override: the B12 purge test did exactly what it was asked and deleted the developer's freshly
+downloaded Maven archive. Derive every app-owned default from `sbomscope.data-directory`, and
+make destructive tests assert that their resolved target is under `target/sbomscope-test-data`
+before creating or deleting anything.
 
 **The frontend has unit tests, and the division of labour between them and the browser is
 deliberate.** Vitest with jsdom covers pure functions and the rendering logic that decides *what
@@ -362,6 +378,11 @@ never changed, so the effect never re-ran. Assert the precondition, not just the
 **Hard-refresh after rebuilding, or you will verify the previous build.** The jar serves the
 bundle as static content and the browser caches `index.html`; a plain reload can render the
 old UI while reporting success. A cache-busting query string is enough.
+
+**The in-app browser does not currently accept `networkidle` as a load state.** Even though the
+automation interface may advertise it, the backend rejects it. For this local SPA, navigate with
+a cache-busting query, then wait for the concrete control or loaded text needed by the check and
+take a fresh DOM snapshot; a fixed delay is only a short bridge for the initial API fetch.
 
 **Measure layout claims rather than eyeballing them.** `getBoundingClientRect` on the blocks
 above the table answers "did this actually save space" in a way that survives disagreement —
@@ -487,8 +508,20 @@ the severity summary went through two designs before the numbers showed which on
   component being probed.** `probe-repo` starts empty and is deliberately never `~/.m2`, so on
   a machine that cannot reach a repository *every* probe fails at plugin resolution. This is
   reported as `ProbeFailureReason.PLUGIN_UNAVAILABLE`, kept distinct from `NOT_FOUND` for
-  exactly that reason. **Unresolved design question** — see the 2026-07-30 decision log entry
-  before changing anything here.
+  exactly that reason. **Accepted limitation as of 2026-08-02** — keep the isolation and report
+  the probe unavailable. A read-through tail sees only already-cached artifacts and does not
+  solve unseen candidate versions; see the decision log before changing anything here.
+
+- **The Maven probe cache and probe submissions share one maintenance gate.** The purge target
+  may recursively remove only the configured `probe-repo`, after validating that exact leaf;
+  it never touches `~/.m2`. It is rejected while a probe is queued or running, and new work is
+  refused while deletion is in progress. A separate check followed by deletion reopens the race
+  this gate exists to close.
+
+- **The dependency graph's ten-route cap is presentation only.** Remedy scope uses exact
+  per-module and per-declaration counts computed independently of the paths retained for display.
+  Never derive coverage from `ModuleRoutes.routes()`: a tidy ten-row list is not evidence that
+  only ten routes exist.
 
 - **Never invoke a Maven plugin by prefix (`dependency:tree`) from the probe.** A prefix costs
   a `maven-metadata.xml` lookup to resolve it and then takes the plugin's *latest* version, so

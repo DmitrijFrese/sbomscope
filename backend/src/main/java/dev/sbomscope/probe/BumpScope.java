@@ -30,6 +30,8 @@ import java.util.List;
  * @param decidedByMaven  false when the tree could not be read for provenance and the ancestor
  *                        fell back to the shortest route. The claim in the caption is weaker
  *                        then, and says so, rather than presenting a guess as a reading
+ * @param routesCovered   exact routes through the chosen ancestor in this module
+ * @param routesTotal     exact routes from this module to the component
  */
 public record BumpScope(
         String module,
@@ -37,5 +39,11 @@ public record BumpScope(
         String ancestor,
         String ancestorVersion,
         List<String> otherAncestors,
-        boolean decidedByMaven) {
+        boolean decidedByMaven,
+        int routesCovered,
+        int routesTotal) {
+
+    public boolean completeForModule() {
+        return routesTotal > 0 && routesCovered == routesTotal;
+    }
 }

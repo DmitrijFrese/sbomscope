@@ -1,5 +1,7 @@
 package dev.sbomscope.maintenance;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -7,12 +9,15 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+
+import dev.sbomscope.settings.SettingsService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -36,6 +41,15 @@ class PurgeTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private SettingsService settings;
+
+    @Value("${sbomscope.logs-directory}")
+    private String logsDirectory;
+
+    @Value("${sbomscope.probe-repository}")
+    private String probeRepository;
 
     private final UUID sbomId = UUID.randomUUID();
     private final String purl = "pkg:maven/dev.sbomscope.purge/lib@1.0.0";
@@ -178,5 +192,69 @@ class PurgeTest {
         purge("{\"confirmation\":\"PURGE\",\"targets\":[\"SBOMS\",\"FINDINGS\",\"SETTINGS\"]}");
 
         assertThat(count(table)).isEqualTo(before);
+    }
+
+    @Test
+    void offlineDataPurgeRemovesTheArchiveIndexAndItsSource() throws Exception {
+        Path archive = Path.of(settings.scannerSettings().databaseDirectory(),
+                "osv-scanner", "Maven", "all.zip");
+        Path testData = Path.of("target", "sbomscope-test-data").toAbsolutePath().normalize();
+        assertThat(archive.toAbsolutePath().normalize().startsWith(testData))
+                .as("the suite must never point a purge at the user's real archive").isTrue();
+        Files.createDirectories(archive.getParent());
+        Files.writeString(archive, "test archive");
+
+        jdbc.update("INSERT INTO osv_index_source"
+                        + " (ecosystem, identity, advisories, packages, built_at) VALUES (?, ?, ?, ?, ?)",
+                "PurgeTest", "fixture", 1, 1, OffsetDateTime.now(ZoneOffset.UTC));
+        jdbc.update("INSERT INTO osv_index"
+                        + " (ecosystem, package_name, osv_id, affected) VALUES (?, ?, ?, ?)",
+                "PurgeTest", "example", "GHSA-index-purge", "[]");
+
+        purge("{\"confirmation\":\"PURGE\",\"targets\":[\"OSV_DATABASE\"]}");
+
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM osv_index WHERE ecosystem = 'PurgeTest'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM osv_index_source WHERE ecosystem = 'PurgeTest'", Integer.class)).isZero();
+        assertThat(archive).doesNotExist();
+    }
+
+    @Test
+    void rolledLogPurgeKeepsActiveAndUnrelatedFiles() throws Exception {
+        Path directory = Path.of(logsDirectory);
+        Files.createDirectories(directory);
+        Path proseHistory = directory.resolve("sbomscope.log.2");
+        Path activityHistory = directory.resolve("activity.jsonl.3");
+        Path unrelated = directory.resolve("notes.txt");
+        Files.writeString(proseHistory, "old prose");
+        Files.writeString(activityHistory, "old activity");
+        Files.writeString(unrelated, "not ours");
+
+        purge("{\"confirmation\":\"PURGE\",\"targets\":[\"ROLLED_LOGS\"]}");
+
+        assertThat(proseHistory).doesNotExist();
+        assertThat(activityHistory).doesNotExist();
+        assertThat(directory.resolve("sbomscope.log")).exists();
+        assertThat(directory.resolve("activity.jsonl")).exists();
+        assertThat(unrelated).exists();
+        Files.deleteIfExists(unrelated);
+    }
+
+    @Test
+    void probeCachePurgeDeletesOnlyTheIsolatedRepository() throws Exception {
+        Path repository = Path.of(probeRepository);
+        Path artifact = repository.resolve("com/example/lib/1.0/lib-1.0.jar");
+        Files.createDirectories(artifact.getParent());
+        Files.writeString(artifact, "cached");
+
+        mockMvc.perform(post("/api/maintenance/purge")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"confirmation\":\"PURGE\",\"targets\":[\"MAVEN_PROBE_CACHE\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removed.MAVEN_PROBE_CACHE")
+                        .value(org.hamcrest.Matchers.containsString("1 files")));
+
+        assertThat(repository).doesNotExist();
     }
 }

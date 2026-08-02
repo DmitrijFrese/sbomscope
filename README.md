@@ -205,6 +205,12 @@ Your data lives in `~/.sbomscope/` — the H2 database (`db/`), uploaded SBOM do
 the Maven probe's isolated repository (`probe-repo/`) and the logs (`logs/`). Nothing is
 written into the project directory.
 
+**Settings → Erase local data** keeps those recovery costs separate. Offline vulnerability
+data removes OSV archives and their index together with KEV and EPSS. Rolled log history removes
+only the eight inactive numbered logs and keeps the two active files while SBOMscope is running.
+The Maven probe cache removes only `probe-repo/`, never `~/.m2`, and is refused while a probe is
+queued or running; later probes may need repository access to fetch the cache contents again.
+
 SBOMscope works immediately as an SBOM inventory. Vulnerability scanning is off until
 you turn it on.
 
@@ -271,6 +277,18 @@ setx MAVEN_OPTS "-Djavax.net.ssl.trustStoreType=Windows-ROOT"
 ```
 
 This grants no new trust; it reuses the certificates your system already accepts.
+
+**The build fails in `npm ci` with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.** Node has its own
+certificate handling, so the Java setting above does not affect the frontend install that Maven
+launches. Reuse the operating system's trusted roots for this build too. In PowerShell:
+
+```powershell
+$env:NODE_OPTIONS="--use-system-ca"
+mvn clean package
+```
+
+This is again a trust-store selection, not a disabled certificate check. If npm instead reports
+`EPERM` against its cache, that is a filesystem permission or file-lock problem rather than TLS.
 
 The same applies to the running application when it downloads the vulnerability
 database, so start it with:

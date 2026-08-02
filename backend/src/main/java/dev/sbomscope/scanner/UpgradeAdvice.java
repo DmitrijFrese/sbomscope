@@ -72,6 +72,23 @@ public record UpgradeAdvice(
         EXCLUDE
     }
 
+    /** Whether one proposed change covers a module's routes to the component. */
+    public enum Coverage { COMPLETE, PARTIAL, UNAFFECTED }
+
+    /**
+     * Per-module scope of one remedy. Counts are exact and independent of the graph panel's
+     * route display cap. A null/zero count is used where completeness follows from
+     * Maven/npm resolution rules rather than from changing a counted subset of routes.
+     */
+    public record ModuleImpact(
+            String module,
+            /** Direct dependency changed for a bump, otherwise null. */
+            String through,
+            Coverage coverage,
+            int routesCovered,
+            int routesTotal,
+            String note) {}
+
     /**
      * @param available false when this remedy cannot be offered here, with {@code note}
      *                  saying why — an option greyed out for a stated reason is worth more
@@ -86,5 +103,13 @@ public record UpgradeAdvice(
             String snippet,
             List<String> clears,
             List<String> leaves,
-            String note) {}
+            String note,
+            List<ModuleImpact> moduleImpacts) {
+
+        /** Compatibility constructor for remedies whose scope is not computed here. */
+        public Remedy(RemedyKind kind, boolean available, String target, String snippet,
+                      List<String> clears, List<String> leaves, String note) {
+            this(kind, available, target, snippet, clears, leaves, note, List.of());
+        }
+    }
 }

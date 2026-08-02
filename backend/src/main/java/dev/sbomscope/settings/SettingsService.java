@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,12 +30,16 @@ public class SettingsService {
     private final SettingsRepository repository;
     private final ActivityLogger activityLog;
     private final ApplicationEventPublisher events;
+    private final String defaultDatabaseDirectory;
 
     SettingsService(SettingsRepository repository, ActivityLogger activityLog,
-                     ApplicationEventPublisher events) {
+                     ApplicationEventPublisher events,
+                     @Value("${sbomscope.data-directory:${user.home}/.sbomscope}")
+                     String dataDirectory) {
         this.repository = repository;
         this.activityLog = activityLog;
         this.events = events;
+        this.defaultDatabaseDirectory = Path.of(dataDirectory, "osv-db").toString();
     }
 
     public ScannerSettings scannerSettings() {
@@ -43,7 +48,7 @@ public class SettingsService {
                 repository.find(SCANNER_PATH).filter(value -> !value.isBlank()).orElse(null),
                 repository.find(SCANNER_DB_DIR)
                         .filter(value -> !value.isBlank())
-                        .orElseGet(SettingsService::defaultDatabaseDirectory));
+                        .orElse(defaultDatabaseDirectory));
     }
 
     @Transactional
@@ -62,7 +67,7 @@ public class SettingsService {
         repository.put(SCANNER_ENABLED, Boolean.toString(requested.enabled()));
         repository.put(SCANNER_PATH, path == null ? "" : path);
         repository.put(SCANNER_DB_DIR,
-                databaseDirectory == null ? defaultDatabaseDirectory() : databaseDirectory);
+                databaseDirectory == null ? defaultDatabaseDirectory : databaseDirectory);
 
         activityLog.record(ActivityLogger.Category.DATA, "SETTINGS_CHANGED",
                 "scanner: enabled=%s, path=%s".formatted(requested.enabled(), path != null));
@@ -148,11 +153,6 @@ public class SettingsService {
         // answering from a configuration that no longer applies.
         events.publishEvent(new MavenSettingsChangedEvent());
         return mavenSettings();
-    }
-
-    /** {@code ~/.sbomscope/osv-db}, kept beside the rest of SBOMscope's local data. */
-    static String defaultDatabaseDirectory() {
-        return Path.of(System.getProperty("user.home"), ".sbomscope", "osv-db").toString();
     }
 
     /**
