@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { PROBE_FINISHED, cancelProbe, fetchProbeQueue } from '../api/client';
-import type { ProbeTask } from '../api/client';
+import { PROBE_FINISHED, cancelProbe, cancelWorkspaceAnalysis, fetchProbeQueue, fetchWorkspaceAnalysisTasks } from '../api/client';
+import type { ProbeTask, WorkspaceAnalysisTask } from '../api/client';
 import { useSboms } from '../sboms/SbomProvider';
 
 const POLL_INTERVAL_MS = 2000;
@@ -32,7 +32,7 @@ function duration(fromIso: string, toMillis: number): string {
  * started: reporting a wait as run time would overstate what Maven has been asked to do, which
  * is the same distinction QUEUED exists to make.
  */
-function elapsedFor(task: ProbeTask, now: number): string {
+function elapsedFor(task: Pick<ProbeTask, 'submittedAt' | 'startedAt' | 'finishedAt'>, now: number): string {
   const from = task.startedAt ?? task.submittedAt;
   const to = task.finishedAt ? new Date(task.finishedAt).getTime() : now;
   return duration(from, to);
@@ -61,6 +61,7 @@ const STATE_LABELS: Record<ProbeTask['state'], string> = {
  */
 export function ProcessesPanel() {
   const [tasks, setTasks] = useState<ProbeTask[]>([]);
+  const [workspaceTasks, setWorkspaceTasks] = useState<WorkspaceAnalysisTask[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -73,10 +74,11 @@ export function ProcessesPanel() {
     let cancelled = false;
 
     function poll() {
-      fetchProbeQueue()
-        .then((result) => {
+      Promise.all([fetchProbeQueue(), fetchWorkspaceAnalysisTasks()])
+        .then(([result, workspace]) => {
           if (cancelled) return;
           setTasks(result);
+          setWorkspaceTasks(workspace);
           setError(null);
           setNow(Date.now());
         })
@@ -107,6 +109,17 @@ export function ProcessesPanel() {
     try {
       await cancelProbe(id);
       // Not removed from the list — the next poll returns it as STOPPED, which is the point.
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setStopping(null);
+    }
+  }, []);
+
+  const stopWorkspace = useCallback(async (id: string) => {
+    setStopping(id);
+    try {
+      await cancelWorkspaceAnalysis(id);
     } catch (e) {
       setError(messageOf(e));
     } finally {
@@ -204,6 +217,30 @@ export function ProcessesPanel() {
                 </tr>
               ))}
             </tbody>
+          </table>
+        </div>
+      )}
+
+      <h2 className="panel__title monitoring-processes__subheading">Workspace analyses</h2>
+      <p className="panel__hint">
+        WALA runs in a separate SBOMscope-owned JVM. Stop terminates only that worker process tree;
+        it does not stop your build, Maven probe, or application.
+      </p>
+      {workspaceTasks.length === 0 ? (
+        <p className="panel__hint">No workspace analysis has run this session.</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead><tr><th scope="col">State</th><th scope="col">Workspace</th><th scope="col">Elapsed</th><th scope="col"><span className="visually-hidden">Actions</span></th></tr></thead>
+            <tbody>{workspaceTasks.map((task) => {
+              const done = PROBE_FINISHED.includes(task.state);
+              return <tr key={task.id} data-finished={done}>
+                <td><span className={task.state === 'RUNNING' || task.state === 'FAILED' ? 'badge badge--warn' : 'badge'}>{STATE_LABELS[task.state]}</span></td>
+                <td className="mono">{task.workspacePath}</td>
+                <td className="mono">{elapsedFor(task, now)}</td>
+                <td>{!done && <button type="button" className="button button--small" onClick={() => void stopWorkspace(task.id)} disabled={stopping === task.id}>{stopping === task.id ? 'Stopping…' : 'Stop'}</button>}</td>
+              </tr>;
+            })}</tbody>
           </table>
         </div>
       )}

@@ -6,6 +6,7 @@ import { ExportSettingsPanel } from '../components/ExportSettingsPanel';
 import { MavenSettingsPanel } from '../components/MavenSettingsPanel';
 import { PurgePanel } from '../components/PurgePanel';
 import { ScannerSettingsPanel } from '../components/ScannerSettingsPanel';
+import { WorkspaceAnalysisSettingsPanel } from '../components/WorkspaceAnalysisSettingsPanel';
 import { useTheme } from '../theme/ThemeProvider';
 import type { ThemePreference } from '../theme/ThemeProvider';
 
@@ -46,6 +47,8 @@ export function SettingsPage() {
       <ExploitFeedPanel />
 
       <MavenSettingsPanel />
+
+      <WorkspaceAnalysisSettingsPanel />
 
       <ExportSettingsPanel />
 

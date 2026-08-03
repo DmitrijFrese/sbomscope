@@ -2345,6 +2345,39 @@ body {
   font-style: italic;
 }
 
+.workspace-usage {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.workspace-usage > .panel__hint {
+  margin: 0;
+}
+
+.workspace-usage__module {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+}
+
+.workspace-usage__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.workspace-usage__path {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  font-size: 12px;
+}
+
+.workspace-usage__path li + li {
+  margin-top: var(--space-1);
+}
+
 /* ------------------------------------------- upgrade paths ---- */
 
 /* Caps a heavily-vulnerable library's finding list rather than letting the page grow with it —

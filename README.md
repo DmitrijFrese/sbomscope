@@ -2,16 +2,31 @@
 
 **Local-first SBOM analysis for restricted environments.**
 
-Upload a CycloneDX SBOM, find out which of your dependencies have known
-vulnerabilities, whether your code actually uses them, what upgrade would fix them —
-and get all of it into a spreadsheet your security team can actually read.
+Upload one or more CycloneDX JSON SBOMs and analyze them locally. Today SBOMscope can:
 
-> **Status: working, in active development.** Upload, offline vulnerability scanning, the
-> findings view, the Excel export, the Component Inspector, the dependency graph, upgrade
-> paths (offline advisory-derived fixes, plus driving your own `mvn` for the questions that
-> need it) and the exploitation-signal columns (CISA KEV, EPSS) all work today. Workspace
-> usage detection is not built yet. See
-> [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for exactly what is done.
+- match **Maven and npm** components against locally cached OSV vulnerability data;
+- enrich findings with CISA KEV and FIRST EPSS exploitation signals;
+- trace direct and transitive dependency routes in the Component Inspector;
+- derive offline fix versions, pins and npm overrides, and use your configured `mvn` to test
+  resolved upgrade paths for Maven builds;
+- export the visible findings and their provenance to a linked Excel workbook; and
+- keep network access, external processes, maintenance and destructive actions explicit and
+  visible in the application.
+
+> **Ecosystem boundary:** Maven and npm are the only supported ecosystems today. Full Tier 2
+> release enumeration and resolved-ancestor probing exists only for Maven builds that the
+> configured `mvn` can model. npm currently has offline advisory-derived fixes and ready-to-paste
+> `overrides`, but no npm package-tool probe. Gradle has no adapter even though it commonly emits
+> Maven purls. Rust, Go, Python, .NET and other ecosystems are not supported by SBOMscope yet;
+> osv-scanner supporting an ecosystem does not make it an SBOMscope feature automatically.
+
+> **Status: working, in active development.** An initial, experimental Maven workspace
+> reachability slice is available: it reads already-built production classes and an explicitly
+> configured read-only Maven cache, then shows module-isolated conservative WALA bytecode call paths in the
+> Component Inspector. It never builds the workspace and does not yet prove that an advisory's
+> vulnerable method was called. VEX consumption and container-image scanning remain planned. See
+> [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) for the exact roadmap and evidence
+> boundaries.
 
 ---
 
@@ -26,11 +41,15 @@ single tool a developer can run on their own machine:
 - **Enterprise vulnerability-management platforms** vary widely in export support.
   Getting findings out into a spreadsheet you can sort, filter, and share is often
   awkward or simply unavailable.
-- **Nothing free** tells you whether a vulnerable library is genuinely used in your
-  source or is just sitting in the dependency graph unused.
+- **Reachability remains difficult to establish honestly.** An import is not proof that a
+  vulnerable method executes, while reflection and framework callbacks can hide real use from a
+  simple source search. The experimental workspace analysis therefore reports call paths and
+  explicit coverage rather than a confident text-match verdict.
 
-SBOMscope targets the intersection: run it locally, point it at an SBOM and (optionally)
-your source tree, and get actionable, exportable answers.
+SBOMscope targets the intersection: today, run it locally, point it at an SBOM, and get
+actionable, exportable dependency and vulnerability answers. The experimental Maven workspace
+slice adds conservative component-boundary call-path evidence; it remains deliberately narrower
+than a vulnerable-method verdict.
 
 ### Designed for locked-down environments
 
@@ -52,27 +71,28 @@ does but **what that traffic says about you**:
   across on a USB stick to a machine with no network at all. EPSS publishes a per-CVE lookup
   API and SBOMscope deliberately does not use it — asking about one CVE would say which one you
   care about, and FIRST's own guidance names the bulk file as the right mechanism anyway.
-- **It never asks anyone about your specific dependencies.** "Which versions of
+- **It never asks anyone directly about your specific dependencies.** "Which versions of
   `com.acme:internal-billing` exist" would identify that artifact as something you use. When
-  upgrade analysis needs an answer like that, SBOMscope drives a build tool you already have
-  and already trust — point it at your `mvn` and prove it works with a test button — so the
-  question goes through your mirror, with your credentials, over a channel your build already
-  uses every day. No credentials are ever entered here.
+  Maven upgrade analysis needs an answer like that, SBOMscope drives the build tool you already
+  have and trust — point it at your `mvn` and prove it works with a test button — so the question
+  goes through your mirror, with your credentials, over a channel your build already uses every
+  day. No credentials are ever entered here. No equivalent npm, Gradle, Rust, Go, Python or .NET
+  adapter exists today.
 
-With no build tool configured, nothing degrades into a guess: SBOMscope still names the fix
-versions the advisories carry, still tells you which of your modules pull a vulnerable
-library in, still tells you what to pin it to, and still says plainly which questions it
-cannot answer. Everything it does that touches the network or runs an external process is
-written to a log you can read inside the application.
+With no Maven probe configured, nothing degrades into a guess: SBOMscope still names the fix
+versions the advisories carry, still tells you which of your modules pull a vulnerable library
+in, still provides the ecosystem-specific Tier 1 remedy it knows, and still says plainly which
+questions it cannot answer. Everything it does that touches the network or runs an external
+process is written to a log you can read inside the application.
 
 ## Core features
 
 | Feature | Description |
 |---|---|
 | **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. Several files at once, reported per file so one malformed document does not hide the rest. The stored document can be downloaded back, byte for byte. |
-| **Workspace usage detection** | Optionally supply a path to your source tree. SBOMscope scans it for imports/references to vulnerable libraries and reports the total hit count, the full list of affected files with fully-qualified paths, and a ±5-line preview of any selected hit with language-aware syntax highlighting. |
+| **Workspace reachability analysis — experimental Maven slice** | Reads existing `target/classes` and exact dependency JARs from a configured **read-only** Maven cache. Each mapped module is analyzed against its own SBOM dependency closure; WALA reports direct/transitive bytecode paths into a component, or an explicit incomplete/ambiguous result. It does not build the workspace or claim a vulnerable method was reached. Runs are isolated, cancellable, retryable, and capped by configurable defaults of 10 minutes and 1 GiB heap. |
 | **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below). |
-| **Upgrade paths** | Offline, from the advisory data alone: pin, upgrade, or exclude, with the exact fix version an advisory names. For a transitive dependency Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — SBOMscope drives your own `mvn` to check, ranking every major line as its own candidate rather than guessing at one winner. Each candidate lists the vulnerabilities it would still carry — not a count, since which one remains is the decision. |
+| **Upgrade paths** | Maven and npm both get offline advisory-derived upgrade/pin guidance; npm also gets a ready-to-paste `overrides` snippet. For the transitive question Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — only the Maven path drives your configured `mvn`, ranking every major line as its own candidate rather than guessing at one winner. npm and Gradle have no Tier 2 probe. |
 | **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves, within the scope of your SBOM. |
 | **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD, library cells to the artifact's registry page and version cells to that exact version. A second sheet records what was selected, so a filtered workbook can account for its own size. |
 
@@ -89,8 +109,8 @@ because it can run fully offline against locally-cached data.
 | Actively-exploited flag | [CISA KEV catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) — the whole catalogue, one file, ~1.5 MB | working |
 | Exploitation probability | [EPSS](https://www.first.org/epss/) (FIRST.org) — the whole daily score file, ~2.4 MB | working |
 | Dependency graph | The SBOM's own CycloneDX `dependencies` graph | working |
-| Workspace usage detection | Built in-house | planned |
-| Upgrade paths | Local OSV data for the offline tier; your own `mvn`, driven as an external process, for the questions offline data cannot answer | working |
+| Workspace reachability analysis | WALA 1.8.0 in an SBOMscope-owned worker JVM; existing Maven build output and a user-configured read-only Maven cache only | experimental Maven slice |
+| Upgrade paths | Local OSV data for Maven/npm Tier 1; your own `mvn`, driven as an external process, for Maven Tier 2 | Maven working; npm Tier 1 only |
 
 CVE cells link to [NVD](https://nvd.nist.gov/), but the NVD **API** is deliberately not
 used — it contributes to none of the columns shown, and the link is derivable from the
@@ -199,6 +219,12 @@ java -jar backend/target/sbomscope.jar
 ```
 
 Then open <http://localhost:8080>.
+
+The packaged server binds to `127.0.0.1` by default. This is a security boundary, not merely a
+convenience: SBOMscope has no authentication or multi-user access controls, and its API can read
+configured workspace/cache paths and manage local data. A deliberate deployment on another
+interface requires an explicit Spring Boot `server.address` override and must add its own access
+control; CORS configuration alone is not access control.
 
 Your data lives in `~/.sbomscope/` — the H2 database (`db/`), uploaded SBOM documents
 (`sboms/`), the OSV vulnerability archives (`osv-db/`), the exploitation feeds (`exploit/`),
@@ -327,10 +353,10 @@ against **Maven and npm** projects. Running it as a shared network service, and
 supporting further ecosystems, are possible later directions but explicitly out of
 scope for the first version.
 
-Deeper *call-graph* reachability analysis — proving that a vulnerable **method** is
-actually invoked, as [Eclipse Steady](https://github.com/eclipse-steady/steady) and
-[OWASP dep-scan](https://owasp.org/www-project-dep-scan/) do — is a candidate for a
-future version. Version 1 does simpler import/symbol-level usage detection.
+The available Maven workspace analysis is **component-boundary** evidence: it can show that
+compiled application bytecode reaches a library, but the local Maven OSV archive currently has no
+structured vulnerable-method data with which to narrow that path further. Vulnerable-method
+reachability, VEX and deterministic assessment remain later roadmap work.
 
 ## Documentation
 
@@ -339,6 +365,9 @@ future version. Version 1 does simpler import/symbol-level usage detection.
 - [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) — phased build plan,
   working action list, and the decision log explaining why the architecture is the way
   it is.
+- [docs/IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md](docs/IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md)
+  — detailed reachability, VEX and assessment execution plan; its handoff section names the
+  next implementation step and remaining decision gates.
 - [AGENTS.md](AGENTS.md) — conventions and constraints for AI coding agents working in
   this repository.
 

@@ -24,6 +24,13 @@ endpoint, not as an HTML parse error.
 During development the Vite dev server on :5173 proxies `/api` to :8080, so the UI can
 hot-reload against a running backend.
 
+The backend binds to `127.0.0.1` by default. Its HTTP API is intentionally unauthenticated and is
+therefore a single-user local boundary: changing settings, supplying workspace paths, starting
+processes, downloading stored SBOMs and erasing local data must not be exposed to another host by
+default. Spring external configuration can deliberately override `server.address`, but an
+operator doing so must supply the authentication/network boundary that SBOMscope does not have.
+CORS is only a browser-origin policy and is not such a boundary.
+
 ---
 
 ## Data model
@@ -73,6 +80,14 @@ epss_score               FIRST's daily exploitation probabilities (V5)
 
 epss_source              which file produced it — one row, enforced
   model_version, score_date, loaded_scores, identity, loaded_at
+
+workspace_analysis_run   one fingerprinted analysis of an attached workspace
+  id, sbom_id → sbom, input_fingerprint, status, engine, algorithm, blockers,
+  error_message, requested_at, started_at, finished_at
+
+workspace_reachability_evidence
+  id, analysis_run_id → workspace_analysis_run, purl, module_path, status,
+  method_paths, detail
 ```
 
 `osv_index` (V2) is **derived data**: rebuildable from the archive at any time, and erasing
@@ -585,6 +600,68 @@ an old configuration is worse than a re-probe) and on process restart. `POST
 
 ---
 
+## External tool contract: the workspace reachability worker (Phase 9)
+
+Each worker has an independent configurable wall-clock limit (10 minutes by default) and JVM heap
+limit (1 GiB by default). Exceeding either produces an incomplete failed run, never a negative
+reachability conclusion; Stop terminates the same SBOMscope-owned process tree.
+
+The first workspace-analysis slice is Maven-only and reads only artifacts that already exist on
+the local machine. `WorkspaceInputDiscovery` finds production `target/classes` directories and
+the exact Maven dependency JAR versions named by the SBOM in the user-configured **read-only**
+Maven cache. It never runs Maven, a workspace build, a plugin or a network request. The
+application-owned `~/.sbomscope/probe-repo` is deliberately never an input: that repository
+belongs to the Maven upgrade probe and can contain probe-specific state.
+Group, artifact and version values came from the uploaded SBOM, so discovery rejects absolute,
+separator-bearing and traversal path segments and verifies the normalized JAR path remains below
+the configured Maven cache before reading it. A rejected coordinate is a missing-input blocker,
+never a best-effort read elsewhere or a negative reachability answer.
+
+`WorkspaceReachabilityService` fingerprints those inputs, the module mappings, WALA
+version/algorithm and relevant Settings when the reader opens the Component Inspector's Workspace
+usage view. A matching completed run is reused; failed or stopped work retries implicitly, and
+startup marks abandoned durable `QUEUED`/`RUNNING` rows failed so they can retry. A changed
+fingerprint queues exactly one single-threaded analysis for that SBOM.
+
+One worker is started per mapped module. Its WALA scope contains that module's production output,
+supporting compiled workspace modules in its exact SBOM dependency closure, and only the external
+JARs in that closure. Supporting module methods are not analysis roots. Duplicate classes supplied
+by two component versions, or by a workspace output and a component JAR, make ownership ambiguous
+and therefore `NEEDS_REVIEW`; one module's call can never be attributed to another module or every
+matching version.
+
+The parent starts the same SBOMscope artifact in its internal `--reachability-worker <input.json>
+<output.json>` mode. Normal application startup is unchanged: this argument is parent-to-worker
+protocol, not a user configuration option. The worker receives only already-approved class/JAR
+paths, constructs the WALA graph internally, and writes bounded per-component coverage plus at
+most ten representative paths. The full edge graph never enters the parent JVM, and the parent
+rejects an output file above 16 MiB before deserializing it.
+
+The worker's resource cap also has a bounded parent side. Reflection-marker inspection streams at
+most 16 MiB from any class file and treats a larger/unreadable file as a conservative completeness
+blocker. Worker stdout is discarded; stderr is continuously drained so the child cannot block but
+only the first 64 KiB is retained, with an explicit truncation marker. The failure surfaced by the
+API reads at most 8 KiB from that already-bounded file.
+
+The worker process tree is owned by SBOMscope, shown through `GET /api/workspace-analyses`, and
+stopped through `DELETE /api/workspace-analyses/{id}`. Stop never targets a user build, Maven
+probe or the server. The parent also enforces the Settings-configurable wall-clock ceiling (10
+minutes by default; 1–60 allowed). A user Stop persists `STOPPED`; a time limit or engine error
+persists `FAILED`. Temporary request/output/stderr files live beneath SBOMscope's data directory
+and are removed best-effort after the worker exits.
+
+The persisted evidence is per SBOM/run/module, never attached to the shared vulnerability finding
+cache. Module mappings, every evidence row and the final `COMPLETED` state commit atomically;
+`COMPLETED` is written last. Cancellation and completion are serialized so a late worker cannot
+overwrite `STOPPED`. Exact coverage determines `REACHABLE` independently of the bounded path
+display, so a positive result remains positive even when no representative route fits the search
+limits. A negative answer is withheld whenever an input, module mapping, Spring/AOP or reflection
+completeness condition is not met. The Maven OSV archive currently lacks structured
+vulnerable-method data, so this slice never presents a component path as proof that a particular
+advisory's vulnerable function executes.
+
+---
+
 ## The OSV database
 
 Public OSV.dev data, downloaded per ecosystem on explicit request only:
@@ -849,3 +926,10 @@ a path the user supplies and never one SBOMscope downloads, off by default since
 real external process that can take real wall-clock time. Changing any of it publishes
 `MavenSettingsChangedEvent`, which clears both `BumpProbeService.progressByKey` (a cached
 answer against an old configuration is worse than a re-probe) and `EffectivePomCache`.
+
+`WorkspaceAnalysisSettings` carries `mavenLocalRepository`, `maxRunMinutes` and
+`maxHeapMegabytes`. The former
+defaults to the user's `~/.m2/repository`, is visibly **read-only**, and is separate from the
+app-owned Maven probe repository. Runtime defaults to 10 minutes (1–60 allowed), and worker heap
+defaults to 1 GiB (256 MiB–8 GiB allowed). Both are parent-enforced boundaries on isolated WALA
+workers, not settings passed to a user build or Maven process.

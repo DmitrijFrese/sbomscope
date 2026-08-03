@@ -170,6 +170,40 @@ export function fetchComponentDetail(sbomId: string, purl: string): Promise<Comp
   );
 }
 
+export type WorkspaceAnalysisState = 'NOT_CONFIGURED' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'STOPPED' | 'FAILED';
+export type WorkspaceEvidenceStatus = 'REACHABLE' | 'NO_CALL_PATH' | 'NEEDS_REVIEW' | 'UNAVAILABLE';
+
+/** One conservative answer for a component in one built workspace module. */
+export interface WorkspaceReachabilityEvidence {
+  purl: string;
+  modulePath: string | null;
+  status: WorkspaceEvidenceStatus;
+  /** WALA-observed bytecode routes, capped at ten per module. */
+  methodPaths: string[][];
+  reachableMethodCount: number;
+  directMethodCount: number;
+  displayedPathCount: number;
+  detail: string;
+}
+
+/** An Inspector request may enqueue a local run; it never builds the attached workspace. */
+export interface WorkspaceComponentAnalysis {
+  state: WorkspaceAnalysisState;
+  requestedAt: string | null;
+  finishedAt: string | null;
+  message: string;
+  evidence: WorkspaceReachabilityEvidence[];
+}
+
+export function fetchWorkspaceComponentAnalysis(
+  sbomId: string,
+  purl: string,
+): Promise<WorkspaceComponentAnalysis> {
+  return request<WorkspaceComponentAnalysis>(
+    `/sboms/${sbomId}/component/workspace?purl=${encodeURIComponent(purl)}`,
+  );
+}
+
 /** A component as the dependency graph refers to it — enough to render and open a step. */
 export interface GraphNode {
   bomRef: string;
@@ -478,6 +512,33 @@ export function saveMavenSettings(settings: MavenSettings): Promise<MavenSetting
 
 export function testMaven(): Promise<MavenTestResult> {
   return request<MavenTestResult>('/settings/maven/test', { method: 'POST' });
+}
+
+// --- Workspace reachability inputs (Phase 9) --------------------------------
+
+/**
+ * A user-owned Maven cache that reachability may inspect. It is intentionally separate from
+ * MavenSettings: bump probes can mutate their isolated app-owned cache, while reachability must
+ * only read artifacts a normal build has already resolved.
+ */
+export interface WorkspaceAnalysisSettings {
+  mavenLocalRepository: string;
+  maxRunMinutes: number;
+  maxHeapMegabytes: number;
+}
+
+export function fetchWorkspaceAnalysisSettings(): Promise<WorkspaceAnalysisSettings> {
+  return request<WorkspaceAnalysisSettings>('/settings/workspace-analysis');
+}
+
+export function saveWorkspaceAnalysisSettings(
+  settings: WorkspaceAnalysisSettings,
+): Promise<WorkspaceAnalysisSettings> {
+  return request<WorkspaceAnalysisSettings>('/settings/workspace-analysis', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
 }
 
 /**
@@ -1135,4 +1196,22 @@ export function fetchProbeQueue(): Promise<ProbeTask[]> {
 /** Stops a probe, running or queued. Settled rows survive; Continue resumes the search. */
 export function cancelProbe(id: string): Promise<void> {
   return request<void>(`/probes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export interface WorkspaceAnalysisTask {
+  id: string;
+  sbomId: string;
+  workspacePath: string;
+  state: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'STOPPED' | 'FAILED';
+  submittedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export function fetchWorkspaceAnalysisTasks(): Promise<WorkspaceAnalysisTask[]> {
+  return request<WorkspaceAnalysisTask[]>('/workspace-analyses');
+}
+
+export function cancelWorkspaceAnalysis(id: string): Promise<void> {
+  return request<void>(`/workspace-analyses/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

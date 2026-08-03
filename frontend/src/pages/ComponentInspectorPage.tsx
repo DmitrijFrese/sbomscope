@@ -6,6 +6,7 @@ import type { ComponentDetail, FindingRow } from '../api/client';
 import { ComponentFinder } from '../components/ComponentFinder';
 import { DependencyGraphPanel } from '../components/DependencyGraphPanel';
 import { UpgradePathsPanel } from '../components/UpgradePathsPanel';
+import { WorkspaceUsagePanel } from '../components/WorkspaceUsagePanel';
 import { describePurl, shortNameOf } from '../components/purl';
 import {
   EpssCell,
@@ -555,7 +556,11 @@ export function ComponentInspectorPage() {
                   <UpgradePathsPanel sbomId={selected.id} purl={purl} />
                 )}
 
-                {tab === 'workspace' && (
+                {tab === 'workspace' && purl && (
+                  <WorkspaceUsagePanel sbomId={selected.id} purl={purl} />
+                )}
+
+                {tab === 'workspace' && !purl && (
                   <Planned>
                     {selected.workspacePath
                       ? 'Not built yet. Will show where this library is referenced in your source tree.'

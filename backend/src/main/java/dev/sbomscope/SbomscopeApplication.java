@@ -3,6 +3,8 @@ package dev.sbomscope;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+import dev.sbomscope.reachability.ReachabilityWorkerMain;
+
 /**
  * Entry point for the local SBOMscope server.
  *
@@ -14,6 +16,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class SbomscopeApplication {
 
     public static void main(String[] args) {
+        if (ReachabilityWorkerMain.handles(args)) {
+            ReachabilityWorkerMain.run(args);
+            return;
+        }
         SpringApplication.run(SbomscopeApplication.class, args);
     }
 }

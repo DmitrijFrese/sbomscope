@@ -74,6 +74,15 @@
       <version>${poi.version}</version>
     </dependency>
 
+    <!-- Phase 9 call graph engine. A SBOMscope-owned worker reads workspace bytecode and
+         dependency JARs; it does not execute an attached workspace, invoke Maven or use the probe repository.
+         Its EPL-2.0 and transitive notices are recorded in THIRD_PARTY_NOTICES.md. -->
+    <dependency>
+      <groupId>com.ibm.wala</groupId>
+      <artifactId>com.ibm.wala.core</artifactId>
+      <version>${wala.version}</version>
+    </dependency>
+
     <!-- Contributes the built UI to the classpath under META-INF/resources. -->
     <dependency>
       <groupId>dev.sbomscope</groupId>
@@ -85,6 +94,15 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
+      <!-- WALA provides the current org.json implementation. jsonassert's transitive Android
+           compatibility copy contains the same classes and only causes a duplicate-class warning
+           in Spring tests; keep one implementation on both the test and runtime classpaths. -->
+      <exclusions>
+        <exclusion>
+          <groupId>com.vaadin.external.google</groupId>
+          <artifactId>android-json</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
 
     <!-- MockMvc support is its own module in Spring Boot 4; the general test starter

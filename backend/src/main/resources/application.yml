@@ -36,6 +36,9 @@ sbomscope:
   probe-repository: ${sbomscope.data-directory:${user.home}/.sbomscope}/probe-repo
 
 server:
+  # SBOMscope has no authentication or multi-user security boundary. Keep the
+  # source-built server local unless the operator deliberately overrides this.
+  address: 127.0.0.1
   port: 8080
 
 logging:

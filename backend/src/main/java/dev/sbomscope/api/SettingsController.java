@@ -24,6 +24,7 @@ import dev.sbomscope.settings.ExportSettings;
 import dev.sbomscope.settings.MavenToolSettings;
 import dev.sbomscope.settings.ScannerSettings;
 import dev.sbomscope.settings.SettingsService;
+import dev.sbomscope.settings.WorkspaceAnalysisSettings;
 
 @RestController
 @RequestMapping("/api/settings")
@@ -232,5 +233,31 @@ class SettingsController {
         } catch (MavenProbeException e) {
             return new MavenTestResult(false, version, null, e.getMessage());
         }
+    }
+
+    // --- Workspace reachability inputs (Phase 9) ------------------------------------------
+
+    record WorkspaceAnalysisSettingsPayload(String mavenLocalRepository, int maxRunMinutes, int maxHeapMegabytes) {
+
+        WorkspaceAnalysisSettings toDomain() {
+            return new WorkspaceAnalysisSettings(mavenLocalRepository, maxRunMinutes, maxHeapMegabytes);
+        }
+
+        static WorkspaceAnalysisSettingsPayload from(WorkspaceAnalysisSettings domain) {
+            return new WorkspaceAnalysisSettingsPayload(
+                    domain.mavenLocalRepository(), domain.maxRunMinutes(), domain.maxHeapMegabytes());
+        }
+    }
+
+    @GetMapping("/workspace-analysis")
+    WorkspaceAnalysisSettingsPayload workspaceAnalysisSettings() {
+        return WorkspaceAnalysisSettingsPayload.from(settings.workspaceAnalysisSettings());
+    }
+
+    @PutMapping("/workspace-analysis")
+    WorkspaceAnalysisSettingsPayload updateWorkspaceAnalysisSettings(
+            @RequestBody WorkspaceAnalysisSettingsPayload payload) {
+        return WorkspaceAnalysisSettingsPayload.from(
+                settings.updateWorkspaceAnalysisSettings(payload.toDomain()));
     }
 }

@@ -44,6 +44,8 @@ import dev.sbomscope.scanner.ScanService;
 import dev.sbomscope.scanner.UpgradeAdvice;
 import dev.sbomscope.scanner.UpgradeAdviceService;
 import dev.sbomscope.settings.SettingsService;
+import dev.sbomscope.reachability.WorkspaceComponentAnalysis;
+import dev.sbomscope.reachability.WorkspaceReachabilityService;
 
 @RestController
 @RequestMapping("/api/sboms")
@@ -57,10 +59,12 @@ class SbomController {
     private final UpgradeAdviceService advice;
     private final BumpProbeService bumpProbes;
     private final SettingsService settings;
+    private final WorkspaceReachabilityService workspaceReachability;
 
     SbomController(SbomService service, ScanService scans, AutomaticScanner autoScans,
                    SbomFileStore files, DependencyGraphService graphs, UpgradeAdviceService advice,
-                   BumpProbeService bumpProbes, SettingsService settings) {
+                   BumpProbeService bumpProbes, SettingsService settings,
+                   WorkspaceReachabilityService workspaceReachability) {
         this.service = service;
         this.scans = scans;
         this.autoScans = autoScans;
@@ -69,6 +73,7 @@ class SbomController {
         this.advice = advice;
         this.bumpProbes = bumpProbes;
         this.settings = settings;
+        this.workspaceReachability = workspaceReachability;
     }
 
     record SbomResponse(
@@ -322,6 +327,22 @@ class SbomController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
         }
         return graphs.graphFor(id, purl, scans.vulnerablePurls(id));
+    }
+
+    /**
+     * Bytecode-use evidence for this component, requested only when the Inspector's Workspace
+     * usage tab is opened. It may enqueue an offline analysis of already-built classes, but it
+     * never builds the workspace, invokes Maven, or reads SBOMscope's probe repository.
+     */
+    @GetMapping("/{id}/component/workspace")
+    WorkspaceComponentAnalysis workspaceUsage(@PathVariable UUID id, @RequestParam("purl") String purl) {
+        if (service.findById(id).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
+        }
+        service.findComponentByPurl(id, purl)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "That component is not in this SBOM"));
+        return workspaceReachability.inspect(id, purl);
     }
 
     /**

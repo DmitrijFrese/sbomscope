@@ -82,6 +82,26 @@ class SbomControllerTest {
     }
 
     @Test
+    void workspaceEvidenceExplainsWhenNoWorkspaceWasAttached() throws Exception {
+        MockMvc mvc = mockMvc();
+        String id = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(multipart("/api/sboms").file(fixture("npm-frontend.cdx.json")))
+                        .andExpect(status().isCreated())
+                        .andReturn().getResponse().getContentAsString(),
+                "$.id");
+        String purl = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(get("/api/sboms/" + id + "/components"))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString(),
+                "$[0].purl");
+
+        mvc.perform(get("/api/sboms/" + id + "/component/workspace").param("purl", purl))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("NOT_CONFIGURED"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("without a workspace")));
+    }
+
+    @Test
     void rejectsAFileThatIsNotAnSbom() throws Exception {
         mockMvc().perform(multipart("/api/sboms").file(file("notes.json", "{\"hello\":\"world\"}")))
                 .andExpect(status().isBadRequest())

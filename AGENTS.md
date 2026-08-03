@@ -16,6 +16,7 @@ Start here, in this order:
 | **This file** | Constraints you must not break, conventions, and the working loop |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, key flows, and the osv-scanner and Maven-probe contracts |
 | [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) | What is built, what is next, and the decision log explaining why |
+| [docs/IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md](docs/IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md) | Detailed handoff and execution plan for reachability, VEX and assessment |
 
 The decision log is the important one. Several designs in this codebase look
 unnecessarily careful until you read why they are that way; it also records reversals,
@@ -45,6 +46,10 @@ so a rejected idea does not get re-proposed.
 - **Upgrade paths, Tier 2**: for a question the offline OSV data cannot answer, the user's
   own `mvn` is invoked as an external process (never downloaded) to resolve a real
   dependency tree. See "External tool contract: the Maven probe" in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- **Workspace reachability**: WALA 1.8.0 runs inside a separate SBOMscope-owned worker JVM,
+  reading existing Maven production classes and dependency JARs only. It never builds the
+  workspace. See "External tool contract: the workspace reachability worker" in
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Hard constraints
@@ -133,6 +138,10 @@ raising it with the maintainer first.
    and every transitive dependency is a vulnerability someone has to triage. Justify new
    dependencies; prefer the standard library or a few lines of our own code over a
    library that solves a problem we only partly have.
+10. **Keep the unauthenticated server on loopback by default.** SBOMscope's API can accept
+    workspace paths, start local processes, return stored documents and erase local data. The
+    committed `server.address` therefore stays `127.0.0.1`. A deliberate external bind is an
+    operator override that needs its own authentication/network boundary; CORS is not one.
 
 ## Working agreement
 
@@ -202,6 +211,7 @@ backend/                Spring Boot application, produces the runnable jar
     exploit/            CISA KEV and FIRST EPSS (Phase 3): the two bulk feeds, their loaders
                         and ExploitSignals, joined onto a finding by CVE — see ARCHITECTURE.md
     probe/              the Maven probe (Phase 8 Tier 2) — see ARCHITECTURE.md
+    reachability/       module-scoped WALA discovery, worker process, evidence and persistence
     settings/           user-editable settings
     logging/            the activity log (~/.sbomscope/logs/activity.jsonl) and the
                         bounded, rotation-safe tails the Monitoring page reads
@@ -213,6 +223,7 @@ backend/                Spring Boot application, produces the runnable jar
   src/test/resources/exploit/   real excerpts of the KEV and EPSS feeds
 docs/ARCHITECTURE.md    data model, flows, external tool contract
 docs/IMPLEMENTATION-PLAN.md  roadmap, risks, decision log
+docs/IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md  reachability/VEX/assessment handoff
 ```
 
 ## Working loop

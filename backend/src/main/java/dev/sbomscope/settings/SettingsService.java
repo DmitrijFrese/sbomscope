@@ -26,11 +26,15 @@ public class SettingsService {
     static final String MAVEN_PROFILES = "maven.profiles";
     static final String MAVEN_DEPENDENCY_PLUGIN_VERSION = "maven.dependencyPluginVersion";
     static final String MAVEN_HELP_PLUGIN_VERSION = "maven.helpPluginVersion";
+    static final String WORKSPACE_MAVEN_LOCAL_REPOSITORY = "workspace.mavenLocalRepository";
+    static final String WORKSPACE_MAX_RUN_MINUTES = "workspace.maxRunMinutes";
+    static final String WORKSPACE_MAX_HEAP_MEGABYTES = "workspace.maxHeapMegabytes";
 
     private final SettingsRepository repository;
     private final ActivityLogger activityLog;
     private final ApplicationEventPublisher events;
     private final String defaultDatabaseDirectory;
+    private final String defaultMavenLocalRepository;
 
     SettingsService(SettingsRepository repository, ActivityLogger activityLog,
                      ApplicationEventPublisher events,
@@ -40,6 +44,8 @@ public class SettingsService {
         this.activityLog = activityLog;
         this.events = events;
         this.defaultDatabaseDirectory = Path.of(dataDirectory, "osv-db").toString();
+        this.defaultMavenLocalRepository = Path.of(System.getProperty("user.home"), ".m2", "repository")
+                .toString();
     }
 
     public ScannerSettings scannerSettings() {
@@ -107,6 +113,59 @@ public class SettingsService {
                         .orElse(MavenToolSettings.DEFAULT_DEPENDENCY_PLUGIN_VERSION),
                 repository.find(MAVEN_HELP_PLUGIN_VERSION).filter(value -> !value.isBlank())
                         .orElse(MavenToolSettings.DEFAULT_HELP_PLUGIN_VERSION));
+    }
+
+    /**
+     * Separate from {@link #mavenSettings()} because this directory belongs to the user's normal
+     * builds and is never used as the probe's cache.
+     */
+    public WorkspaceAnalysisSettings workspaceAnalysisSettings() {
+        return new WorkspaceAnalysisSettings(
+                repository.find(WORKSPACE_MAVEN_LOCAL_REPOSITORY)
+                        .filter(value -> !value.isBlank())
+                        .orElse(defaultMavenLocalRepository),
+                repository.find(WORKSPACE_MAX_RUN_MINUTES).map(Integer::parseInt)
+                        .orElse(WorkspaceAnalysisSettings.DEFAULT_MAX_RUN_MINUTES),
+                repository.find(WORKSPACE_MAX_HEAP_MEGABYTES).map(Integer::parseInt)
+                        .orElse(WorkspaceAnalysisSettings.DEFAULT_MAX_HEAP_MEGABYTES));
+    }
+
+    @Transactional
+    public WorkspaceAnalysisSettings updateWorkspaceAnalysisSettings(WorkspaceAnalysisSettings requested) {
+        String localRepository = normalisePath(requested.mavenLocalRepository(), "Maven local repository");
+        if (localRepository == null) {
+            localRepository = defaultMavenLocalRepository;
+        }
+
+        // This setting never gives SBOMscope permission to mutate the directory. Verify only
+        // enough to give a useful configuration error now, rather than emitting a later
+        // misleading "not reached" from an unavailable classpath.
+        Path repositoryPath = Path.of(localRepository);
+        if (!Files.exists(repositoryPath)) {
+            throw new IllegalArgumentException("No directory at " + localRepository);
+        }
+        if (!Files.isDirectory(repositoryPath)) {
+            throw new IllegalArgumentException("Maven local repository must be a directory: " + localRepository);
+        }
+        if (!Files.isReadable(repositoryPath)) {
+            throw new IllegalArgumentException("Maven local repository is not readable: " + localRepository);
+        }
+        if (requested.maxRunMinutes() < WorkspaceAnalysisSettings.MIN_MAX_RUN_MINUTES
+                || requested.maxRunMinutes() > WorkspaceAnalysisSettings.MAX_MAX_RUN_MINUTES) {
+            throw new IllegalArgumentException("Workspace analysis limit must be between 1 and 60 minutes.");
+        }
+        if (requested.maxHeapMegabytes() < WorkspaceAnalysisSettings.MIN_MAX_HEAP_MEGABYTES
+                || requested.maxHeapMegabytes() > WorkspaceAnalysisSettings.MAX_MAX_HEAP_MEGABYTES) {
+            throw new IllegalArgumentException("Workspace analysis heap limit must be between 256 and 8192 MB.");
+        }
+
+        repository.put(WORKSPACE_MAVEN_LOCAL_REPOSITORY, localRepository);
+        repository.put(WORKSPACE_MAX_RUN_MINUTES, Integer.toString(requested.maxRunMinutes()));
+        repository.put(WORKSPACE_MAX_HEAP_MEGABYTES, Integer.toString(requested.maxHeapMegabytes()));
+        activityLog.record(ActivityLogger.Category.DATA, "SETTINGS_CHANGED",
+                "workspace analysis: settings changed (read-only Maven cache; %d-minute, %d MB limits)"
+                        .formatted(requested.maxRunMinutes(), requested.maxHeapMegabytes()));
+        return workspaceAnalysisSettings();
     }
 
     @Transactional

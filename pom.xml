@@ -49,6 +49,9 @@
          Keep the narrow patch override here until the Boot BOM moves to 3.1.5 or newer. -->
     <jackson-databind.version>3.1.5</jackson-databind.version>
     <poi.version>5.5.1</poi.version>
+    <!-- Selected for Phase 9 after a local four-case call-graph spike. Keep direct so the
+         analyzer version is visible, pinned and present in SBOMscope's own SBOM. -->
+    <wala.version>1.8.0</wala.version>
   </properties>
 
   <dependencyManagement>

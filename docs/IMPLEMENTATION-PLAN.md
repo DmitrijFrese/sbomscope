@@ -6,12 +6,18 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-08-02 · Status: **Phases 0–8 complete except blocker identification. Phase 8 Tier 1 complete; Tier 2
-passes A–D built and verified against a real `mvn`, plus the configurable probe budget,
+Last updated: 2026-08-03 · Status: **Phases 0–7 complete. Phase 8 is complete for the Maven
+build-tool path and has its offline Tier 1 for npm; npm and Gradle Tier 2 are not built.**
+Maven's Tier 2 passes A–D are built and verified against a real `mvn`, plus the configurable probe budget,
 Maven profiles, configurable plugin versions, queued-vs-running status, full `mvn` command and
 output logging, continuable searches, and honest reporting of a budget-truncated major. One
 known limitation is now closed rather than carried as a design question: the isolated probe
 repository cannot work on a fully air-gapped machine, and reports that honestly.
+
+Phase 8 still has worthwhile ranking, blocker-identification, npm build-tool probing and
+table-integration follow-ups. They do not prevent the Maven Inspector from answering its upgrade
+question and do not block Phase 9. The optional workspace attachment that Phase 9 needs and the
+single-jar packaging baseline from Phase 10 are already built.
 
 **B-items built: B0, B1, B1a, B2, B3, B4, B5, B6, B7, B8, B9, B12, B13, B14**, with B13's
 application icon, B14's exact per-module route completeness, and B12's completed purge surface.
@@ -36,17 +42,22 @@ decisions, built and verified against both real feeds. Two additive migrations (
 `dev.sbomscope.exploit` package, two columns in the table and the Inspector, an "Exploitation
 signals" Settings panel with a Load control for a file carried across by hand, and both feeds on
 the Excel About sheet. **The frontend has unit tests for the first time** (Vitest + jsdom +
-Testing Library, 25), added on the maintainer's instruction after a formatter bug rendered a
+Testing Library, 26), added on the maintainer's instruction after a formatter bug rendered a
 probability of 0.99945 as "100%".
 
-**Where the schema stands: V5 is the highest migration taken.** V1 baseline, V2 `osv_index`,
-V3 `fixed_version_sort`, V4 `kev_entry`/`kev_source`, V5 `epss_score`/`epss_source`. Additive
-only, per constraint 8.
+**Where the schema stands: V8 is the highest migration taken.** V1 baseline, V2 `osv_index`,
+V3 `fixed_version_sort`, V4 `kev_entry`/`kev_source`, V5 `epss_score`/`epss_source`, and V6–V8
+workspace reachability runs, stopped state, module mappings and coverage. Additive only, per
+constraint 8.
 
 README, AGENTS.md and ARCHITECTURE were brought back in step with all of it on 2026-08-01.
 
-Next: **Phase 9 (workspace usage detection)**. B13, B14 and B12 were completed in that order on
-2026-08-02. B10 and B11 were dropped on the same date.
+Next: **Phase 11 Tier A (VEX consumption)**. Phase 9 now provides evidence-graded direct and
+transitive Maven/JVM call analysis. VEX follows
+as independent supplier context; container-image scanning follows the workspace work and begins
+with a design gate rather than silently expanding the project's ecosystem and engine contracts.
+B13, B14 and B12 were completed in that order on 2026-08-02. B10 and B11 were dropped on the
+same date.
 
 ---
 
@@ -62,14 +73,15 @@ Next: **Phase 9 (workspace usage detection)**. B13, B14 and B12 were completed i
 | 5 | Excel export | **Done** |
 | 6 | Component Inspector: the shell | **Done** |
 | 7 | Dependency graph | **Done** |
-| 8 | Upgrade paths | **Done except blocker identification** |
-| 9 | Workspace usage detection | Not started |
-| 10 | Packaging and distribution | Not started |
-| 11 | VEX — read a supplier's "not affected" | Not started |
+| 8 | Upgrade paths | **Maven/mvn done; npm Tier 1 done**; npm/Gradle Tier 2 and ranking/blocker follow-ups retained |
+| 9 | Workspace reachability analysis | **Maven/JVM component-boundary MVP done**; vulnerable-method data remains deferred |
+| 10 | Packaging and distribution | Baseline done; samples/quickstart remain |
+| 11 | VEX — read supplier exploitability and mitigation context | Planned after Phase 9 |
+| 12 | Container image scanning | Planned after workspace analysis and VEX; design gate first |
 
 Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
 Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
-usage all survive with their scope intact, re-homed and reordered.
+reachability all survive with their scope intact, re-homed and reordered.
 
 ---
 
@@ -422,7 +434,7 @@ Goal: the main table, complete and usable.
 
 - [x] Findings table with the columns available today — Component, Version, Advisory,
       Severity, Fixed in, Published. EPSS and Known Exploited arrive with Phase 3,
-      Recommended upgrade with Phase 8, Workspace usage with Phase 7
+      Recommended upgrade with the Phase 8 follow-up, Workspace reachability with Phase 9
 - [x] CVE cells link to NVD; advisory cells link to osv.dev when there is no CVE
 - [x] Sort by component or severity, ascending or descending, from the column headers
 - [x] Severity band filter: Critical / High / Medium / Low / **Unscored** / **No
@@ -596,7 +608,7 @@ The reason is availability, not importance: **the edges are already in the datab
 `component_dependency` is populated at import, the parser already collapses repeated edges
 and drops self-edges, and `ScopeClassifier` already distinguishes the application from its
 dependencies. This panel needs no new external data, no network, and no unresolved design
-question — where Phase 8 is blocked on R4.
+question — where Phase 8 was still blocked on R4 when this order was chosen. R4 is resolved now.
 
 **Rendering decided 2026-07-29: paths upward, a tree downward.** The two directions are
 different questions and a single visualisation serves one of them badly.
@@ -660,7 +672,7 @@ So the panel is about **remedies**, and the version is one input to them.
 | **Upgrade it** | You declare it — `DIRECT` scope | The fixed version. Already known |
 | **Pin it** | You do not declare it, but can force a version anyway: Maven `dependencyManagement`, npm `overrides`, Gradle constraints | The fixed version. Already known |
 | **Bump what pulls it in** | A newer version of the declaring ancestor already ships the fix | That ancestor's dependencies *at candidate versions* — not in the SBOM, not in OSV |
-| **Exclude it** | Your code does not use it at all | Workspace usage (Phase 9). Never recommend without it |
+| **Exclude it** | No route into it is found and removal can be verified | Workspace reachability (Phase 9). Never recommend from a text match alone |
 
 Pinning is the quiet discovery here. It is precise, it is a copy-pasteable snippet, it works
 regardless of what the ancestor does, and **it needs nothing SBOMscope does not already
@@ -766,6 +778,15 @@ against B, which is the actual next action and something nothing else in the too
 **Designed 2026-07-29. No external API is called; SBOMscope drives a tool the user
 configures.** Maven first; Gradle and npm are the same shape with different probe scripts.
 
+**Current ecosystem coverage is deliberately uneven and must stay visible.** Maven builds that
+can be modeled through the user's configured `mvn` have this complete Tier 2 probe; a Gradle
+project may emit the same Maven purls but has no Gradle adapter. npm has Tier 1 advisory fixes and
+ready-to-paste `overrides`, but no npm probe for real release enumeration or resolved ancestor
+upgrades. Rust, Go, Python, .NET and other ecosystems are not currently supported by SBOMscope at
+all under hard constraint 7; the fact that OSV or osv-scanner covers them does not make them
+product features here. Each future ecosystem needs its own configured build/package-tool adapter
+and verification contract.
+
 Configured exactly as the scanner is: user-supplied path, a Test button, unavailable rather
 than broken when absent.
 
@@ -856,6 +877,12 @@ never learns them.
 - [x] Per remedy: exact routes fixed of routes total, independently of the ten-route display
       cap, plus whether the result is complete, partial or unaffected in each module. B14 adds
       the uncapped per-declaration count and renders its scope explicitly
+
+### Phase 8 follow-ups — valuable, not completion blockers
+
+The upgrade panel already names an actionable declaring dependency, pin and verified bump where
+one exists. The remaining items improve ranking and diagnosis; they no longer hold Phase 9 back.
+
 - [ ] Compare change size on the artifact *you* edit, and distinguish an upstream release from
       a constraint you maintain, when ranking otherwise-complete remedies
 - [ ] Where no candidate resolves it, name the component in the chain that is holding it —
@@ -1177,31 +1204,21 @@ reasoning worth showing.
       a native folder from an `http://` page — **and**, per B6, an "Open folder" button that
       drives `java.awt.Desktop` from the backend, hidden (not shown-and-failing) when
       unsupported
-  - [ ] Real version lists per component, cached per purl with a last-fetched timestamp
-  - [ ] The four candidates above, properly
-  - [ ] Whether a newer declaring ancestor ships the fix — the one remedy that cannot be
-        computed offline at all
-  - [ ] **A configurable base URL per ecosystem, defaulting to the public registry.** The
-        organisations this product is for do not let a developer machine reach Maven Central
-        directly; they run a Nexus or Artifactory mirror, and that mirror already holds the
-        metadata this needs. Pointing at it makes the feature work *without leaving the
-        network at all* — which turns the disclosure objection off entirely and is likely
-        the difference between this tier being usable in a locked-down environment and being
-        switched off there permanently. Canonical metadata paths, not search APIs:
-        `maven-metadata.xml` and the npm packument, both of which a mirror proxies verbatim
-  - [ ] Every number traceable to the source that produced it, and to when
+
+The **Maven portion** of the earlier direct-registry lookup list is **closed as superseded**.
+The Maven probe now obtains real versions and resolved ancestor trees through the user's own
+configured build tool, mirror and credentials. Adding a second Maven-registry client owned by
+SBOMscope would duplicate that path and cross the dependency-specific network boundary in
+constraint 1. This does **not** close npm Tier 2 and says nothing about Rust, Go, Python, .NET or
+other unsupported ecosystems; their tool integrations do not exist yet.
 
 ### The recommendation
 
-- [ ] **Route completeness — needs no build tool, and should land first.** From the Phase 7
-      graph: how many routes reach this component, and how many a given remedy would fix. A
-      pin fixes all of them by construction; a bump fixes only those through the dependency
-      bumped. The panel already recommends a pin but never says *why* it is the complete
-      answer, and that reasoning is computable offline today. **Specified in full as
-      [B14](#b14--route-completeness-per-module--built-2026-08-02) — read that
-      rather than this line**, which understates it: the work is per-module, three of the four
-      remedies need a proof stated rather than a number counted, and the mixed direct/transitive
-      case currently produces a false statement
+- [x] **Route completeness.** The Phase 7 graph now reports how many routes reach this
+      component and how many a remedy fixes, independently of the ten-route presentation cap.
+      A pin fixes all of them by construction; a bump fixes only those through the declaration
+      bumped. **Specified and verified in full as
+      [B14](#b14--route-completeness-per-module--built-2026-08-02).**
 - [x] One suggested remedy, alongside the alternatives — not a bare verdict. The reasoning is
       deliberately shallow: declare it and there is a version to change, do not and a pin is
       the precise answer. Anything cleverer would be guessing at a project's appetite for
@@ -1209,69 +1226,165 @@ reasoning worth showing.
 - [x] It states its inputs, and degrades to "not enough information" rather than guessing.
       This project has already shipped one confident wrong upgrade target and does not intend
       to ship a second
-- [x] **Never recommend an exclusion without usage data.** Listed as an option with its
-      caveat until Phase 9 can say the library is genuinely unreferenced
+- [x] **Never recommend an exclusion without reachability evidence.** Listed as an option with
+      its caveat until Phase 9 can show no route in a sufficiently complete analysis; even then
+      it is a candidate whose removal must be verified by rebuilding and regenerating the SBOM
 - [x] Unavailable remedies are shown dimmed with their reason rather than hidden. "You do not
       declare this dependency" is the part that explains why the obvious remedy is the wrong
       one, and a reader who cannot see the option cannot learn it
 - [x] Advisories cleared and left, per remedy — left meaning "names no fix at all", which is
       a real state rather than missing data
-- [ ] The rest of the metrics: version distance (patch / minor / major, as a proxy for how
+- [ ] **Phase 8 follow-up:** the rest of the metrics: version distance (patch / minor / major, as a proxy for how
       likely it is to break something) and which data source each answer rests on. Distance
       needs Tier 1b to mean anything, since without it there is only one candidate
-- [ ] Populate the Recommended upgrade column in the findings table from the same source, so
+- [ ] **Phase 8 follow-up:** populate the Recommended upgrade column in the findings table from the same source, so
       the table and the Inspector cannot disagree
 - [x] Application-scoped components are excluded: they are your own modules, and there is no
       version to upgrade to
 
 **Done when**: a transitive vulnerable library names who pulls it in, what to pin it to, and
-what that leaves behind — offline. With lookups enabled it also names the versions that
-exist and whether a newer parent would do the job.
+what that leaves behind — offline — and, when the user's configured Maven is available, whether
+a newer parent resolves the whole route set cleanly. **Met.** The ranking and blocker details
+above remain useful follow-ups rather than a reason to delay workspace reachability.
 
-## Phase 9 — Workspace usage detection
+## Phase 9 — Workspace reachability analysis
 
-Goal: is this vulnerable library actually used in my source?
+Goal: for each vulnerable component, show the strongest defensible evidence that application
+code can — or cannot currently be shown to — reach the component or the vulnerable code inside
+it.
 
-Deliberately last of the three. It is the only panel needing an input the user may not have
-given us, the only one whose correctness rests on a heuristic (R2), and the one whose answer
-is advisory rather than decisive — a library you do not import today can still be reachable
-tomorrow. Valuable, but not what the screen stands or falls on.
+Detailed execution plan: [Workspace-Based Vulnerability Evidence](IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md).
+That document is the source of truth for the engine spike, evidence vocabulary, VEX integration
+and the deterministic Actionable/Review/Deferrable/Resolved/Unassessed assessment lanes.
 
-- [ ] Attach an optional workspace path to an SBOM (validate it exists and is readable)
-- [ ] Map a component to the source-level identifiers it would appear as — Java package
-      names for Maven coordinates, module specifiers for npm packages. **This mapping is
-      the crux of the feature and needs design work; see R2.**
-- [ ] Source scanning honouring ignore rules (`.gitignore`, `node_modules`, `target`,
-      `build`, `dist`)
-- [ ] Per-component result: total hit count + affected files with fully-qualified paths
-- [ ] **A results surface, not a file browser.** Every match in the workspace listed
-      together and grouped by file, each hit rendered in place with the lines around it
-      (±5) and language-aware syntax highlighting, so the whole result can be read top to
-      bottom without opening anything. Selecting a hit expands its context; the
-      fully-qualified path stays visible and copyable, since the next step is usually to
-      open it in an editor
-- [ ] Feed usage status back into the vulnerability table's Workspace usage column
-      (Used / Not found / Not analyzed)
-- [ ] Scan performance on a large repository — keep the UI responsive, allow cancelling
+This is **SCA reachability analysis** at the product level and **vulnerability reachability
+analysis** when an advisory identifies vulnerable methods or functions. “Workspace reachability”
+is the phase name because it includes both cases and says where the evidence comes from.
 
-**Done when**: pointing at a real repository correctly distinguishes a library that is
-imported in source from one that is only present transitively.
+The old source-text plan was too shallow for the user decision this panel needs to support.
+An import proves at most that a type is referenced; it does not show that a vulnerable method is
+called. Conversely, a framework callback, reflective load, serializer or service provider can be
+used without an obvious import. Phase 9 therefore builds an evidence chain rather than turning a
+text match into a verdict.
 
-## Phase 10 — Packaging
+### Evidence model first
 
-- [ ] Single-artifact build (backend + frontend bundled)
-- [ ] Documented first-run setup: where to put the osv-scanner binary and the OSV database
-- [ ] Documented offline workflow: how to populate caches on a connected machine and
+- [x] Attach an optional workspace path to an SBOM, validate it exists and is readable, and
+      expose it to the Maven probe. The input foundation already exists
+- [ ] Define and persist evidence states before choosing UI labels. At minimum keep these claims
+      distinct:
+  - **Vulnerable path reached** — an application entry point reaches a specific vulnerable
+    method/function named by advisory data
+  - **Component reached** — a call path enters the vulnerable component, but no usable
+    vulnerable-symbol data exists or no specific vulnerable symbol was reached
+  - **Referenced only** — an import, type, module or symbol reference exists, but the analyzed
+    call graph contains no route from an entry point
+  - **Not reached in the analyzed graph** — no direct or transitive route was found within the
+    explicitly reported coverage
+  - **Unknown / not analyzed** — required source, bytecode, dependency artifacts, entry points
+    or language support were missing
+- [ ] Record the analysis boundary with every result: modules and source sets included,
+      production versus test code, build profile/configuration, entry points, dependency
+      artifacts, analyzer and version, workspace revision, and unresolved edges
+- [ ] State the static-analysis blind spots in the result, not only in documentation: reflection,
+      dependency-injection and framework callbacks, serialization/deserialization, service
+      loaders, generated code, JNI/native calls, runtime plugins and configuration, and dynamic
+      JavaScript imports can turn absence of a graph edge into a false negative
+- [ ] Use **“not reached in this analysis”** or **“unlikely under the analyzed paths”**, never
+      “false positive” or “not exploitable”, for a negative static result. Exploitability also
+      depends on attacker-controlled input and runtime conditions that a call graph alone does
+      not prove
+
+### Engine and data design gate
+
+- [x] Evaluate engines against a real multi-module JVM workspace before selecting one. The
+      [current OSV-Scanner call-analysis feature](https://google.github.io/osv-scanner/usage/scan-source#scanning-with-call-analysis)
+      handles Go and Rust, not Java, so it cannot be assumed to solve SBOMscope's Maven-first
+      case. A candidate must work locally without admin rights or mandatory network calls, expose
+      paths rather than only a boolean, and fit behind an engine interface per constraint 5.
+      **WALA 1.8.0 was selected on 2026-08-02** after the four-case bytecode spike; the detailed
+      plan records the measured alternatives, dependency/licence cost and remaining Java 21 gate
+- [ ] Prefer analysis of resolved artifacts over coordinate-name guesses. For Java, read class
+      and method identities from the actual jars/classes and workspace bytecode; for npm, resolve
+      package exports/module specifiers from the installed or locked package. Keep a visible
+      lower-confidence fallback only where the artifact is unavailable
+- [x] Measure how often the local advisory corpus identifies vulnerable methods or functions for
+      Maven. The 2026-08-02 local archive contained 6,898 advisory JSON documents and **zero**
+      structured method/function/symbol/import properties under the candidate keys. This makes
+      component-boundary reachability the Maven MVP; see the detailed evidence plan for the exact
+      measurement and its limits. Repeat independently for npm when npm reachability is designed
+- [ ] Decide the multi-module mapping explicitly: which workspace modules and production entry
+      points correspond to each aggregate-SBOM root. Never scan every module and present the
+      union as though one module reached the component
+
+### Analysis, fallback and presentation
+
+- [ ] Start with the JVM/Maven path, then add npm/JavaScript without pretending the two call
+      models are interchangeable
+- [ ] Build direct reference/call evidence from workspace source and compiled output, honouring
+      repository ignores and excluding generated/build/vendor directories unless they are the
+      analyzed artifact
+- [ ] Build transitive call paths from application entry points through workspace code and
+      dependency code. Keep the shortest useful paths plus exact uncapped path/edge coverage,
+      applying the same presentation-versus-truth separation as the dependency graph
+- [ ] When vulnerable symbols are available, resolve aliases/signatures and test reachability to
+      those exact symbols. Report unmatched or ambiguous symbols instead of silently treating
+      them as uncalled
+- [ ] When vulnerable symbols are unavailable, perform the exhaustive **component-boundary
+      fallback**: within the analyzed graph, determine whether any reachable call enters any
+      method/function belonging to the component. This is evidence that the library is used,
+      not evidence that the vulnerable behavior is reached
+- [ ] Present the evidence in the Component Inspector as call chains with entry point,
+      workspace file/line where available, intermediate methods, destination component/symbol,
+      coverage and caveats. Feed the same status and evidence source into the findings table and
+      Excel export
+- [x] Make analysis asynchronous, cancellable and bounded; show queued/running progress in the
+      existing Processes view. Each WALA run is an SBOMscope-owned worker JVM; Stop terminates
+      only that tree, and a Settings-configurable 10-minute default ceiling prevents an
+      unbounded run. Fingerprint caching currently keys the built inputs; analyzer/configuration
+      and artifact-hash cache dimensions remain follow-up work.
+
+### Exclusion is a recommendation to verify, not a security verdict
+
+- [ ] If no direct or indirect route enters a component and coverage is sufficiently complete,
+      offer **candidate for exclusion** with the exact declaring dependency/route to exclude and
+      the blind spots that remain. Do not suppress its vulnerabilities
+- [ ] Tell the user to apply the exclusion in the manifest, rebuild/test, regenerate the SBOM
+      and confirm the component disappeared. Only that second SBOM proves the exclusion changed
+      the delivered dependency set; static non-reachability alone does not
+- [ ] Never recommend exclusion when analysis is unknown, incomplete, ambiguous across modules,
+      or relies only on a coordinate-to-package-name heuristic
+
+**Done when**: on a real multi-module Maven workspace, a finding can show a reproducible direct
+or transitive call chain to a vulnerable symbol when that data exists; otherwise it can show
+component-boundary reachability; and a negative answer states its measured coverage and produces
+only a verifiable exclusion candidate, never an unsupported “false positive” verdict.
+
+## Phase 10 — Packaging baseline and distribution follow-ups
+
+- [x] Single-artifact build (backend + frontend bundled)
+- [x] Documented first-run setup: where to put the osv-scanner binary and the OSV database
+- [x] Documented offline workflow: how to populate caches on a connected machine and
       move them to a restricted one
-- [ ] Sample SBOMs and a quickstart
+- [ ] Curate sample SBOMs and add a compact first-analysis quickstart
 
 ## Phase 11 — VEX
 
-Goal: a finding can carry **someone's assertion that it does not apply**, from a document
-rather than from a text box.
+Goal: a finding can carry **someone's assertion about whether it applies and why**, including
+standard-supplied mitigation or action context, from a document rather than from a text box.
 
-Raised 2026-07-30. Scheduled after Phase 3 and after B2, for reasons given under *Order*
-below. Nothing here is started.
+Raised 2026-07-30. Originally scheduled after Phase 3 and B2; both are complete. It now follows
+Phase 9 so supplier assertions and SBOMscope's local reachability evidence can be presented with
+an explicit provenance boundary. Nothing here is started.
+
+Phase 9 and VEX are complementary evidence, not substitutes. Workspace analysis says what
+SBOMscope could establish about one analyzed build and reports its blind spots. VEX says what an
+identified supplier or product authority asserts, with author and timestamp. SBOMscope must not
+silently turn “not reached in this analysis” into an authoritative VEX `not_affected` statement;
+the two may be shown side by side, but their provenance stays separate.
+
+The normalized VEX model, matching rules, structural-conflict rules and assessment precedence are
+specified in [Workspace-Based Vulnerability Evidence](IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md).
 
 ### What VEX is, and the one fact that shapes the whole phase
 
@@ -1281,7 +1394,7 @@ vulnerability**, carrying a status — `not_affected`, `affected`, `fixed` or
 `component_not_present`, `vulnerable_code_not_present`, `vulnerable_code_not_in_execute_path`,
 `vulnerable_code_cannot_be_controlled_by_adversary`, `inline_mitigations_already_exist`.
 
-Three encodings, all live: **CSAF 2.0 VEX** (OASIS, what vendors publish), **OpenVEX**
+Three encodings, all live: **CSAF 2.0/2.1 VEX** (OASIS, what vendors publish), **OpenVEX**
 (OpenSSF, minimal JSON-LD, what tools emit), and **CycloneDX VEX** (alongside or inside a BOM).
 Read all three, emit none in the first pass.
 
@@ -1303,12 +1416,15 @@ team recording a triage decision once so it is not re-made every month.
 
 - [ ] Attach one or more VEX documents to an SBOM, uploaded exactly as the SBOM is
 - [ ] Parse CSAF VEX, OpenVEX and CycloneDX VEX into one internal statement shape:
-      (vulnerability id, product identity, status, justification, statement author, timestamp)
+      (vulnerability id, product identity, status, justification, statement author, timestamp,
+      plus impact/mitigation/action text where the source format supplies it)
 - [ ] Match a statement to findings by **purl first**, falling back to the same
       `PackageKey`-style normalisation the report parser already needs. A statement that
       matches nothing is reported, never dropped — the count of unmatched statements is exactly
       the kind of silent loss recorded under *Optional enhancements* for scanner results
 - [ ] Findings carry their statement in the view, the Inspector and the export
+- [ ] Show supplier mitigation/action context beside, but never merged into, SBOMscope's own
+      workspace-reachability evidence
 - [ ] Filter by VEX status, defaulting to showing everything
 
 **This does not breach constraint 6, and the reason is worth stating because it looks like it
@@ -1347,32 +1463,75 @@ real gap closed, not a second opinion.
       This plan does not carry unmeasured numbers, and the npm index is already an open item for
       exactly that reason
 
-### Suppression discipline — the part that decides whether this is safe
+### Deferral discipline — the part that decides whether this is safe
 
-VEX **hides findings**. A security tool that conceals something because a document said so
-needs the same rules this project applies everywhere else:
+VEX can make a finding **deferrable with evidence**. The first release keeps every lane visible;
+if a later release collapses deferrable/resolved rows, it needs the same rules this project
+applies everywhere else:
 
-- [ ] **Never delete, only mark.** A suppressed finding stays in the database and stays
-      exportable. The default view may hide it; nothing may lose it
-- [ ] **Always show the count.** *"12 findings suppressed by VEX"* is visible wherever the
-      suppression applies, and one click shows them
+- [ ] **Never delete, only assess.** A deferrable finding stays in the database, in the first
+      release's table and in the export. Nothing may lose it
+- [ ] **Always show the count if collapsing is added later.** *"12 findings deferrable with
+      evidence"* is visible wherever collapsing applies, and one click shows them
 - [ ] **Always name the author.** `not_affected` / `vulnerable_code_not_present` is a claim with
       somebody's name on it, not a fact. The statement's source document and timestamp travel
       with it into the view and the export
 - [ ] **Staleness is visible.** A statement made against version 2.14 says nothing about 2.17.
       Same reasoning as the version-list cache in R4: the absence of a safe default
-- [ ] **Never suppress silently on import.** Attaching a VEX changes what a security tool shows
-      and is therefore a deliberate act, like every other one here
+- [ ] **Never change visibility silently on import.** Attaching a VEX changes an assessment lane,
+      not whether the row exists. Any future collapsing remains deliberate and reversible
 
 **Done when**: a finding a supplier has declared `not_affected` shows that status, its
-justification and its author, is filterable and exportable, and is never quietly absent.
+justification, mitigation/action context and author, is filterable and exportable, and is never
+quietly absent or confused with SBOMscope's own reachability result.
 
 ### Order, and what would change it
 
-Below Phase 3 and below B2. Phase 3 (KEV, EPSS) sharpens *every* finding; VEX sharpens the
-subset somebody has written a document about. B2 comes first because Tier B's value rests on
-vendor-patched artifacts being handled properly, which is B2's job. Tier A can move up on its
-own the moment a real VEX document turns up to test against — it needs nothing from the rest.
+Below Phase 9 for the current roadmap. Phase 3 (KEV, EPSS) sharpens *every* finding; workspace
+reachability supplies local evidence; VEX sharpens the subset somebody has written an
+authoritative product statement about. B2 is already complete and Tier B's value rests on those
+vendor-patched artifacts being handled properly. Tier A can move up on its own the moment a real
+VEX document turns up to test against, but must retain the provenance boundary above.
+
+## Phase 12 — Container image scanning
+
+Goal: analyze what is actually packaged in a container image — operating-system packages and
+application dependencies, attributed to their layers — after workspace-level analysis is useful.
+
+This is deliberately a **design gate first**. It expands hard constraint 7 beyond Maven and npm,
+and therefore needs explicit maintainer agreement before implementation. OSV-Scanner already has
+[layer-aware image scanning](https://google.github.io/osv-scanner/usage/scan-image), including
+exported archives, but SBOMscope must verify its offline database, output and process contracts
+rather than assuming the SBOM scan integration transfers.
+
+- [ ] Begin with a user-supplied Docker/OCI archive. An archive can be scanned without Docker,
+      never pulls an image and never executes container code. A later local-daemon path must
+      prove the image exists locally before invocation because an absent tag must not trigger an
+      implicit registry pull; constraint 1 forbids SBOMscope from fetching executable artifacts
+- [ ] Measure and document supported inventory before promising coverage: Linux distro packages,
+      Java jars, Node modules and other application artifacts; required per-ecosystem offline OSV
+      archives; unsupported image formats, platforms and package layouts
+- [ ] Decide whether image inventory becomes an imported CycloneDX document or a distinct
+      image/layer model. Preserve immutable digest, tag as an alias, platform/architecture, base
+      image, package origin and introducing layer either way
+- [ ] Run the scanner as an external engine behind the existing scanner interface, with explicit
+      user action, progress/cancellation, bounded resources, full activity logging and no network
+      fallback
+- [ ] Deduplicate one vulnerability found through both an embedded application artifact and an
+      OS package without erasing the two provenances
+- [ ] Reuse workspace reachability only when an image application can be tied to the analyzed
+      workspace and build artifact. Do not imply that source call analysis decides whether an OS
+      package vulnerability in the base image is exploitable
+- [ ] Show layer/base-image remediation separately from Maven/npm upgrade remedies: update the
+      base image, remove a package/layer, or update an embedded application dependency are
+      different actions
+- [ ] Verify against small, intentionally vulnerable exported images kept as inert test
+      artifacts; never commit a Dockerfile or manifest that makes repository dependency scanners
+      attribute those old packages to SBOMscope itself
+
+**Done when**: an exported image can be scanned fully offline without executing or pulling it,
+and each finding identifies the package ecosystem, image digest/platform, introducing layer,
+available fix and the correct remediation surface without overstating workspace reachability.
 
 ---
 
@@ -2009,7 +2168,7 @@ completeness only for the Maven ancestor search, or also for direct version bump
 | **Pin it** | Yes, at any depth | Construction — `dependencyManagement` constrains the component whichever declaration would otherwise win |
 | **Upgrade it** (direct) | Yes, **within the module that declares it** | Nearest-wins — a depth-1 declaration beats every transitive route |
 | **Bump what pulls it in** | Only the routes through that ancestor | **The only one where it is a counted number** |
-| **Exclude it** | Same shape as the pin | Blocked on workspace usage (Phase 9) |
+| **Exclude it** | Same dependency-route shape as the pin | Blocked on workspace reachability and verified removal (Phase 9) |
 
 So three of the four need a **proof stated**, not a figure computed. Only `BUMP_ANCESTOR` needs
 *"fixes 3 of 5 routes"*. The item as previously written read as though it were all counting.
@@ -2454,18 +2613,21 @@ so it is now **R4**. R1 stays only to record why the obvious route was not taken
   constraints, which is a question SBOMs cannot answer at all.
 - **(c)** Compute it ourselves. Taken, subject to R4.
 
-### R2 — Component-to-source-identifier mapping
+### R2 — Workspace-to-artifact mapping and call-graph completeness
 
-**Phase 9.** A Maven coordinate (`com.fasterxml.jackson.core:jackson-databind`) is not
-the same as the Java package imported in source (`com.fasterxml.jackson.databind`), and
-npm package names don't always match their import specifiers either. Naive matching
-will produce both false positives and false negatives. Needs a deliberate strategy —
-possibly reading package names from the artifact itself, or a heuristic with a visible
-confidence signal.
+**Phase 9.** A Maven coordinate (`com.fasterxml.jackson.core:jackson-databind`) is not the same
+as the Java package imported in source (`com.fasterxml.jackson.databind`), and npm package names
+do not always match their import specifiers. Naive text matching produces both false positives
+and false negatives. The primary strategy is therefore to read identities from the actual
+resolved jar/classes or installed/locked package; a coordinate heuristic is only a visibly
+lower-confidence fallback.
 
-This is the reason workspace usage is scheduled last of the three panels: it is the only one
-whose answer depends on a heuristic being right, and a "not used" that is wrong is a finding
-quietly dismissed.
+That solves identity, not reachability. Static call graphs can miss reflection, framework
+callbacks, generated code, runtime plugins and native/dynamic dispatch, while a source import can
+exist on a path that never executes. Phase 9 now carries coverage and unresolved edges with every
+result and says “not reached in the analyzed graph”, never “not used” or “false positive”. This
+is the safety boundary that lets exclusion become a candidate to verify rather than a quiet
+dismissal.
 
 ### R3 — OSV-Scanner distribution in restricted environments — **resolved**
 
@@ -2483,7 +2645,7 @@ supply-chain tool shipping someone else's opaque executable is the wrong default
 Pin a known-good version: v2.4.0 fixed a panic in the offline matcher when checking
 version ranges, and added CycloneDX 1.7 support.
 
-### R4 — Upgrade paths need two things the current engine does not provide
+### R4 — Upgrade paths needed two things the scan engine does not provide — **resolved**
 
 **Phase 8, and the blocker for it.** Naming candidate versions and saying what each one
 carries decomposes into two separate problems, and only one of them is about tooling.
@@ -2539,18 +2701,20 @@ finding, whereas a truncated version list silently omits the release that fixes 
 
 So the offline tier does not compute "latest" at all. It offers the fix versions the
 advisories name — a small, honest, useful set — and says plainly that the newest release is
-unknown without a registry. The complete list requires an outbound call, which is the
-subject of the outbound-calls decision in the log.
+unknown without a registry.
 
-Two consequences worth carrying forward:
+**Maven resolution: enumerate and resolve through the user's configured build tool, not through
+a registry client owned by SBOMscope.** The Maven probe resolves version ranges in its isolated
+repository, reads the resulting `maven-metadata*.xml`, and obtains dependency trees for the
+candidate ancestors. Maven uses the user's mirror, proxy and credentials without exposing them
+to SBOMscope. This supplies real version lists and resolved trees for projects the `mvn` probe can
+model while preserving constraint 1's dependency-specific network boundary.
 
-- **Registry data is cached per purl with a last-fetched time, and staleness is visible on
-  the panel** rather than merely recorded. It is the first cache whose absence has no safe
-  default.
-- **A version lookup discloses your dependency list to whoever answers it.** Asking Maven
-  Central which versions of an internal-sounding artifact exist tells Maven Central you use
-  it. For the environments SBOMscope targets that is a real cost, not a theoretical one, and
-  it is the reason the opt-in is per host with the exact URL shown.
+This is not a generic ecosystem resolution. npm has no equivalent probe yet, and a Gradle project
+with Maven purls has no Gradle adapter. Rust, Go, Python, .NET and other ecosystems remain outside
+the current product scope entirely. The earlier plan for a **generic SBOMscope-owned direct-
+registry cache** is closed; future ecosystems still need tool-specific adapters that delegate to
+the user's configured package/build tooling.
 
 ---
 
@@ -2577,17 +2741,26 @@ Two consequences worth carrying forward:
   ever disagree about a version the user actually has, the scanner is right by definition.
   Keeping that boundary sharp is what makes the narrow matcher safe.
 - **Where version lists come from, and how a candidate is judged — resolved 2026-07-29.**
-  See R4: judging is offline and solved, enumerating is not and needs an opt-in lookup.
+  See R4: judging is offline through the local advisory index; Maven enumeration and resolved
+  ancestor trees come from the user's configured Maven probe. npm Tier 2 and other tool adapters
+  are not resolved by that decision.
 - **Dependency view rendering — resolved 2026-07-29.** Paths upward, collapsible tree
   downward. See the decision log; the question was malformed as originally written, since it
   assumed one rendering had to serve both directions.
 - **License — resolved 2026-07-29.** Apache-2.0. See the decision log.
 - **Multi-module Maven, for the dependency graph — resolved 2026-07-29.** An upward path tops
   out at the owning module, never the parent pom. See the decision log.
-- [ ] **Multi-module Maven, for workspace mapping** — still open, and Phase 9's problem: with
-      one aggregate SBOM over several module directories, which source tree does a component
-      get scanned against? Recommending per-module SBOMs is not an answer, since SBOMscope
-      reads documents other people generated.
+- [x] **Multi-module Maven, for workspace reachability — resolved 2026-08-03.** Each exactly mapped
+      application module gets its own WALA worker and its own SBOM dependency closure. A dependent
+      workspace module's compiled output can support a transitive path without becoming an
+      additional root. Duplicate class ownership is Needs review rather than attribution to every
+      matching version. The aggregate union rejected here is not used.
+- [x] **Source-built public-user hardening for workspace reachability.** Publishing source rather
+      than a binary does not change the runtime boundary: users still start the same unauthenticated
+      local server and give it filesystem access. Before recommending the feature publicly, finish
+      loopback-only binding, SBOM-derived Maven-path containment, workspace/JAR collision handling,
+      bounded parent-side inspection/diagnostics and the source-release hygiene checklist in Stage
+      3c of `IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md`.
 
 ---
 
@@ -2600,15 +2773,6 @@ roadmap stays a list of commitments; each moves up only when a concrete need app
   OSV's. Deliberately not used today: tracing every column to its source showed it
   contributes to none of them (see the 2026-07-27 decision). Note that redistributing NVD
   data carries attribution obligations that merely linking does not.
-- **Log to a file, and show where.** SBOMscope currently logs to the console only —
-  `application.yml` sets levels but no `logging.file.name`, so there is no log file to point
-  at. Doing this properly means choosing a location (`~/.sbomscope/logs` alongside the rest
-  of the local data), a rotation policy and a size cap, *then* surfacing it. Note the second
-  half is not a link: a browser cannot open a native folder from an `http://` page, so
-  Settings would show a copyable path the way it already does for the OSV archives.
-
-  Worth doing when something needs diagnosing after the fact — a scan that failed overnight,
-  or a dropped finding noticed days later. Not before.
 - **Surface scanner results that could not be matched.** A finding the scanner reports but
   which cannot be tied back to a stored component is discarded with only a log warning. That
   is how a real advisory against `@angular/common` went unnoticed. The count belongs in the
@@ -4827,3 +4991,134 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   findings. This verification also exposed a test-isolation hole: the OSV default ignored
   `sbomscope.data-directory`, so `PurgeTest` deleted the real archive. The default now derives
   from the data directory and the destructive test asserts its target stays under `target`.
+- 2026-08-02 — **The roadmap is reconciled around workspace reachability.** Phase 8's Maven/mvn
+  path is complete: blocker identification, change-size ranking and the findings-table
+  recommendation remain useful follow-ups, but the Inspector already answers what to change,
+  proves route completeness and verifies real Maven bumps. npm retains Tier 1 but has no Tier 2
+  tool probe. Phase 9's workspace-path input and Phase 10's single-jar, first-run and offline
+  documentation were already built and are now marked that way. The stale **Maven** direct-
+  registry lookup is closed as superseded by the configured Maven probe and its privacy-
+  preserving mirror/credential path; this does not claim an implementation for any other
+  ecosystem.
+
+  This reverses the 2026-07-26 decision to make Phase 9 simple import/symbol detection and defer
+  deep call graphs. The product value now sought is **workspace reachability analysis**: direct
+  references are useful evidence, transitive call paths are stronger, and a path to a specific
+  vulnerable method is strongest when advisory data names it. When no vulnerable symbol exists,
+  the fallback is exhaustive only within the analyzed call graph: determine whether any
+  reachable call crosses into the component. A negative result is “not reached in this analysis”
+  with explicit coverage and blind spots, never proof of a false positive. It can support a
+  candidate exclusion, but the user must rebuild, test and regenerate the SBOM to prove the
+  component was actually removed.
+- 2026-08-02 — **Reachability evidence and VEX assertions stay separate.** Phase 9 records what
+  SBOMscope's analyzer established about one workspace/build; VEX records what an identified
+  supplier or product authority asserted, including standard justification and mitigation/action
+  context. They should be displayed together because they answer adjacent questions, but a local
+  “not reached” result is not silently promoted into an authoritative `not_affected` VEX
+  statement. This preserves provenance and the constraint-6 boundary against an internal store of
+  uncheckable judgments.
+- 2026-08-02 — **Container image scanning follows workspace analysis and VEX, archive-first.**
+  The first accepted input will be a user-supplied exported image: it requires no Docker daemon,
+  cannot cause an implicit pull and does not execute container code. A local-image path may come
+  later only with a preflight that prevents OSV-Scanner from pulling an absent tag. This phase is
+  a design gate because OS packages and additional application ecosystems expand hard constraint
+  7 and the offline database/process contract; implementation requires explicit maintainer
+  agreement after coverage, archive sizes and locked-down behavior are measured.
+- 2026-08-02 — **Workspace reachability, VEX and assessment now have a separate execution
+  plan.** `IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md` turns Phases 9 and 11 Tier A into a
+  staged implementation with a four-case multi-module engine spike, module-scoped evidence,
+  deterministic Actionable/Needs review/Deferrable/Resolved/Unassessed lanes and a shared
+  findings/export projection. The local Maven OSV archive was measured rather than assumed:
+  6,898 advisory documents contain no structured method/function field, so component-boundary
+  reachability is the honest MVP and vulnerable-symbol analysis remains gated on a structured
+  local source.
+
+  VEX is still a first-class source despite that result. The implementation order is embedded
+  CycloneDX VEX, standalone CycloneDX VEX, OpenVEX and CSAF 2.0/2.1 uploads, all normalized with
+  source/product/version provenance and parsed with the existing Jackson approach. `vexctl` is a
+  development oracle, not a new required executable; `cyclonedx-core-java` remains rejected
+  unless a measured parser gap justifies its transitive cost. Red Hat's complete signed CSAF VEX
+  archive is a viable later bulk-feed candidate, but only for exact Red Hat product/component
+  matches—not as a universal Maven VEX database—and requires a coverage, zstd, integrity,
+  deletion, attribution and dependency-cost spike first. Product-specific VEX links are surfaced
+  for explicit import and never fetched automatically.
+
+  The first UI release keeps all assessment lanes visible and exportable. “Deferrable with
+  evidence” is prioritization, not deletion or a claim that static analysis proved a false
+  positive; contradictory, stale or incomplete evidence moves the finding to review.
+- 2026-08-02 — **CycloneDX support does not imply that generated SBOMs contain VEX.** The current
+  SBOMscope Maven fixture is CycloneDX 1.6 with 60 components and zero top-level vulnerability or
+  VEX-analysis entries. This is expected: the Maven plugin knows inventory, not product-specific
+  exploitability. Embedded CycloneDX parsing remains a cheap compatibility path, but the normal
+  acquisition paths are an explicit supplier VEX import, an exact supported bulk supplier feed,
+  or a VEX document created by the user's own product-security process.
+
+  CycloneDX's recommended separation of dynamic VEX from static inventory fits SBOMscope. Tier A
+  therefore accepts standalone documents linked to an exact BOM/product rather than expecting
+  users to regenerate their SBOM. After ingestion and reachability work, a separate decision may
+  add an unsigned **evidence-backed VEX draft export**: deterministic analyzer results and their
+  limitations only, linked to the original BOM, visibly not supplier-attested, for review and
+  signing in the user's own release process. It must not introduce manual judgment fields or
+  silently turn SBOMscope's negative static result into an authoritative supplier assertion.
+- 2026-08-02 — **WALA 1.8.0 is the selected JVM call-graph engine for Phase 9.** The choice was
+  made from a local, already-built four-case multi-module bytecode spike, not from an API feature
+  list. WALA produced inspectable direct and transitive method edges, correctly kept the
+  dependency-present-but-uncalled module negative, and ran without executing workspace code,
+  invoking a build or making a network call. `jdeps` was useful only as a class/package baseline;
+  a small ASM reader could find static edges but cannot honestly cover virtual/interface dispatch
+  and framework paths; SootUp 1.1.2 had a much heavier Android-oriented closure and produced no
+  direct-fixture edges; WALA 1.5.9 failed modern-JDK module discovery.
+
+  WALA's 11-JAR, roughly 6.1 MiB closure is accepted because a method-aware call graph is the
+  feature's core value. It includes EPL-2.0 WALA artifacts and current Guava 33.6.0, which is an
+  internal WALA dependency rather than an SBOMscope programming API. Distribution must retain
+  the associated notices and source/licence availability information; SBOMscope's own SBOM must
+  be regenerated and scanned. The engine reads existing workspace outputs and dependency JARs
+  only: it never runs a workspace build and never reads from or writes to the isolated Maven
+  probe repository. The current non-deprecated WALA API is now pinned by the direct call-edge
+  test. A Java 21 runtime compatibility test, dependency-convergence check and incomplete-
+  classpath gate remain mandatory before release.
+- 2026-08-02 — **Spring/proxy/reflection is a negative-result safety boundary.** WALA can find
+  ordinary bytecode paths through Spring and resolve available virtual/interface targets, but it
+  does not simulate the Spring container. Dependency injection, conditional configuration,
+  component scanning, JDK/CGLIB/Byte Buddy proxies, AOP advice, reflection and framework
+  callbacks can create runtime edges absent from the static graph. A discovered path stays
+  actionable evidence; a negative WALA result with an observed Spring/AOP/proxy/reflection
+  marker is instead Needs review, never Deferrable solely because no static path was found. A
+  future Spring-aware adapter requires its own bounded, inspectable design and evidence spike.
+- 2026-08-03 — **Workspace reachability evidence is isolated and bounded per mapped module.** A
+  correctness review found that the initial aggregate WALA scope could merge module classpaths and
+  versions, that representative-route limits could turn positive coverage into a negative verdict,
+  and that worker output, lifecycle recovery and persistence needed stronger boundaries. Each
+  mapped module now runs against its exact SBOM dependency closure; a dependent workspace module
+  may supply bytecode without becoming a root, and duplicate class ownership is explicitly
+  ambiguous. Exact coverage—not the displayed paths—determines reachability. Workers return only
+  bounded component coverage and at most ten paths, with a 16 MiB parent-side result ceiling.
+
+  Failed and stopped runs retry implicitly, abandoned queued/running records are reconciled at
+  startup, cancellation cannot be overwritten by late completion, and module/evidence/final status
+  persistence is one transaction with `COMPLETED` written last. These are correctness gates for
+  later assessment lanes and VEX work, not optional performance refinements.
+- 2026-08-03 — **A source-only release still has the runtime security boundary of the built
+  application.** There is currently no binary distribution: a public user clones, builds and runs
+  SBOMscope locally. The review therefore found no binary-packaging blocker, no secret/path leak in
+  the public diff, no WALA attribution inventory mismatch, and Java 21 worker tests passed. But
+  source distribution does not make an unrestricted unauthenticated HTTP bind or unsafe filesystem
+  path construction acceptable—the resulting process is identical after compilation.
+
+  Public recommendation is gated on an explicit loopback bind, containment of Maven artifact paths
+  derived from uploaded SBOM coordinates, and conservative ambiguity when workspace output and a
+  dependency JAR contain the same class. Parent-side class inspection and diagnostics must also be
+  bounded so the worker's heap limit is an honest whole-feature claim. The current React Router
+  advisory affects unstable RSC APIs that SBOMscope does not use, but it should be upgraded away or
+  carry a recorded non-applicability rather than remain an unexplained public scanner alert. The
+  detailed checklist and already-passed release evidence are in workspace-plan Stage 3c.
+
+  Stage 3c completed on 2026-08-03: the committed server bind is `127.0.0.1`; uploaded Maven
+  coordinates cannot escape the normalized configured cache; dependency ownership includes root
+  and supporting workspace outputs; reflection inspection, worker stderr storage and diagnostic
+  reads have explicit bounds; and the required worker/result tests are tracked. React Router stays
+  on 7.18.1 because the advisory's named 8.3.0 fix is not published and npm's proposed 7.11.0
+  downgrade carries broader advisories. GHSA-qwww-vcr4-c8h2 is recorded as non-applicable to this
+  static `BrowserRouter` SPA, which uses neither RSC nor router actions/data routes, and must be
+  revisited when a compatible patched release exists.

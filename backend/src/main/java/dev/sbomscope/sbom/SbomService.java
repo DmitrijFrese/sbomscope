@@ -92,6 +92,10 @@ public class SbomService {
         return repository.findComponents(sbomId);
     }
 
+    public List<ParsedSbom.DependencyEdge> findEdges(UUID sbomId) {
+        return repository.findEdges(sbomId);
+    }
+
     /**
      * The component carrying this purl, for the Component Inspector.
      *
