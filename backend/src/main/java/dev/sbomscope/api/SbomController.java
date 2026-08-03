@@ -329,6 +329,24 @@ class SbomController {
         return graphs.graphFor(id, purl, scans.vulnerablePurls(id));
     }
 
+    @GetMapping("/{id}/component/graph/routes")
+    ComponentGraph.RoutePage graphRoutes(
+            @PathVariable UUID id,
+            @RequestParam("purl") String purl,
+            @RequestParam("module") String moduleBomRef,
+            @RequestParam(value = "offset", defaultValue = "0") int offset,
+            @RequestParam(value = "limit", defaultValue = "100") int limit) {
+        if (service.findById(id).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
+        }
+        if (offset < 0 || limit < 1 || limit > DependencyGraphService.ROUTE_PAGE_SIZE
+                || (long) offset + limit > DependencyGraphService.MAX_ROUTE_PREFIX) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Route pages must contain at most 100 routes within the first 10,000.");
+        }
+        return graphs.routePageFor(id, purl, moduleBomRef, offset, limit, scans.vulnerablePurls(id));
+    }
+
     /**
      * Bytecode-use evidence for this component, requested only when the Inspector's Workspace
      * usage tab is opened. It may enqueue an offline analysis of already-built classes, but it

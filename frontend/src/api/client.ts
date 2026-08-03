@@ -219,7 +219,7 @@ export interface GraphNode {
 /** How one of your own modules reaches the component. */
 export interface ModuleRoutes {
   module: GraphNode;
-  /** The shortest few, each running module → … → component inclusive. */
+  /** The first shortest-first page, each running module → … → component inclusive. */
   routes: GraphNode[][];
   totalRoutes: number;
   /** Defensive compatibility flag; exact enumeration normally leaves this false. */
@@ -258,10 +258,32 @@ export interface ComponentGraph {
   tree: GraphTreeNode | null;
 }
 
+export interface ComponentRoutePage {
+  moduleBomRef: string;
+  offset: number;
+  routes: GraphNode[][];
+  totalRoutes: number;
+}
+
 export function fetchComponentGraph(sbomId: string, purl: string): Promise<ComponentGraph> {
   return request<ComponentGraph>(
     `/sboms/${sbomId}/component/graph?purl=${encodeURIComponent(purl)}`,
   );
+}
+
+export function fetchComponentRoutePage(
+  sbomId: string,
+  purl: string,
+  moduleBomRef: string,
+  offset: number,
+): Promise<ComponentRoutePage> {
+  const query = new URLSearchParams({
+    purl,
+    module: moduleBomRef,
+    offset: String(offset),
+    limit: '100',
+  });
+  return request<ComponentRoutePage>(`/sboms/${sbomId}/component/graph/routes?${query}`);
 }
 
 /** Change the version you declare, force one you don't, move the parent, or drop it. */

@@ -2546,13 +2546,6 @@ body {
   font-size: 12px;
 }
 
-/* The step the module declares — the only version on the line the reader can change.
-   Weight, not colour: colour already means severity in this panel, and the name is already
-   a link, so a second colour would be a third meaning on one word. */
-.graph-node[data-direct='true'] .mono {
-  font-weight: 600;
-}
-
 /* A marker rather than colouring the name: the name is a link, and recolouring links by
    risk would make "vulnerable" and "clickable" the same signal. */
 .graph-node__flag {
@@ -2590,16 +2583,45 @@ body {
    Which is exactly why routes need space between them: a wrapped route runs onto a second
    line, and with no gap the reader cannot tell that second line from the next route. Measured
    at 0px before this. */
-.route {
+.route-card {
+  overflow: hidden;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.route-card + .route-card {
+  margin-top: var(--space-2);
+}
+
+.route-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent-subtle);
+  border-bottom: 1px solid var(--border);
+}
+
+.route-card__number {
+  min-width: 6ch;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.route-card__declaration {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.route-card__path {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1);
-  padding: var(--space-1) 0;
-}
-
-.route + .route {
-  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
 }
 
 /* Indented under the module heading, now that the module is no longer repeated as step 1 of
@@ -2634,6 +2656,10 @@ body {
 }
 
 .module-routes__more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
   margin: var(--space-1) 0 0;
   font-size: 12px;
   color: var(--text-muted);

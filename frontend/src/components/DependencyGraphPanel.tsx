@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { fetchComponentGraph } from '../api/client';
+import { fetchComponentGraph, fetchComponentRoutePage } from '../api/client';
 import type { ComponentGraph, GraphNode, GraphTreeNode, ModuleRoutes } from '../api/client';
 
 /** How deep the descendants tree stands open before you have to ask. */
 const OPEN_TO_DEPTH = 2;
+const MAX_DISPLAYED_ROUTES = 10_000;
 
 function inspectHref(node: GraphNode): string | null {
   return node.purl ? `/component-inspector?purl=${encodeURIComponent(node.purl)}` : null;
@@ -20,12 +21,9 @@ function inspectHref(node: GraphNode): string | null {
 function Node({
   node,
   current,
-  direct,
 }: {
   node: GraphNode;
   current?: boolean;
-  /** The step this module actually declares — the one whose version can be changed. */
-  direct?: boolean;
 }) {
   const href = inspectHref(node);
   const label = (
@@ -40,8 +38,6 @@ function Node({
       className="graph-node"
       data-vulnerable={node.vulnerable}
       data-current={!!current}
-      data-direct={!!direct}
-      title={direct ? 'Declared by this module — the version you can change' : undefined}
     >
       {href && !current ? <Link to={href}>{label}</Link> : label}
       {node.vulnerable && (
@@ -60,12 +56,21 @@ function Node({
  * component inclusive, and the heading directly above already names the module — repeating it
  * as step 1 of every route spends the widest column on the word the reader has just read.
  *
- * <p><b>The first remaining step is emphasised</b>, because it is the one the module declares
- * and therefore the only version on the line the reader can actually change. Weight rather
- * than colour: colour already means severity here, and the name is already a link.
+ * <p>The card header names the immediate predecessor of the inspected component. That is the
+ * declaration point represented by this SBOM route; the displayed target version remains the
+ * resolved version and is not claimed to be a literal version written in that component's POM.
  */
-function Route({ route, targetPurl }: { route: GraphNode[]; targetPurl: string }) {
+export function routeDeclaration(route: GraphNode[]): GraphNode | null {
+  return route.at(-2) ?? null;
+}
+
+export function totalRouteCount(modules: ModuleRoutes[]): number {
+  return modules.reduce((total, module) => total + module.totalRoutes, 0);
+}
+
+function Route({ route, targetPurl, number }: { route: GraphNode[]; targetPurl: string; number: number }) {
   const steps = route.slice(1);
+  const declaration = routeDeclaration(route);
 
   // Defensive: a route consisting only of the module would leave nothing to draw. Reachable
   // in principle if a module ever reached itself; targetIsOwnCode covers the real case.
@@ -74,27 +79,61 @@ function Route({ route, targetPurl }: { route: GraphNode[]; targetPurl: string }
   }
 
   return (
-    <li className="route">
-      {steps.map((step, index) => (
-        <span key={`${step.bomRef}-${index}`} className="route__step">
-          {index > 0 && (
-            <span className="route__arrow" aria-hidden="true">
-              →
-            </span>
-          )}
-          <Node
-            node={step}
-            current={step.purl === targetPurl && index === steps.length - 1}
-            direct={index === 0}
-          />
-        </span>
-      ))}
+    <li className="route-card">
+      <div className="route-card__header">
+        <span className="route-card__number">Route {number}</span>
+        {declaration && (
+          <span className="route-card__declaration">
+            {declaration.scope === 'APPLICATION'
+              ? 'Declared by your module'
+              : 'Declared by intermediate component'}:{' '}
+            <span className="mono">{declaration.coordinates}</span>
+            {declaration.version && <span className="mono"> {declaration.version}</span>}
+          </span>
+        )}
+      </div>
+      <div className="route-card__path">
+        {steps.map((step, index) => (
+          <span key={`${step.bomRef}-${index}`} className="route__step">
+            {index > 0 && (
+              <span className="route__arrow" aria-hidden="true">
+                →
+              </span>
+            )}
+            <Node node={step} current={step.purl === targetPurl && index === steps.length - 1} />
+          </span>
+        ))}
+      </div>
     </li>
   );
 }
 
-function ModulePanel({ module: entry, targetPurl }: { module: ModuleRoutes; targetPurl: string }) {
+function ModulePanel({
+  module: entry,
+  targetPurl,
+  loadMore,
+}: {
+  module: ModuleRoutes;
+  targetPurl: string;
+  loadMore: (entry: ModuleRoutes) => Promise<void>;
+}) {
   const shown = entry.routes.length;
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const remaining = entry.totalRoutes - shown;
+
+  async function handleLoadMore() {
+    setLoadingMore(true);
+    setMoreError(null);
+    try {
+      await loadMore(entry);
+    } catch (error) {
+      setMoreError(error instanceof Error ? error.message : 'Could not load more routes.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   return (
     <section className="module-routes">
       <h3 className="module-routes__name">
@@ -112,16 +151,28 @@ function ModulePanel({ module: entry, targetPurl }: { module: ModuleRoutes; targ
       ) : (
         <ul className="route-list">
           {entry.routes.map((route, index) => (
-            <Route key={index} route={route} targetPurl={targetPurl} />
+            <Route key={index} route={route} targetPurl={targetPurl} number={index + 1} />
           ))}
         </ul>
       )}
 
-      {entry.totalRoutes > shown && (
+      {entry.totalRoutes > shown && shown < MAX_DISPLAYED_ROUTES && (
+        <div className="module-routes__more">
+          <span>
+            Showing the {shown} shortest of {entry.truncated ? `${entry.totalRoutes}+` : entry.totalRoutes} routes.
+          </span>
+          <button className="button" type="button" disabled={loadingMore} onClick={handleLoadMore}>
+            {loadingMore ? 'Loading…' : `Show next ${Math.min(100, remaining)}`}
+          </button>
+        </div>
+      )}
+      {entry.totalRoutes > shown && shown >= MAX_DISPLAYED_ROUTES && (
         <p className="module-routes__more">
-          Showing the {shown} shortest of {entry.truncated ? `${entry.totalRoutes}+` : entry.totalRoutes} routes.
+          Showing the first {shown} routes. Further route bodies are omitted by the display safety limit;
+          the total above remains exact.
         </p>
       )}
+      {moreError && <p className="form-error" role="alert">{moreError}</p>}
     </section>
   );
 }
@@ -217,6 +268,17 @@ export function DependencyGraphPanel({ sbomId, purl }: { sbomId: string; purl: s
   if (!graph) return null;
 
   const modules = graph.reachedFrom;
+  const totalPaths = totalRouteCount(modules);
+
+  async function loadMore(entry: ModuleRoutes) {
+    const page = await fetchComponentRoutePage(sbomId, purl, entry.module.bomRef, entry.routes.length);
+    setGraph((current) => current && ({
+      ...current,
+      reachedFrom: current.reachedFrom.map((candidate) => candidate.module.bomRef === page.moduleBomRef
+        ? { ...candidate, routes: [...candidate.routes, ...page.routes], totalRoutes: page.totalRoutes }
+        : candidate),
+    }));
+  }
 
   return (
     <>
@@ -250,10 +312,16 @@ export function DependencyGraphPanel({ sbomId, purl }: { sbomId: string; purl: s
                 </>
               ) : (
                 <>Pulled in by your own code.</>
-              )}
+              )}{' '}
+              Total paths: <strong>{totalPaths}</strong>.
             </p>
             {modules.map((entry) => (
-              <ModulePanel key={entry.module.bomRef} module={entry} targetPurl={purl} />
+              <ModulePanel
+                key={entry.module.bomRef}
+                module={entry}
+                targetPurl={purl}
+                loadMore={loadMore}
+              />
             ))}
           </>
         )}

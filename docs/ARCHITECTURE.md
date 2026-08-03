@@ -454,7 +454,8 @@ module the answer was verified against and which owning modules were not probed.
 **Route accounting is exact even though route presentation is capped.** For each
 `(component, module)` pair, `DependencyGraphService` enumerates every simple route with a
 per-path cycle guard, counts direct routes and groups transitive routes by their first declared
-dependency. Only the ten shortest paths are retained for the dependency-graph UI.
+dependency. The first 100 shortest paths are retained for the dependency-graph UI; a module can
+request further stable shortest-first pages of 100 up to a 10,000-route display safety ceiling.
 `UpgradeAdvice.ModuleImpact` therefore reports `COMPLETE`, `PARTIAL` or `UNAFFECTED` from the
 uncapped counts: a direct upgrade is complete only in modules declaring the target, a parent
 `dependencyManagement` pin is complete across modules by construction, and an ancestor bump
@@ -464,7 +465,7 @@ than refusing from the aggregate scope.
 
 Exact simple-path enumeration can be exponential in a graph with many diamonds. The per-path
 cycle guard guarantees termination on cyclic SBOMs, but it does not make that work polynomial;
-retaining only ten paths bounds the response size, not the traversal cost. This is a deliberate
+retaining only the requested bounded prefix limits response/DOM size, not traversal cost. This is a deliberate
 correctness trade: remedy coverage may not be inferred from a truncated walk. If a real SBOM
 makes the cost unacceptable, the replacement must either compute the same exact counts by a
 different representation or expose coverage as unavailable. Reintroducing a cap and presenting

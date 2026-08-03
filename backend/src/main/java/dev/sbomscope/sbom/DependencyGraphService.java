@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.UUID;
 
@@ -29,7 +30,7 @@ import dev.sbomscope.sbom.ComponentGraph.TreeNode;
  *
  * <ul>
  *   <li><b>Route accounting and route display are separate.</b> Every simple route is counted
- *       for remedy correctness, while only the ten shortest are retained for the UI. A
+ *       for remedy correctness, while only the requested shortest prefix is retained for the UI. A
  *       per-path visited set prevents cycles from making enumeration non-terminating.</li>
  *   <li><b>Expansion is bounded by expanding each component once.</b> Without that, the same
  *       shared subtree is rebuilt under every parent that reaches it.</li>
@@ -41,11 +42,12 @@ public class DependencyGraphService {
     /**
      * How many routes are read out per module.
      *
-     * <p>Ten keeps ordinary diamonds fully readable while bounding a pathological module's
-     * response and DOM size. This caps <em>routes shown</em>; modules and exact counts are
-     * never capped.
+     * <p>One hundred gives real projects a useful initial survey. Further pages grow the retained
+     * shortest prefix on demand, up to a 10,000-route response/DOM safety ceiling. Modules and
+     * exact route/remedy counts are never capped.
      */
-    private static final int ROUTES_SHOWN = 10;
+    public static final int ROUTE_PAGE_SIZE = 100;
+    public static final int MAX_ROUTE_PREFIX = 10_000;
 
     private final SbomRepository repository;
 
@@ -64,6 +66,13 @@ public class DependencyGraphService {
                 repository.findEdges(sbomId),
                 purl,
                 vulnerablePurls);
+    }
+
+    /** Recomputes and returns one additional stable shortest-first route page for one module. */
+    public ComponentGraph.RoutePage routePageFor(UUID sbomId, String purl, String moduleBomRef,
+                                                   int offset, int limit, Set<String> vulnerablePurls) {
+        return routePageFor(repository.findComponents(sbomId), repository.findEdges(sbomId),
+                purl, moduleBomRef, offset, limit, vulnerablePurls);
     }
 
     /**
@@ -144,7 +153,7 @@ public class DependencyGraphService {
                 .anyMatch(component -> component.scope() == DependencyScope.APPLICATION);
 
         return new ComponentGraph(
-                ancestors(targets, byRef, parents, vulnerablePurls),
+                ancestors(targets, byRef, parents, vulnerablePurls, ROUTE_PAGE_SIZE),
                 ownModuleCount(components),
                 ownCode,
                 descendants(targets.getFirst(), byRef, children, vulnerablePurls));
@@ -185,14 +194,15 @@ public class DependencyGraphService {
      * guarantee rather than an intention.
      *
      * <p>The second enumerates every simple route for exact per-module and per-declaration
-     * coverage. Only its display list is bounded to the shortest ten; correctness never
-     * depends on the display cap.
+     * coverage. Only its display list is bounded to the requested shortest prefix; correctness
+     * never depends on the display or page size.
      */
     private List<ModuleRoutes> ancestors(
             List<StoredComponent> targets,
             Map<String, StoredComponent> byRef,
             Map<String, List<String>> parents,
-            Set<String> vulnerablePurls) {
+            Set<String> vulnerablePurls,
+            int retainedRoutes) {
 
         Set<String> owningModules = reachableModules(targets, byRef, parents);
         if (owningModules.isEmpty()) {
@@ -204,7 +214,7 @@ public class DependencyGraphService {
         for (StoredComponent target : targets) {
             Deque<String> path = new ArrayDeque<>();
             path.push(target.bomRef());
-            walkUp(target.bomRef(), path, byRef, parents, routesByModule);
+            walkUp(target.bomRef(), path, byRef, parents, routesByModule, retainedRoutes, null);
         }
 
         List<ModuleRoutes> result = new ArrayList<>();
@@ -215,7 +225,7 @@ public class DependencyGraphService {
             }
             RouteSummary found = routesByModule.get(moduleRef);
 
-            List<List<GraphNode>> shown = (found == null ? List.<List<String>>of() : found.shortest).stream()
+            List<List<GraphNode>> shown = (found == null ? List.<List<String>>of() : found.orderedShortest()).stream()
                     .map(route -> route.stream()
                             .map(ref -> node(byRef.get(ref), vulnerablePurls))
                             .filter(java.util.Objects::nonNull)
@@ -246,6 +256,49 @@ public class DependencyGraphService {
                 .comparingInt((ModuleRoutes m) -> m.totalRoutes()).reversed()
                 .thenComparing(m -> m.module().coordinates()));
         return result;
+    }
+
+    ComponentGraph.RoutePage routePageFor(
+            List<StoredComponent> components,
+            List<ParsedSbom.DependencyEdge> edges,
+            String purl,
+            String moduleBomRef,
+            int offset,
+            int limit,
+            Set<String> vulnerablePurls) {
+
+        Map<String, StoredComponent> byRef = new HashMap<>();
+        for (StoredComponent component : components) byRef.put(component.bomRef(), component);
+        Map<String, List<String>> parents = new HashMap<>();
+        for (ParsedSbom.DependencyEdge edge : edges) {
+            parents.computeIfAbsent(edge.toBomRef(), ref -> new ArrayList<>()).add(edge.fromBomRef());
+        }
+        List<StoredComponent> targets = components.stream().filter(component -> purl.equals(component.purl())).toList();
+        int retainedRoutes = Math.min(MAX_ROUTE_PREFIX, Math.addExact(offset, limit));
+        Map<String, RouteSummary> routesByModule = new HashMap<>();
+        for (StoredComponent target : targets) {
+            Deque<String> path = new ArrayDeque<>();
+            path.push(target.bomRef());
+            walkUp(
+                    target.bomRef(),
+                    path,
+                    byRef,
+                    parents,
+                    routesByModule,
+                    retainedRoutes,
+                    moduleBomRef);
+        }
+        RouteSummary found = routesByModule.get(moduleBomRef);
+        if (found == null) return new ComponentGraph.RoutePage(moduleBomRef, offset, List.of(), 0);
+        List<List<GraphNode>> ordered = found.orderedShortest().stream()
+                .skip(offset)
+                .limit(limit)
+                .map(route -> route.stream()
+                        .map(ref -> node(byRef.get(ref), vulnerablePurls))
+                        .filter(java.util.Objects::nonNull)
+                        .toList())
+                .toList();
+        return new ComponentGraph.RoutePage(moduleBomRef, offset, ordered, found.total);
     }
 
     /** Complete, linear, and the reason no module can go missing. */
@@ -291,7 +344,9 @@ public class DependencyGraphService {
             Deque<String> path,
             Map<String, StoredComponent> byRef,
             Map<String, List<String>> parents,
-            Map<String, RouteSummary> routesByModule) {
+            Map<String, RouteSummary> routesByModule,
+            int retainedRoutes,
+            String requestedModule) {
 
         for (String parent : parents.getOrDefault(ref, List.of())) {
             // Guards the current path only, not the whole search: a component legitimately
@@ -305,31 +360,45 @@ public class DependencyGraphService {
             }
 
             if (component.scope() == DependencyScope.APPLICATION) {
+                if (requestedModule != null && !requestedModule.equals(parent)) {
+                    continue;
+                }
                 // The path is pushed onto, so iterating it runs from the step nearest this
                 // module down to the component — already the reading order. Only the module
                 // itself has to go on the front.
                 List<String> route = new ArrayList<>(path);
                 route.addFirst(parent);
-                routesByModule.computeIfAbsent(parent, key -> new RouteSummary()).accept(route);
+                routesByModule.computeIfAbsent(parent, key -> new RouteSummary(retainedRoutes)).accept(route);
                 continue;
             }
 
             path.push(parent);
-            walkUp(parent, path, byRef, parents, routesByModule);
+            walkUp(parent, path, byRef, parents, routesByModule, retainedRoutes, requestedModule);
             path.pop();
         }
     }
 
     /**
-     * Exact counts for correctness, plus only the shortest ten routes for presentation.
-     * Keeping these concerns separate is B14's central rule: display density may be capped,
+     * Exact counts for correctness, plus only the requested shortest prefix for presentation.
+     * Keeping these concerns separate is B14's central rule: display density may be paged,
      * the statement about what a remedy covers may not.
      */
     private static final class RouteSummary {
+        private static final Comparator<List<String>> SHORTEST_FIRST = Comparator
+                .comparingInt((List<String> candidate) -> candidate.size())
+                .thenComparing(candidate -> String.join("\u0000", candidate));
+
+        private final int retainedRoutes;
         private int total;
         private int direct;
         private final Map<String, Integer> byDeclaration = new HashMap<>();
-        private final List<List<String>> shortest = new ArrayList<>();
+        /** The longest retained route is first, so replacing it is O(log retainedRoutes). */
+        private final PriorityQueue<List<String>> shortest =
+                new PriorityQueue<>(SHORTEST_FIRST.reversed());
+
+        private RouteSummary(int retainedRoutes) {
+            this.retainedRoutes = retainedRoutes;
+        }
 
         void accept(List<String> route) {
             total++;
@@ -339,13 +408,17 @@ public class DependencyGraphService {
                 byDeclaration.merge(route.get(1), 1, Integer::sum);
             }
 
-            shortest.add(List.copyOf(route));
-            shortest.sort(Comparator
-                    .comparingInt((List<String> candidate) -> candidate.size())
-                    .thenComparing(candidate -> String.join("\u0000", candidate)));
-            if (shortest.size() > ROUTES_SHOWN) {
-                shortest.removeLast();
+            List<String> candidate = List.copyOf(route);
+            if (shortest.size() < retainedRoutes) {
+                shortest.add(candidate);
+            } else if (retainedRoutes > 0 && SHORTEST_FIRST.compare(candidate, shortest.element()) < 0) {
+                shortest.remove();
+                shortest.add(candidate);
             }
+        }
+
+        List<List<String>> orderedShortest() {
+            return shortest.stream().sorted(SHORTEST_FIRST).toList();
         }
     }
 

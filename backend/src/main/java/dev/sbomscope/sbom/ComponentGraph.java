@@ -41,7 +41,7 @@ public record ComponentGraph(
     /**
      * How one of your modules reaches this component.
      *
-     * @param routes       the shortest few, each running module → … → component inclusive
+     * @param routes       the first shortest-first page, each running module → … → component inclusive
      * @param totalRoutes  exact number found. The UI caps only the routes it displays; remedy
      *                     coverage is computed from the complete enumeration
      * @param truncated    retained in the API for compatibility. Enumeration itself is now
@@ -88,6 +88,13 @@ public record ComponentGraph(
 
     /** Exact route count through one declaration, computed independently of the display cap. */
     public record DeclarationRoutes(GraphNode declaration, int routes) {}
+
+    /** One stable shortest-first page for a single owning module. */
+    public record RoutePage(
+            String moduleBomRef,
+            int offset,
+            List<List<GraphNode>> routes,
+            int totalRoutes) {}
 
     /**
      * A node of the descendants tree.

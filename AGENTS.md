@@ -529,10 +529,12 @@ the severity summary went through two designs before the numbers showed which on
   refused while deletion is in progress. A separate check followed by deletion reopens the race
   this gate exists to close.
 
-- **The dependency graph's ten-route cap is presentation only.** Remedy scope uses exact
-  per-module and per-declaration counts computed independently of the paths retained for display.
-  Never derive coverage from `ModuleRoutes.routes()`: a tidy ten-row list is not evidence that
-  only ten routes exist.
+- **The dependency graph's paged route prefix is presentation only.** The initial response keeps
+  the first 100 routes per module, further requests extend that prefix 100 at a time, and the UI
+  stops at the 10,000-route safety ceiling. Remedy scope uses exact per-module and
+  per-declaration counts computed independently of the paths retained for display. Never derive
+  coverage from `ModuleRoutes.routes()`: a displayed page is not evidence that no other routes
+  exist.
 
 - **Never invoke a Maven plugin by prefix (`dependency:tree`) from the probe.** A prefix costs
   a `maven-metadata.xml` lookup to resolve it and then takes the plugin's *latest* version, so

@@ -20,7 +20,7 @@ which official or real supplier CycloneDX VEX document will be the first committ
 must exercise real product/version/component identity and provenance; a handwritten happy-path
 sample is not sufficient. Once selected, implement the normalized statement model and embedded
 CycloneDX adapter described in Stage 5, keeping reachability evidence and supplier VEX as separate
-sources. The latest verified baseline is `mvn clean package`: 284 backend and 26 frontend tests
+sources. The latest verified baseline is `mvn clean package`: 285 backend and 28 frontend tests
 passed, with typecheck, production bundle and runnable JAR. The production npm audit intentionally
 still reports GHSA-qwww-vcr4-c8h2; Stage 3C records its reviewed RSC-only non-applicability and why
 the npm-suggested 7.11.0 downgrade is less safe.
@@ -575,7 +575,7 @@ Release evidence already obtained and not open work:
 
 - no secrets or developer-specific absolute paths were found in the public diff;
 - the WALA dependency tree matches `THIRD_PARTY_NOTICES.md`, including EPL-2.0 source/licence links;
-- the full clean build passed 284 backend and 26 frontend tests; and
+- the full clean build passed 285 backend and 28 frontend tests; and
 - the WALA engine and isolated-worker tests passed on Java 21, the supported runtime floor.
 
 ### Stage 4 — Vulnerable-symbol enhancement

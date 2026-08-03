@@ -25,8 +25,8 @@ The earlier items were each verified in a running
 application rather than asserted. Scanning is now automatic on upload and at startup; registry
 links honour a purl's `repository_url` and split into artifact and version destinations; upload
 takes several files at once and reports per file; the stored document can be downloaded back;
-the dependency graph no longer repeats the module on every route and marks the declaration you
-can change; and the findings table sorts by fix version (V3 adds `fixed_version_sort`) and both
+the dependency graph presents numbered route cards and names the module or intermediate component
+whose edge introduces the inspected dependency; and the findings table sorts by fix version (V3 adds `fixed_version_sort`) and both
 sorts and filters by dependency scope.
 
 **Built since, all from use rather than from this plan:** B15 (regular-expression search in all
@@ -42,7 +42,7 @@ decisions, built and verified against both real feeds. Two additive migrations (
 `dev.sbomscope.exploit` package, two columns in the table and the Inspector, an "Exploitation
 signals" Settings panel with a Load control for a file carried across by hand, and both feeds on
 the Excel About sheet. **The frontend has unit tests for the first time** (Vitest + jsdom +
-Testing Library, 26), added on the maintainer's instruction after a formatter bug rendered a
+Testing Library, 30), added on the maintainer's instruction after a formatter bug rendered a
 probability of 0.99945 as "100%".
 
 **Where the schema stands: V8 is the highest migration taken.** V1 baseline, V2 `osv_index`,
@@ -624,10 +624,12 @@ different questions and a single visualisation serves one of them badly.
       always** — guaranteed by finding the module set with a separate linear reachability
       pass, which no graph can defeat, rather than as a by-product of route enumeration,
       which any dense graph can
-- [x] **Cap routes shown within a module, never the modules or their exact counts.** The ten
-      shortest are shown with the exact total beside them. Remedy coverage is computed from a
-      separate complete enumeration, never from this presentation list
-- [x] Lead with the count — *pulled in by 1 of your 2 modules*, before a single route is read
+- [x] **Page routes within a module, never the modules or their exact counts.** The first 100
+      shortest are shown as numbered cards; a per-module control loads the next 100, up to the
+      10,000-route display safety ceiling. Remedy coverage is computed from a separate complete
+      enumeration, never from this presentation list
+- [x] Lead with both counts — *pulled in by 1 of your 2 modules · total paths: 162*, before a
+      single route is read. The path total is exact and does not depend on how many cards are loaded
 - [x] The parent pom is never the top of a path, **and is not in the denominator either**.
       It aggregates rather than depends, so no route can top out at it; counting it as one of
       "your modules" would put something in the denominator that cannot appear in the
@@ -874,7 +876,7 @@ never learns them.
 - [x] A timeout per probe, and a budget for the run. Maven can hang on an unreachable
       repository, and the panel must be able to give up and say so. 60s per probe, 5 minutes
       per component overall, 8 ascending-refinement probes at most
-- [x] Per remedy: exact routes fixed of routes total, independently of the ten-route display
+- [x] Per remedy: exact routes fixed of routes total, independently of the paged route display
       cap, plus whether the result is complete, partial or unaffected in each module. B14 adds
       the uncapped per-declaration count and renders its scope explicitly
 
@@ -996,8 +998,9 @@ asks what that dependency brings *in isolation*, which is not a question anyone 
       `DependencyGraphService` supplies a *necessary* condition cheaply — a bump that misses
       routes cannot be complete, so it need not be probed at all — while the probe supplies the
       *sufficient* one. This is also what the "routes fixed of routes total" figure needs, and it
-      must be uncapped: the display retains only ten routes per module, so counting against the
-      shown routes would undercount silently in a larger diamond.
+      must be uncapped: the display initially retains 100 routes per module and can page through
+      a bounded 10,000-route prefix, so counting against the shown routes would still undercount
+      silently in a larger diamond.
 - [x] **Which module the answer holds for has to be stated.** A component owned by several
       modules may need a different remedy in each, because their direct sets differ. Built as
       *probe the most-affected module only* — `ComponentGraph.reachedFrom()` is already ordered
@@ -5122,3 +5125,16 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   downgrade carries broader advisories. GHSA-qwww-vcr4-c8h2 is recorded as non-applicable to this
   static `BrowserRouter` SPA, which uses neither RSC nor router actions/data routes, and must be
   revisited when a compatible patched release exists.
+- 2026-08-03 â€” **Dependency routes are paged in hundreds and identify the declaration point.**
+  The former ten-route list was too small for graph inspection. Each module now starts with the
+  100 shortest routes and can request the next 100 independently. The backend recomputes the
+  exact traversal and retains only the ordered prefix needed for the requested page; it does not
+  cache an unbounded combinatorial route set. A 10,000-route display ceiling bounds response and
+  DOM size without changing exact totals or remedy coverage.
+
+  The plain-line renderer is replaced by compact numbered cards. Each card names the immediate
+  predecessor of the inspected component as either the declaring module or an intermediate
+  component, making the relevant edge easy to find on long routes. This is deliberately phrased
+  as the SBOM declaration point and displays the resolved target version; CycloneDX does not prove
+  whether that version was literally written there, inherited from dependency management or
+  selected from a range.

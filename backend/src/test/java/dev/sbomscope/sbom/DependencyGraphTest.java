@@ -145,7 +145,7 @@ class DependencyGraphTest {
     }
 
     @Test
-    void remedyCountsAreExactBeyondTheTenRouteDisplayCap() {
+    void remedyCountsRemainExactWhenEveryRouteFitsTheInitialDisplay() {
         aggregateBuild();
         library("declaration-a", DependencyScope.DIRECT);
         library("declaration-b", DependencyScope.DIRECT);
@@ -168,12 +168,38 @@ class DependencyGraphTest {
 
         ModuleRoutes reached = graphOf("target").reachedFrom().getFirst();
 
-        assertThat(reached.routes()).as("presentation stays capped").hasSize(10);
+        assertThat(reached.routes()).hasSize(35);
         assertThat(reached.totalRoutes()).as("correctness does not use that cap").isEqualTo(35);
         assertThat(reached.truncated()).isFalse();
         assertThat(reached.declarations())
                 .extracting(entry -> entry.declaration().bomRef() + ":" + entry.routes())
                 .containsExactlyInAnyOrder("declaration-a:20", "declaration-b:15");
+    }
+
+    @Test
+    void startsWithOneHundredRoutesAndReturnsTheNextHundredAsAStablePage() {
+        aggregateBuild();
+        library("declaration", DependencyScope.DIRECT);
+        library("target", DependencyScope.TRANSITIVE);
+        depends("backend", "declaration");
+        for (int i = 0; i < 125; i++) {
+            String branch = "branch-" + i;
+            library(branch, DependencyScope.TRANSITIVE);
+            depends("declaration", branch);
+            depends(branch, "target");
+        }
+
+        ModuleRoutes initial = graphOf("target").reachedFrom().getFirst();
+        ComponentGraph.RoutePage next = service.routePageFor(
+                components, edges, "pkg:maven/com.example/target@1.0.0",
+                "backend", 100, 100, Set.of());
+
+        assertThat(initial.routes()).hasSize(100);
+        assertThat(initial.totalRoutes()).isEqualTo(125);
+        assertThat(next.offset()).isEqualTo(100);
+        assertThat(next.routes()).hasSize(25);
+        assertThat(next.totalRoutes()).isEqualTo(125);
+        assertThat(next.routes()).doesNotContainAnyElementsOf(initial.routes());
     }
 
     @Test
