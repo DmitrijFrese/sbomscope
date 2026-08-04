@@ -1980,12 +1980,23 @@ body {
    removes the overflow, so the row and the container are the same width and the tint covers the
    whole line by construction. */
 .finder__name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .finder__version {
-  flex: none;
+  /* A release label can be longer than the coordinates beside it. It remains secondary:
+     keep at least 60% of this narrow finder row available to the component identity and
+     expose the complete clipped version through the span's title. `min-width: 0` is what
+     permits an unbroken version such as major-release-2026-hy-SNAPSHOT to shrink. */
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
 }
 

@@ -297,7 +297,12 @@ export function ComponentFinder({ sbomId, selectedPurl, onSelect }: ComponentFin
                     because the accessible name is a concatenation: without them it reads
                     "…vuln-test-parentChecked, nothing known against it1.0.0". */}
                 <span className="visually-hidden">{` — ${severityTitle(component)} — `}</span>
-                <span className="finder__version mono">{component.version ?? '—'}</span>
+                <span
+                  className="finder__version mono"
+                  title={component.version ?? undefined}
+                >
+                  {component.version ?? '—'}
+                </span>
               </button>
             </li>
           ))}
