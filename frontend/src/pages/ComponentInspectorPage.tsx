@@ -9,6 +9,7 @@ import { UpgradePathsPanel } from '../components/UpgradePathsPanel';
 import { WorkspaceUsagePanel } from '../components/WorkspaceUsagePanel';
 import { describePurl, shortNameOf } from '../components/purl';
 import {
+  bandOf,
   EpssCell,
   KevCell,
   SeverityCell,
@@ -21,6 +22,21 @@ import { usePersistentState } from '../state/persisted';
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
+}
+
+type HeadlineSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+/** The three triage bands shown on a component's identity card. */
+export function headlineSeverityCounts(findings: FindingRow[]): Record<HeadlineSeverity, number> {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const finding of findings) {
+    if (!finding.osvId || finding.severityScore == null) continue;
+    const band = bandOf(finding.severityScore);
+    if (band === 'critical' || band === 'high' || band === 'medium' || band === 'low') {
+      counts[band] += 1;
+    }
+  }
+  return counts;
 }
 
 /** One advisory against this component, in the same terms the findings table uses. */
@@ -79,8 +95,7 @@ function Advisory({ row }: { row: FindingRow }) {
         <div>
           <dt>EPSS</dt>
           <dd>
-            {/* The card has room to say what the percentile is a percentile *of*; the table
-                cell does not, and keeps the short form with the same claim in its tooltip. */}
+            {/* The tooltip explains that the percentile is global rather than SBOM-local. */}
             <EpssCell row={row} detailed />
           </dd>
         </div>
@@ -308,6 +323,7 @@ export function ComponentInspectorPage() {
   );
 
   const advisoryCount = detail?.findings.filter((row) => row.osvId).length ?? 0;
+  const severityCounts = headlineSeverityCounts(detail?.findings ?? []);
 
   const select = useCallback(
     (chosen: string) => {
@@ -473,6 +489,21 @@ export function ComponentInspectorPage() {
                   </span>
                 )}
               </div>
+
+              {advisoryCount > 0 && (
+                <div className="component-identity__risk" aria-label="Vulnerabilities by severity">
+                  {(['critical', 'high', 'medium', 'low'] as const).map((band) => (
+                    <span
+                      className="risk-count"
+                      data-band={band}
+                      data-empty={severityCounts[band] === 0}
+                      key={band}
+                    >
+                      <strong>{severityCounts[band]}</strong> {band}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               <p className="panel__hint mono component-identity__purl">{component.purl}</p>
             </section>

@@ -127,7 +127,7 @@ export function KevCell({ row }: { row: FindingRow }) {
  * also no threshold to colour it against — FIRST states plainly that 0.10 is commonly cited and
  * carries no special authority, so any band we drew would be our invention presented as theirs.
  */
-export function EpssCell({ row, detailed = false }: { row: FindingRow; detailed?: boolean }) {
+export function EpssCell({ row }: { row: FindingRow; detailed?: boolean }) {
   if (!row.cveId) {
     return (
       <span className="text-muted" title="No CVE — EPSS scores CVEs, so this cannot be looked up">
@@ -160,12 +160,9 @@ export function EpssCell({ row, detailed = false }: { row: FindingRow; detailed?
             ' number on an empty one.'
           }
         >
-          {/* "of all scored CVEs" where there is room for it. "99th percentile" alone was read
-              as a rank among the findings on screen, which it is not: the number comes verbatim
-              from FIRST's file and is that CVE's position among all ~354,000 CVEs EPSS scores.
-              The table keeps the short form and the tooltip; a card has the width to say it. */}
+          {/* Keep the visible label compact. The tooltip states that this is a global rank
+              among CVEs scored by EPSS, rather than a rank within the current SBOM. */}
           {formatPercentile(row.epssPercentile)} percentile
-          {detailed && ' of all scored CVEs'}
         </span>
       )}
     </span>

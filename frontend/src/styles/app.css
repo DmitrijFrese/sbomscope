@@ -301,6 +301,7 @@ body {
 .risk-count[data-band='critical'] strong { color: var(--severity-critical); }
 .risk-count[data-band='high']     strong { color: var(--severity-high); }
 .risk-count[data-band='medium']   strong { color: var(--severity-medium); }
+.risk-count[data-band='low']      strong { color: var(--severity-low); }
 
 /* A zero keeps its place but drops its risk colour, so the eye lands only on bands that
    actually have something in them. */
@@ -1937,10 +1938,7 @@ body {
 }
 
 .finder__option {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
+  display: block;
   width: 100%;
   padding: var(--space-1) var(--space-2);
   font: inherit;
@@ -1980,23 +1978,18 @@ body {
    removes the overflow, so the row and the container are the same width and the tint covers the
    whole line by construction. */
 .finder__name {
-  flex: 1 1 auto;
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 
+.finder__separator {
+  color: var(--text-muted);
+}
+
 .finder__version {
-  /* A release label can be longer than the coordinates beside it. It remains secondary:
-     keep at least 60% of this narrow finder row available to the component identity and
-     expose the complete clipped version through the span's title. `min-width: 0` is what
-     permits an unbroken version such as major-release-2026-hy-SNAPSHOT to shrink. */
-  flex: 0 0 auto;
-  min-width: 0;
-  max-width: 40%;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Part of the same readable phrase as the coordinate. A separate right-hand column made a
+     long release label wrap one or two characters at a time; inline flow gives both values
+     the full row width and keeps the complete version visible. */
+  overflow-wrap: anywhere;
   color: var(--text-muted);
 }
 
@@ -2035,6 +2028,12 @@ body {
   grid-template-columns: 280px minmax(0, 1fr);
   gap: var(--space-5);
   align-items: start;
+}
+
+/* Grid children otherwise keep their min-content width. A long CVSS vector or advisory ID
+   can then paint beyond the Inspector column even though the track itself is minmax(0, 1fr). */
+.inspector__main {
+  min-width: 0;
 }
 
 /* What you are looking at, and how to change it. Sticky as one block: scrolling a long
@@ -2794,6 +2793,15 @@ body {
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+
+.component-identity__risk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+  margin-top: var(--space-2);
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .component-identity__purl {

@@ -14,12 +14,10 @@ function formatUploadedAt(iso: string): string {
 }
 
 /**
- * The bands worth triaging on. Low and Unscored are deliberately left off: the card is for
- * deciding which SBOM to open next, and five numbers in a 280px column is a table, not a
- * glance. Nothing here claims to be a total, so the omission cannot make anything not add up
- * — the findings page carries the complete breakdown.
+ * The four scored CVSS bands worth triaging on. Unscored remains on the findings page: it is
+ * a qualitatively different state rather than another rung on the CVSS scale.
  */
-const CARD_BANDS: SeverityBand[] = ['CRITICAL', 'HIGH', 'MEDIUM'];
+const CARD_BANDS: SeverityBand[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
 /**
  * What is known about this SBOM's risk, or that nothing is.

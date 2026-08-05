@@ -182,16 +182,16 @@ describe('EpssCell', () => {
     expect(container.textContent).toContain('87th percentile');
   });
 
-  it('says what the percentile is a percentile of, where there is room', () => {
-    // Asked in use: "is the percentile a global number or local to my SBOM?" It is global —
-    // straight from FIRST's file, a rank among every scored CVE — and the short form was being
-    // read as a rank among the findings on screen. The card has the width to say so.
+  it('keeps the global percentile explanation in the tooltip', () => {
     const card = render(
       <EpssCell row={row({ epssScore: 0.44, epssPercentile: 0.99 })} detailed />,
     );
-    expect(card.container.textContent).toContain('of all scored CVEs');
+    expect(card.container.textContent).toContain('99th percentile');
+    expect(card.container.textContent).not.toContain('of all scored CVEs');
+    expect(card.container.querySelector('.epss__percentile')?.getAttribute('title')).toContain(
+      'not a rank within this SBOM',
+    );
 
-    // The table cell does not, and must not grow: it carries the same claim in its tooltip.
     const cell = render(<EpssCell row={row({ epssScore: 0.44, epssPercentile: 0.99 })} />);
     expect(cell.container.textContent).not.toContain('of all scored CVEs');
     expect(cell.container.querySelector('.epss__percentile')?.getAttribute('title')).toContain(
