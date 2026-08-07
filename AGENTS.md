@@ -121,8 +121,29 @@ raising it with the maintainer first.
 6. **No manual/judgment data fields.** The vulnerability table shows only what we can
    populate from a real data source. Users add their own notes in Excel post-export.
    This is deliberate — it keeps an annotation-persistence layer out of the product.
-7. **Target ecosystems are Maven and npm.** Don't generalize prematurely to other
-   package ecosystems.
+7. **Maven and npm are the ecosystems SBOMscope *reasons* about. Others are reported, not
+   reasoned about.** Amended 2026-08-06, when container image scanning was accepted; the
+   original wording was "target ecosystems are Maven and npm, don't generalize prematurely",
+   and the line it was drawing turns out to sit somewhere more useful than "which package
+   managers appear in a table".
+
+   **Reporting an ecosystem is cheap and stays honest.** A finding needs a package name, a
+   version, an advisory and a fix version, and OSV supplies all four for every ecosystem it
+   publishes. Adding one costs a downloadable archive and a row in a list — not a code path.
+   An image built on Debian genuinely contains dpkg packages, and refusing to name their
+   vulnerabilities would not be restraint, it would be a scanner that hides findings.
+
+   **Reasoning about an ecosystem is expensive and is where the constraint still bites.** The
+   dependency graph, the four remedies, `VersionOrder`, the Maven probe and the upgrade
+   candidates are all built on a model of declared dependencies with resolvable transitive
+   trees. An OS package has no such model: nothing declares `openssl 1.1.1k-r0`, there is no
+   pom to pin it in, and the remedy is to rebuild on a newer base image rather than to change
+   a version somewhere. **Do not extend those surfaces to a new ecosystem — make them
+   honestly absent instead**, the way `NONE` is not `CLEAN`.
+
+   So: new ecosystems may be added to the archive catalogue and may produce findings. Nothing
+   may quietly acquire a dependency graph, a bump probe or an upgrade remedy it cannot
+   support. The full approved list is in ARCHITECTURE.md under *The OSV database*.
 8. **Schema changes go through Flyway migrations.** Never enable Hibernate auto-DDL
    (`ddl-auto` stays `validate` or `none`). The local database holds user data that has
    to survive an application upgrade, so schema evolution must be explicit, reviewable
@@ -399,6 +420,35 @@ take a fresh DOM snapshot; a fixed delay is only a short bridge for the initial 
 above the table answers "did this actually save space" in a way that survives disagreement —
 the severity summary went through two designs before the numbers showed which one was right.
 
+**`title` on an interactive element overrides its accessible name, not just its tooltip.** The
+sidebar's folder-name button carried `title="Click to open, double-click to rename"` for
+discoverability, and every folder in the accessibility tree announced as that sentence instead
+of as its own name — found by reading the tree, not by looking at the screen, where it looks
+fine. A `title` on a `<button>` or `<a>` replaces the accessible name computed from its text
+content; put the hint on a non-interactive wrapper (the row, not the control) if it is still
+wanted, or drop it in favour of a visible label.
+
+**A native drag-and-drop check needs a synchronous read of what is being dragged, not React
+state.** `dragging` held in `useState` is a render behind: a `dragover` fired immediately after
+`dragstart` can be handled before React has re-rendered, so a legality check reading state sees
+`null` and refuses every drop. In ordinary use a mouse moves between the two events, so the race
+is nearly invisible — which is what makes it worth removing rather than trusting. Mirror the
+dragged item into a `useRef` at the same time it is put into state, and make drop-legality
+checks read the ref; state stays for anything only rendering needs (the dimmed source row, an
+overlay appearing). Found by driving a drag from the console, where the two events are one
+statement apart and the race is not invisible at all.
+
+**A `MockMvc` test that is not `@Transactional` commits into the shared in-memory database, and
+that leak can surface in an unrelated test class.** `SbomControllerTest` creates a folder over
+HTTP without `@Transactional`, so the row survives the test and sits in the database for every
+later test class run in the same JVM. It went unnoticed until a *stricter* check elsewhere —
+`FolderService.reorderFolders` refusing a list that is not exactly a group's membership — turned
+the leaked row into a failure in `FolderServiceTest`, a file that never created it. When a test
+class asserts something about "everything at this level" rather than about specific ids it
+created, either make the class `@Transactional` (the default for anything using
+`FolderService`/`SbomService` directly — see `FolderServiceTest`) or scope every assertion to a
+parent the test owns, never to the top level.
+
 ## Gotchas worth knowing
 
 - **Spring Boot 4 splits autoconfiguration into per-integration modules.** Adding a
@@ -451,6 +501,36 @@ the severity summary went through two designs before the numbers showed which on
   picks its parser from the **filename**, which is why uploads are stored as
   `<uuid>.cdx.json`. All three are covered in
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+- **`scan image` is a different contract from `scan source`, in five ways that each cost a
+  measurement to establish.** Verified against v2.4.0 on 2026-08-06; the numbers and the full
+  reasoning are in ARCHITECTURE.md under *External tool contract: container images*.
+
+  1. **`--offline`, never `--offline-vulnerabilities`.** The weaker flag makes only vulnerability
+     *matching* local and leaves base-image identification calling out to deps.dev's
+     `QueryContainerImages` with chain IDs derived from your layer digests. Measured directly:
+     with `--offline-vulnerabilities` the report named three candidate base images; with
+     `--offline` the list is empty and every `base_image_index` is 0.
+  2. **`--all-packages` is mandatory**, because for an image the scanner *is* the inventory.
+     There is no uploaded document to parse components from, and without the flag only
+     vulnerable packages appear — so the component table would silently contain nothing else.
+  3. **The default plugin preset finds operating-system packages only.** `scan image` defaults
+     to `artifact` where `scan source` defaults to `lockfile,sbom,directory`. On
+     `node:14-alpine` that is 17 packages; adding `javascript/packagejson` makes it 478. What
+     SBOMscope claims an image contains is therefore a *flag choice*, and it is opt-in per scan.
+  4. **Only docker-archive is accepted.** An OCI archive — what `podman save` writes without
+     `--format docker-archive` — fails with exit **127** and `file manifest.json not found in
+     tar`. Recognise that text and say what to re-export with, rather than passing it on.
+  5. **The report's ecosystem is versioned and the archive is not.** Packages arrive as
+     `Alpine:v3.17`; the file the scanner loads is `Alpine/all.zip`. Anything deciding which
+     archive a document needs must strip the suffix, or readiness asks for a download that
+     does not exist.
+
+  Two smaller traps in the same report. Package records carry **no purl** and can repeat the
+  same name/version/ecosystem triple — `alpine:3.10` lists `openssl`, `musl` and `busybox`
+  twice — so component identity has to be synthesised rather than taken. And a language-artifact
+  scan returns one `results[]` entry **per manifest file**, not one per document: 462 of them
+  for that node image, against 1 for a lockfile scan.
 
 - **Maven is the opposite of osv-scanner about where the error is, and the assumption was
   borrowed once already.** Maven *leads* with its summary and closes every failure with four

@@ -38,8 +38,15 @@ CORS is only a browser-origin policy and is not such a boundary.
 All created by Flyway migrations under `backend/src/main/resources/db/migration`.
 
 ```
+folder                   a project, or a folder inside one (V9)
+  id, name, parent_id → folder, created_at,
+  sort_order                                                            (V10)
+  (sibling-name uniqueness is enforced in FolderService, not by an index — see below)
+
 sbom                     an uploaded document
-  id, filename, uploaded_at, workspace_path, spec_version, component_count
+  id, filename, uploaded_at, workspace_path, spec_version, component_count,
+  folder_id → folder                                                    (V9)
+  sort_order                                                            (V10)
 
 component                one library within one SBOM
   id, sbom_id → sbom, bom_ref, group_name, name, version, purl,
@@ -89,6 +96,57 @@ workspace_reachability_evidence
   id, analysis_run_id → workspace_analysis_run, purl, module_path, status,
   method_paths, detail
 ```
+
+### Projects are folders (V9)
+
+**`folder` is one self-referencing table rather than a project table and a folder table.** A
+project is simply a folder with no parent, which is what makes "an SBOM may sit at any level"
+a property of the schema rather than three cases in a query. The depth limit — a project plus
+two levels beneath it — is enforced in `FolderService` on insert and on move, not by the
+schema, because it is a product rule about how deep a sidebar stays readable rather than a
+statement about what a tree is.
+
+**`sbom.folder_id` is nullable and that null is the feature**, not an unset field: a document
+outside every project is the ordinary starting state and stays first-class. Filing is a
+convenience laid over the list, so nothing downstream of the sidebar reads `folder_id` at all.
+
+**The model deliberately supports an aggregate view it does not yet offer.** Selecting a
+project and seeing every finding beneath it is not built — the 2026-07-26 "one SBOM at a time"
+decision stands for now — but "which documents are in this project" is a recursive walk over
+`folder.parent_id` plus a `sbom.folder_id` lookup, which is the whole input an aggregate query
+would need. Adding it later is a query and a screen, never a migration. That was the explicit
+reason for choosing this shape on 2026-08-06.
+
+**Deleting a folder never deletes a document.** Its children and its SBOMs move up to its
+parent, so tidying the sidebar cannot destroy an upload. This follows the purge design's rule
+that targets differ by what they cost to undo: re-uploading an SBOM is a drag and drop, but
+losing one to a mis-clicked folder delete is a silent loss of the scan history keyed to it.
+
+**`sort_order` (V10) is scoped to a sibling group, never global.** It is meaningful only among
+rows sharing a parent, and the render separates folders from documents within that, so two rows
+of different kinds never compare their values. A global sequence would have to be rewritten
+whenever anything moved between folders. Ascending, with a new row taking `MIN - 1` so it lands
+at the top of its group without touching its siblings — values therefore drift negative, which
+is harmless because only the relative order is ever read. An explicit reorder rewrites the whole
+group to a dense `0..n-1`, which is also why a reorder request must list **exactly** that
+group's membership: a reorder accepting a foreign id would be a move that skipped the depth,
+cycle and name checks, and `FolderService.reorderFolders` refuses it for that reason.
+
+**The move rules are duplicated into the browser deliberately, as a mirror.**
+`folderTree.ts`'s `canMoveFolder` reproduces the depth, cycle and sibling-name checks so the UI
+can grey out an impossible destination and refuse a drop before it lands, rather than letting a
+drag succeed visually and fail on the server. The backend remains the authority — two tabs can
+race, and a stale client list is always possible — so both sides are tested against the same
+boundaries to stop them drifting into disagreeing about what is legal.
+
+**Planned for Phase 12, and deliberately not in the schema yet.** Container image scanning will
+add `sbom.source_type` (`DOCUMENT`/`IMAGE`) with `image_reference`/`image_digest`/`image_os`, an
+`image_layer` table, and `component.layer_index` — an image being a *document* is what makes the
+findings table, the filters, KEV and EPSS, the export and the sidebar work on one with no new
+code. That design is settled and measured (see *External tool contract: container images* below,
+and the 2026-08-06 decision-log entries), but **no migration exists for it**: the columns above
+are what V9 actually created, and nothing else. Recorded here as intent rather than as schema so
+this section keeps describing what is really on disk.
 
 `osv_index` (V2) is **derived data**: rebuildable from the archive at any time, and erasing
 the archives takes it and `osv_index_source` with them. It exists because the archives name
@@ -383,6 +441,109 @@ might use: `npm sbom` emits `@angular/common` as the name with no group, while o
 generators split it into group `@angular` and name `common`, which renders as
 `@angular:common` — Maven's separator — and would otherwise never match. A miss here does not
 degrade the finding, it discards it.
+
+---
+
+## External tool contract: container images (Phase 12)
+
+The same binary, a different subcommand, and a contract that overlaps the one above less than
+it appears to. Everything here was **measured against v2.4.0 on 2026-08-06** rather than read
+off a documentation page, and the numbers are recorded so nobody repeats the exercise.
+
+```
+osv-scanner scan image --archive <file.tar> --offline --all-packages --format json
+```
+
+with `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` pointing at the same database directory the
+lockfile path uses. **One invocation, one cache directory, many archives** — the scanner loads
+only the ecosystems it actually finds, printing `Loaded Alpine local db from …` and touching
+nothing else. Wider ecosystem coverage is therefore more zip files on disk, not more engines,
+processes or configuration.
+
+**An exported archive is the only accepted input, and that is a constraint-1 decision rather
+than a limitation.** `osv-scanner scan image <name>` *pulls the image if it is not found
+locally*, which fetches executable content on the user's behalf — category 1, refused. An
+archive the user produced with `docker save` is a file on disk, exactly like an uploaded SBOM:
+no daemon, no registry, no container code executed, and no network at all. Verified on a
+machine with no Docker, Podman, crane or skopeo installed.
+
+**Only docker-archive is readable.** `podman save` writes an OCI archive unless told
+`--format docker-archive`, and that fails with exit **127** and `failed to load image from
+tarball …: file manifest.json not found in tar`. That string is recognised so the user is told
+what to re-export with, rather than being handed a scanner error about a file they believe is
+an image. `docker save` needs no flag.
+
+### Five things that decide the invocation
+
+1. **`--offline`, never `--offline-vulnerabilities`.** The weaker flag makes only vulnerability
+   matching local. Base-image identification still calls deps.dev's `QueryContainerImages`,
+   sending chain IDs computed from the image's own layer digests — a question about *your*
+   image, which is category 3 by shape. Measured on `alpine:3.10`: with the weaker flag the
+   report named `alpine` and two unrelated Docker Hub repositories that share a chain ID; with
+   `--offline`, `base_images` is empty and every `base_image_index` is 0.
+2. **`--all-packages`, always.** For a document the components come from the uploaded SBOM and
+   the scanner supplies only findings. For an image **the scanner is the inventory**, and
+   without this flag it reports vulnerable packages alone — so a clean image would import as
+   empty, and `alpine:3.10` would import 1 component instead of 14.
+3. **The plugin preset decides what an image is claimed to contain.** `scan image` defaults to
+   `artifact`, which finds operating-system packages only. Application artifacts need plugins
+   named explicitly, and the difference is not marginal: `node:14-alpine` is **17 packages by
+   default and 478 with `javascript/packagejson`**, the extra 461 being npm's own bundled
+   internals. It is therefore opt-in per scan rather than a default in either direction — a
+   silent 17 would hide an embedded vulnerable jar, and a silent 478 would bury every real
+   finding under the base image's plumbing.
+4. **The ecosystem in the report is versioned; the archive is not.** Packages arrive as
+   `Alpine:v3.17` or `Debian:12`, while the file loaded is `Alpine/all.zip`. The versioned
+   prefixes do exist in the bucket but are stale — `Alpine:v3.20/` was last written in October
+   2024 against the base archive's daily updates — so the suffix is stripped when deciding
+   which archive a document requires. Getting this wrong makes readiness demand a download
+   that is not maintained.
+5. **Exit codes follow the lockfile contract**: 0 and 1 are both success, 1 meaning
+   vulnerabilities were found. 127 is an unreadable archive, and the message is on the **last**
+   line of stderr, as everywhere else in this tool.
+
+### Report shape
+
+```
+image_metadata  { os, layer_metadata[{diff_id, command, is_empty, base_image_index}],
+                  base_images }
+results[] → { source{path,type}, packages[] → { package{name, os_package_name, version,
+                                                        ecosystem, commit,
+                                                        image_origin_details{index}} } }
+```
+
+**Package records carry no purl and are not unique**, which is two problems the SBOM path does
+not have. `alpine:3.10` lists `openssl`, `musl` and `busybox` twice each at the same version —
+apk records sub-packages against a shared origin — so `component.bom_ref` is synthesised from
+the package's position rather than from its identity. The purl is synthesised too, from
+ecosystem, name and version (`pkg:apk/alpine/openssl@1.1.1k-r0`), because the whole finding
+pipeline is keyed on purl. Two rows sharing a synthesised purl is correct and not a collision:
+they are the same library, and one scan row and one finding set is the right answer for both.
+
+**`results[]` is one entry per manifest file, not per document.** A lockfile scan returns 1; the
+node image above returns **462** once application artifacts are enabled, each a `package.json`
+somewhere in the filesystem. Anything iterating results has to expect hundreds.
+
+**`image_origin_details.index` is the introducing layer**, an index into `layer_metadata`, and
+it is the reason `component.layer_index` is planned rather than derived. `layer_metadata[].command`
+carries the Dockerfile instruction that produced the layer, which is what makes a layer legible to
+a reader without any external lookup.
+
+### Base images are not named, deliberately
+
+Naming one requires the network call `--offline` exists to prevent, and no offline substitute
+exists: deps.dev's index of ~730k images is reachable only through its per-image API, and its
+BigQuery dataset needs a Google Cloud account with billing — credentials, which is precisely
+what category 2 excludes. Nothing publishes "base image → vulnerabilities" as a file, and
+structurally nothing would: an image's vulnerabilities *are* its packages' vulnerabilities,
+which are already computed offline here.
+
+What the reader actually needs from base-image identification is **attribution** — which
+findings are mine and which arrived with the base — and that is answerable offline without it.
+An operating-system package is a base-image concern whose remedy is to rebuild on a newer
+image; an application artifact in a later layer is the reader's own, with the ordinary upgrade
+remedy. The UI states that the base image is not identified, and why, rather than leaving its
+absence to be read as a gap.
 
 ---
 
@@ -693,6 +854,42 @@ Recorded so nobody has to re-measure them:
 The archives are the standard OSV export — individual advisory JSON documents in OSV
 schema 1.7.3, with no index, manifest, or scanner-specific metadata. Only the directory
 layout belongs to osv-scanner; the data belongs to no tool.
+
+### The ecosystem catalogue — approved for Phase 12, measured 2026-08-06
+
+**Today the catalogue is Maven and npm.** The list below is the set approved when the container
+image design gate passed; it is recorded here because the measurements are the expensive part
+and would otherwise be retaken. Every size is a `Content-Length` taken from the bucket on
+2026-08-06, not an estimate.
+
+When it is built, the rule is that **nothing is downloaded unless asked for** — each archive
+keeps its own button and progress bar, as Maven and npm already do — and `ScanService.readiness`
+asks a document only for the ecosystems it actually contains.
+
+| Operating systems | | Languages | |
+|---|---|---|---|
+| Alpine | 3.8 MB | Maven | 9.5 MB |
+| Rocky Linux | 4.3 MB | npm | 203.4 MB |
+| AlmaLinux | 5.6 MB | PyPI | 31.2 MB |
+| Red Hat | 24.4 MB | Go | 10.4 MB |
+| Debian | 65.5 MB | Packagist | 9.7 MB |
+| SUSE | 43.6 MB | RubyGems | 4.2 MB |
+| **Ubuntu** | **570.4 MB** | crates.io | 3.2 MB |
+| | | NuGet | 2.4 MB |
+| | | Hex | 0.4 MB |
+| | | Pub · CRAN | <0.1 MB |
+
+**Ubuntu is the number worth knowing**: at 570 MB it is nearly three times npm and by a wide
+margin the largest archive OSV publishes. It is offered because Ubuntu is a common base image,
+but it is the one entry where the download cost is a real obstacle on a restricted machine and
+on the USB-stick workflow, so the UI states its size before it is chosen rather than after.
+
+**The versioned prefixes are not used.** The bucket also carries `Debian:12/`, `Alpine:v3.20/`,
+`Ubuntu:22.04:LTS/` and so on, and they look like the obvious way to download less. They are
+stale — the Alpine and Debian versioned archives were last written in October 2024 while the
+base archives update daily — so a versioned download would silently serve two-year-old
+advisories. The base archive is the maintained one, and the report's versioned ecosystem string
+is mapped onto it rather than the reverse.
 
 ### Index cost for the local matcher (2026-07-29)
 

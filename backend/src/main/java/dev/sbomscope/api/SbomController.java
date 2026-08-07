@@ -16,8 +16,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,6 +33,7 @@ import dev.sbomscope.probe.BumpRequest;
 import dev.sbomscope.sbom.ComponentGraph;
 import dev.sbomscope.sbom.DependencyGraphService;
 import dev.sbomscope.sbom.DependencyScope;
+import dev.sbomscope.sbom.FolderService;
 import dev.sbomscope.sbom.GraphNode;
 import dev.sbomscope.sbom.InvalidSbomException;
 import dev.sbomscope.sbom.SbomFileStore;
@@ -60,11 +63,12 @@ class SbomController {
     private final BumpProbeService bumpProbes;
     private final SettingsService settings;
     private final WorkspaceReachabilityService workspaceReachability;
+    private final FolderService folders;
 
     SbomController(SbomService service, ScanService scans, AutomaticScanner autoScans,
                    SbomFileStore files, DependencyGraphService graphs, UpgradeAdviceService advice,
                    BumpProbeService bumpProbes, SettingsService settings,
-                   WorkspaceReachabilityService workspaceReachability) {
+                   WorkspaceReachabilityService workspaceReachability, FolderService folders) {
         this.service = service;
         this.scans = scans;
         this.autoScans = autoScans;
@@ -74,6 +78,7 @@ class SbomController {
         this.bumpProbes = bumpProbes;
         this.settings = settings;
         this.workspaceReachability = workspaceReachability;
+        this.folders = folders;
     }
 
     record SbomResponse(
@@ -104,7 +109,9 @@ class SbomController {
              * list both clears the marker and updates the numbers, and two sources could
              * disagree about which of the two had happened.
              */
-            boolean scanning) {
+            boolean scanning,
+            /** The project or folder this is filed under, or null when it sits outside them all. */
+            UUID folderId) {
 
         static SbomResponse from(StoredSbom sbom, SbomSeverity severity, boolean scanning) {
             SbomSeverity risk = severity == null ? SbomSeverity.notScanned() : severity;
@@ -117,9 +124,22 @@ class SbomController {
                     sbom.componentCount(),
                     risk.scannedComponents(),
                     risk.counts(),
-                    scanning);
+                    scanning,
+                    sbom.folderId());
         }
     }
+
+    /**
+     * Sets, changes or clears the attached workspace (B20).
+     *
+     * <p>A null or blank path clears it, which is a real operation rather than a malformed
+     * request: a workspace that has moved is worse than none, because analysis then answers
+     * confidently about a directory that is no longer the project.
+     */
+    record WorkspaceRequest(String workspacePath) {}
+
+    /** @param folderId null files the document outside every project */
+    record FolderRequest(UUID folderId) {}
 
     record ComponentResponse(
             UUID id,
@@ -311,6 +331,28 @@ class SbomController {
         if (!service.delete(id)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM");
         }
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Attaches, changes or clears this document's workspace (B20).
+     *
+     * <p>An absolute path in a text field, deliberately, and not a directory picker: B11 was
+     * dropped on 2026-08-02 because a backend-rendered browser turns the local server into a
+     * filesystem browser and a native dialog fails headless. That reasoning is untouched here,
+     * and this endpoint must not become the excuse to reintroduce one.
+     */
+    @PatchMapping("/{id}/workspace")
+    SbomResponse attachWorkspace(@PathVariable UUID id, @RequestBody WorkspaceRequest request) {
+        StoredSbom updated = service.attachWorkspace(id, request.workspacePath())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM"));
+        return SbomResponse.from(updated, scans.severityFor(id), autoScans.isInFlight(id));
+    }
+
+    /** Files this document into a project or folder, or out of every one of them (B19). */
+    @PatchMapping("/{id}/folder")
+    ResponseEntity<Void> moveToFolder(@PathVariable UUID id, @RequestBody FolderRequest request) {
+        folders.moveSbom(id, request.folderId());
         return ResponseEntity.noContent().build();
     }
 

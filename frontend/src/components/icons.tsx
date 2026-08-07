@@ -68,6 +68,61 @@ export function FilesIcon(props: IconProps) {
   );
 }
 
+/** A project or folder in the sidebar tree (B19). */
+export function FolderIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6z" />
+    </Icon>
+  );
+}
+
+/** Small disclosure triangle, rotated by CSS rather than swapped for a second glyph. */
+export function DisclosureIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 6l6 6-6 6" />
+    </Icon>
+  );
+}
+
+/**
+ * An arrow going into a container: move this somewhere else.
+ *
+ * <p>Distinct from {@link FolderIcon} deliberately — using the folder glyph for "move" put
+ * the same mark on the thing and on the action done to it, which reads as "folder" twice.
+ */
+export function MoveIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 12h10" />
+      <path d="M10 9l3 3-3 3" />
+      <path d="M17 5h4v14h-4" />
+    </Icon>
+  );
+}
+
+/** A pencil: renaming a folder in place. */
+export function PencilIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 20h4L20 8l-4-4L4 16v4z" />
+      <path d="M14 6l4 4" />
+    </Icon>
+  );
+}
+
+/** A chain link: attaching, changing or clearing a document's workspace (B20). */
+export function LinkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 15l6-6" />
+      <path d="M13 6l1.5-1.5a3.2 3.2 0 0 1 4.5 4.5L17.5 10.5" />
+      <path d="M11 18l-1.5 1.5a3.2 3.2 0 0 1-4.5-4.5L6.5 13.5" />
+    </Icon>
+  );
+}
+
 /** Arrow into a tray: the stored document, handed back as it arrived. */
 export function DownloadIcon(props: IconProps) {
   return (

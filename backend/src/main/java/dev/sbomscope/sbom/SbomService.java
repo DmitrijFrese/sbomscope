@@ -7,6 +7,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -122,6 +123,45 @@ public class SbomService {
             activityLog.record(ActivityLogger.Category.DATA, "SBOM_DELETED", id.toString());
         }
         return deleted;
+    }
+
+    /**
+     * Sets, changes or clears a document's workspace after upload (B20).
+     *
+     * <p>Until 2026-08-06 the path could only be given as an upload request parameter, so a
+     * document uploaded without one could never gain it and Phase 9's whole reachability
+     * surface stayed permanently unavailable for it — the only workaround being to delete and
+     * re-upload, discarding the document and its scan history to change one string.
+     *
+     * <p>Clearing is a real operation, not a malformed request: a workspace that has moved is
+     * worse than none, because analysis then answers confidently about a directory that is no
+     * longer the project. It reuses {@link #normaliseWorkspacePath} rather than validating
+     * again, so the rules a path must satisfy are stated in exactly one place and the message
+     * a typo produces is the same one the upload gives.
+     *
+     * @return the stored document with its new path, or empty when there is no such document
+     */
+    @Transactional
+    public Optional<StoredSbom> attachWorkspace(UUID id, String workspacePath) {
+        Optional<StoredSbom> existing = repository.findById(id);
+        if (existing.isEmpty()) {
+            return Optional.empty();
+        }
+        StoredSbom sbom = existing.get();
+        String normalised = normaliseWorkspacePath(workspacePath);
+
+        if (Objects.equals(normalised, sbom.workspacePath())) {
+            return Optional.of(sbom);
+        }
+
+        repository.updateWorkspacePath(id, normalised);
+        activityLog.record(ActivityLogger.Category.DATA, "SBOM_WORKSPACE", "UPDATED",
+                normalised == null
+                        ? "%s: workspace detached".formatted(sbom.filename())
+                        : "%s: workspace set to %s".formatted(sbom.filename(), normalised));
+
+        return Optional.of(new StoredSbom(id, sbom.filename(), sbom.uploadedAt(), normalised,
+                sbom.specVersion(), sbom.componentCount(), sbom.folderId()));
     }
 
     /**

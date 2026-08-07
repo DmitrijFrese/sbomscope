@@ -41,7 +41,8 @@ public class SbomRepository {
             toInstant(rs.getObject("uploaded_at", OffsetDateTime.class)),
             rs.getString("workspace_path"),
             rs.getString("spec_version"),
-            rs.getInt("component_count"));
+            rs.getInt("component_count"),
+            rs.getObject("folder_id", UUID.class));
 
     private static final RowMapper<StoredComponent> COMPONENT_MAPPER =
             (ResultSet rs, int row) -> new StoredComponent(
@@ -61,8 +62,9 @@ public class SbomRepository {
 
     public void insertSbom(StoredSbom sbom) {
         jdbc.sql("""
-                INSERT INTO sbom (id, filename, uploaded_at, workspace_path, spec_version, component_count)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO sbom (id, filename, uploaded_at, workspace_path, spec_version,
+                                  component_count, folder_id, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """)
                 .params(
                         sbom.id(),
@@ -70,7 +72,66 @@ public class SbomRepository {
                         sbom.uploadedAt().atOffset(ZoneOffset.UTC),
                         sbom.workspacePath(),
                         sbom.specVersion(),
-                        sbom.componentCount())
+                        sbom.componentCount(),
+                        sbom.folderId(),
+                        topOfGroup(sbom.folderId()))
+                .update();
+    }
+
+    /**
+     * One below the lowest value in the destination group, so a new or moved document lands
+     * at the top of it — see {@code V10__manual_ordering.sql} for why MIN - 1 rather than a
+     * shift of every sibling.
+     */
+    private int topOfGroup(UUID folderId) {
+        String sql = folderId == null
+                ? "SELECT COALESCE(MIN(sort_order), 0) - 1 FROM sbom WHERE folder_id IS NULL"
+                : "SELECT COALESCE(MIN(sort_order), 0) - 1 FROM sbom WHERE folder_id = ?";
+        Integer value = folderId == null
+                ? jdbc.sql(sql).query(Integer.class).single()
+                : jdbc.sql(sql).param(folderId).query(Integer.class).single();
+        return value == null ? 0 : value;
+    }
+
+    /**
+     * Files a document into a folder, or out of every folder when {@code folderId} is null,
+     * placing it at the top of the destination.
+     */
+    public void updateFolder(UUID sbomId, UUID folderId) {
+        jdbc.sql("UPDATE sbom SET folder_id = ?, sort_order = ? WHERE id = ?")
+                .params(folderId, topOfGroup(folderId), sbomId)
+                .update();
+    }
+
+    /** Rewrites one folder's documents to a dense 0..n-1 sequence in the order given. */
+    public void reorder(List<UUID> orderedIds) {
+        for (int position = 0; position < orderedIds.size(); position++) {
+            jdbc.sql("UPDATE sbom SET sort_order = ? WHERE id = ?")
+                    .params(position, orderedIds.get(position))
+                    .update();
+        }
+    }
+
+    /** Every document directly inside {@code folderId}, in display order. */
+    public List<StoredSbom> childrenOf(UUID folderId) {
+        String sql = folderId == null
+                ? "SELECT * FROM sbom WHERE folder_id IS NULL ORDER BY sort_order, uploaded_at DESC"
+                : "SELECT * FROM sbom WHERE folder_id = ? ORDER BY sort_order, uploaded_at DESC";
+        return folderId == null
+                ? jdbc.sql(sql).query(SBOM_MAPPER).list()
+                : jdbc.sql(sql).param(folderId).query(SBOM_MAPPER).list();
+    }
+
+    /**
+     * Sets, changes or clears the attached workspace (B20).
+     *
+     * <p>Clearing matters as much as setting: a path that has moved is worse than no path,
+     * because analysis then answers confidently about a directory that is no longer the
+     * project.
+     */
+    public int updateWorkspacePath(UUID sbomId, String workspacePath) {
+        return jdbc.sql("UPDATE sbom SET workspace_path = ? WHERE id = ?")
+                .params(workspacePath, sbomId)
                 .update();
     }
 
@@ -115,7 +176,9 @@ public class SbomRepository {
     }
 
     public List<StoredSbom> findAll() {
-        return jdbc.sql("SELECT * FROM sbom ORDER BY uploaded_at DESC")
+        // Manual order first, newest-first as the tie-break — which is what a group that has
+        // never been arranged by hand still gets, so nothing looks reshuffled.
+        return jdbc.sql("SELECT * FROM sbom ORDER BY sort_order, uploaded_at DESC")
                 .query(SBOM_MAPPER)
                 .list();
     }

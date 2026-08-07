@@ -18,6 +18,7 @@ import dev.sbomscope.sbom.SbomFileStore;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -178,5 +179,97 @@ class SbomControllerTest {
         mvc.perform(get("/api/sboms/" + id + "/document")).andExpect(status().isNotFound());
 
         mvc.perform(delete("/api/sboms/" + id)).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void attachesChangesAndClearsAWorkspaceAfterUpload() throws Exception {
+        MockMvc mvc = mockMvc();
+        String id = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(multipart("/api/sboms").file(fixture("npm-frontend.cdx.json")))
+                        .andExpect(jsonPath("$.workspacePath").doesNotExist())
+                        .andReturn().getResponse().getContentAsString(),
+                "$.id");
+        String existingDirectory = System.getProperty("java.io.tmpdir");
+
+        // Set, where none existed — the gap B20 closes: until 2026-08-06 this path only
+        // existed on upload, so a document that skipped it could never gain one.
+        mvc.perform(patch("/api/sboms/" + id + "/workspace")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"workspacePath\":\"" + existingDirectory.replace("\\", "\\\\") + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workspacePath").exists());
+
+        // Clear — a real operation, not a no-op: a workspace that has moved is worse than
+        // none, so the endpoint must accept a null path rather than reject it as empty.
+        mvc.perform(patch("/api/sboms/" + id + "/workspace")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"workspacePath\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workspacePath").doesNotExist());
+    }
+
+    @Test
+    void rejectsAttachingAWorkspaceThatDoesNotExist() throws Exception {
+        MockMvc mvc = mockMvc();
+        String id = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(multipart("/api/sboms").file(fixture("npm-frontend.cdx.json")))
+                        .andReturn().getResponse().getContentAsString(),
+                "$.id");
+
+        mvc.perform(patch("/api/sboms/" + id + "/workspace")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"workspacePath\":\"/definitely/not/a/real/directory\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("does not exist")));
+    }
+
+    @Test
+    void attachingAWorkspaceToAnUnknownSbomIsNotFound() throws Exception {
+        mockMvc().perform(patch("/api/sboms/00000000-0000-0000-0000-000000000000/workspace")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"workspacePath\":null}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void filesADocumentIntoAFolderAndBackOut() throws Exception {
+        MockMvc mvc = mockMvc();
+        String id = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(multipart("/api/sboms").file(fixture("npm-frontend.cdx.json")))
+                        .andReturn().getResponse().getContentAsString(),
+                "$.id");
+        String folderId = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                                .post("/api/folders")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"name\":\"Filed here\",\"parentId\":null}"))
+                        .andExpect(status().isCreated())
+                        .andReturn().getResponse().getContentAsString(),
+                "$.id");
+
+        mvc.perform(patch("/api/sboms/" + id + "/folder")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"folderId\":\"" + folderId + "\"}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/sboms")).andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + id + "')].folderId").value(
+                        org.hamcrest.Matchers.contains(folderId)));
+
+        mvc.perform(patch("/api/sboms/" + id + "/folder")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"folderId\":null}"))
+                .andExpect(status().isNoContent());
+        // A filter-projected path keeps a null field as an element — `[null]`, not `[]` —
+        // unlike a plain `$.folderId` on a single object, where `doesNotExist()` applies.
+        mvc.perform(get("/api/sboms")).andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '" + id + "')].folderId").value(
+                        org.hamcrest.Matchers.contains(org.hamcrest.Matchers.nullValue())));
+
+        // This class is not @Transactional, so the folder above is committed and outlives the
+        // test. That leaked into FolderServiceTest, whose top-level group then contained a
+        // folder it never created — caught by the strict membership check in reorderFolders.
+        // Deleting it here keeps the shared in-memory database as this test found it.
+        mvc.perform(delete("/api/folders/" + folderId)).andExpect(status().isNoContent());
     }
 }

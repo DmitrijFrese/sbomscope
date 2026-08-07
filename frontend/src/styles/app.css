@@ -262,10 +262,12 @@ body {
   display: block;
   font-weight: 500;
   overflow-wrap: anywhere;
-  /* Room for the row actions, reserved permanently rather than on hover. They sit over this
+  /* Room for the row action, reserved permanently rather than on hover: it sits over this
      line, and a filename that reflowed the moment the pointer arrived would be worse than a
-     little space that is always there. Measured to clear both controls exactly. */
-  padding-right: 46px;
+     little space that is always there. Went 46px → 100px when the cluster grew to four
+     icons, and back to 30px once they collapsed into a single ⋯ menu. Re-measure rather
+     than trusting the arithmetic if anything is added beside it. */
+  padding-right: 30px;
 }
 
 .sbom-card__meta {
@@ -311,6 +313,283 @@ body {
 
 .risk-count[data-empty='true'] strong {
   color: inherit;
+}
+
+/* --------------------------------------------- projects and folders (B19) ----- */
+
+.sidebar__new-project {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.sidebar__new-project input {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-row {
+  list-style: none;
+}
+
+/* Tight on purpose: at 13px the chevron, the folder mark and the name are one label, and
+   4px between each of them read as three separate things with the name pushed off to the
+   right. 2px keeps them grouped and gives the width back to the name. */
+.folder-row__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+  padding-right: var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.folder-row__header:hover {
+  background: var(--bg-hover);
+}
+
+.folder-row__disclosure {
+  width: 16px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.folder-row__disclosure-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--transition);
+}
+
+.folder-row__icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+/* The name is what the row is for, so it gets the space and everything else is sized to
+   what it needs. Previously four action buttons reserved ~94px of a 280px column whether or
+   not they were visible — `opacity: 0` hides a control without giving its space back — and
+   the name was left with about a third of the row. Measured before the change: names
+   ellipsised at roughly 12 characters. */
+.folder-row__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 3px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.folder-row__name:hover {
+  border-color: var(--border);
+}
+
+/* Counts only, no words: the colours already say which band, and spelling it out on a
+   folder row costs the width the name needs. The full breakdown is the row's `title`. */
+.folder-row__rollup {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-row__rollup .risk-count strong {
+  font-size: 11px;
+}
+
+.folder-row__action {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.folder-row__action svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Drawn over the tree rather than inside it. Fixed and portalled to <body>, so the list's
+   own `overflow: auto` cannot crop it and opening it moves nothing. Its position is
+   computed from the trigger before paint — see RowMenu. */
+.row-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: var(--space-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 8px 24px rgb(0 0 0 / 0.18));
+}
+
+.row-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: none;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.row-menu__item:hover,
+.row-menu__item:focus-visible {
+  background: var(--bg-hover);
+}
+
+.row-menu__item--danger {
+  color: var(--severity-high);
+}
+
+.row-menu__icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Naming a folder, with the sibling-name rule checked as you type. */
+.folder-name-form {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px var(--space-1);
+}
+
+.folder-name-form__row {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.folder-name-form__row input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px var(--space-1);
+  font: inherit;
+}
+
+.folder-name-form__row input[aria-invalid='true'] {
+  border-color: var(--severity-high);
+}
+
+/* A statement about what would happen, not an error that has happened — the submit is
+   disabled, so nothing has failed yet. Muted rather than alarming for that reason. */
+.folder-name-form__note {
+  margin: var(--space-1) 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.sidebar__new-project .folder-name-form__note {
+  margin-bottom: var(--space-1);
+}
+
+.folder-row__children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The "Move to…" control. A plain <select>: keyboard-reachable and needs no popover
+   machinery, and depth is spelled out as a text prefix since <option> elements cannot be
+   reliably indented with CSS across browsers. */
+.move-to-menu {
+  display: block;
+  width: calc(100% - var(--space-4));
+  margin: 2px var(--space-2) var(--space-2);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------- drag and drop (B19) ----- */
+
+/* The row being dragged stays visible but recedes, so the reader keeps track of what is in
+   their hand without it competing with the drop target they are aiming at. */
+.sbom-row[data-dragging='true'],
+.folder-row__header[data-dragging='true'] {
+  opacity: 0.4;
+}
+
+/* A folder that would accept the drop. An outline rather than a background, because the
+   header already uses background for hover and a third meaning on one property is how a
+   row stops being readable — the same reasoning that kept the severity mark off the
+   finder's row background. */
+.folder-row__header[data-drop-target='true'] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-subtle);
+}
+
+/* "Outside every project" is not a row, so it gets an explicit target. Only rendered while
+   a drag is in progress. */
+.sidebar__root-drop {
+  margin: var(--space-2);
+  padding: var(--space-3);
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+
+.sidebar__root-drop[data-active='true'] {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  border-style: solid;
+}
+
+/* Why the target under the pointer is refusing, said during the drag rather than after it. */
+.sidebar__drag-refusal {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-editor {
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.workspace-editor__input {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+}
+
+.workspace-editor__actions {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
 }
 
 /* -------------------------------------------------------------- misc ----- */
@@ -2938,4 +3217,43 @@ body {
 :where(button, a):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ------------------------------------------- reordering within a group (V10) ----- */
+
+/* Where a reorder drop would land. A line rather than a highlight, because the answer is a
+   position between two rows and a highlighted row would say "into this one" — which for a
+   folder is a different drop with a different result. */
+.sbom-row[data-insert],
+.folder-row__header[data-insert] {
+  position: relative;
+}
+
+.sbom-row[data-insert]::before,
+.folder-row__header[data-insert]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.sbom-row[data-insert='before']::before,
+.folder-row__header[data-insert='before']::before {
+  top: -1px;
+}
+
+.sbom-row[data-insert='after']::before,
+.folder-row__header[data-insert='after']::before {
+  bottom: -1px;
+}
+
+/* An empty folder keeps the chevron's space so the columns stay aligned, but greys it out:
+   there is nothing to disclose, and a control that opens onto nothing reads as broken. */
+.folder-row__disclosure[data-empty='true'] {
+  opacity: 0.3;
+  cursor: default;
 }

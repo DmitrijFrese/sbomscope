@@ -1,74 +1,24 @@
 import { useState } from 'react';
+import type { FormEvent } from 'react';
 
-import { SEVERITY_LABELS, sbomDocumentUrl } from '../api/client';
-import type { Sbom, SeverityBand } from '../api/client';
+import { siblingNameTaken } from '../sboms/folderTree';
 import { useSboms } from '../sboms/SbomProvider';
 import { SbomUploadForm } from './SbomUploadForm';
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from './icons';
-
-function formatUploadedAt(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-/**
- * The four scored CVSS bands worth triaging on. Unscored remains on the findings page: it is
- * a qualitatively different state rather than another rung on the CVSS scale.
- */
-const CARD_BANDS: SeverityBand[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
-
-/**
- * What is known about this SBOM's risk, or that nothing is.
- *
- * <p>Never-scanned is stated rather than rendered as zeros. An unexamined document has no
- * critical vulnerabilities in exactly the same way an unexamined one has none, and a card
- * that cannot tell the two apart is the same conflation the schema, the bands and the scan
- * table all exist to prevent.
- */
-function SbomRisk({ sbom }: { sbom: Sbom }) {
-  // Said before the counts rather than beside them: while a scan is running the numbers are
-  // whatever was known beforehand, and "0 critical" from a document still being read is the
-  // same false reassurance "Not scanned" exists to prevent.
-  if (sbom.scanning) {
-    return <span className="sbom-card__meta">Scanning…</span>;
-  }
-  if (sbom.scannedComponents === 0) {
-    return <span className="sbom-card__meta">Not scanned</span>;
-  }
-
-  return (
-    <span className="sbom-card__risk">
-      {CARD_BANDS.map((band) => {
-        const count = sbom.severityCounts[band] ?? 0;
-        return (
-          // Empty bands are dimmed rather than dropped, so "none found" stays visibly
-          // different from "not measured" — the rule the severity chips already follow.
-          <span
-            key={band}
-            className="risk-count"
-            data-band={band.toLowerCase()}
-            data-empty={count === 0}
-          >
-            <strong>{count}</strong> {SEVERITY_LABELS[band].toLowerCase()}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
+import { SidebarTree } from './SidebarTree';
+import { ChevronLeftIcon, ChevronRightIcon } from './icons';
 
 interface SbomSidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }
 
-/** Lists uploaded SBOMs. Selection drives both main views. */
+/** Lists uploaded SBOMs, organised into projects and folders (B19). Selection drives both main views. */
 export function SbomSidebar({ collapsed, onToggleCollapsed }: SbomSidebarProps) {
-  const { sboms, selected, loading, error, select, remove } = useSboms();
+  const { sboms, folders, loading, error, createFolder } = useSboms();
   const [uploading, setUploading] = useState(false);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [projectName, setProjectName] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Collapsed leaves a rail rather than nothing at all: a sidebar that vanishes entirely
   // gives no clue how to bring it back, and the count is worth keeping in view.
@@ -93,15 +43,22 @@ export function SbomSidebar({ collapsed, onToggleCollapsed }: SbomSidebarProps) 
     );
   }
 
-  async function onRemove(id: string, filename: string) {
-    if (!window.confirm(`Delete ${filename}? Its components and analysis are removed too.`)) {
-      return;
-    }
-    setRemoveError(null);
+  // Checked as the reader types, against the folder list the sidebar already holds — the
+  // backend enforces the same rule and stays the authority, but there is no reason to make
+  // someone submit a name only to have it come back red.
+  const projectNameTaken = siblingNameTaken(folders, undefined, projectName);
+  const canCreateProject = projectName.trim().length > 0 && !projectNameTaken;
+
+  async function submitNewProject(event: FormEvent) {
+    event.preventDefault();
+    if (!canCreateProject) return;
+    setCreateError(null);
     try {
-      await remove(id);
+      await createFolder(projectName);
+      setProjectName('');
+      setCreatingProject(false);
     } catch (e) {
-      setRemoveError(e instanceof Error ? e.message : 'Could not delete that SBOM.');
+      setCreateError(e instanceof Error ? e.message : 'Could not create that project.');
     }
   }
 
@@ -110,6 +67,14 @@ export function SbomSidebar({ collapsed, onToggleCollapsed }: SbomSidebarProps) 
       <div className="sidebar__header">
         <h2 className="sidebar__title">SBOMs</h2>
         <div className="sidebar__header-actions">
+          <button
+            type="button"
+            className="button button--small"
+            onClick={() => setCreatingProject((open) => !open)}
+            aria-expanded={creatingProject}
+          >
+            {creatingProject ? 'Close' : 'New project'}
+          </button>
           <button
             type="button"
             className="button button--small"
@@ -133,20 +98,45 @@ export function SbomSidebar({ collapsed, onToggleCollapsed }: SbomSidebarProps) 
 
       {uploading && <SbomUploadForm onDone={() => setUploading(false)} />}
 
+      {creatingProject && (
+        <form className="sidebar__new-project" onSubmit={submitNewProject}>
+          <div className="folder-name-form__row">
+            <input
+              type="text"
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="Project name"
+              autoFocus
+              aria-invalid={projectNameTaken}
+            />
+            <button type="submit" className="button button--small" disabled={!canCreateProject}>
+              Create
+            </button>
+          </div>
+          {projectNameTaken && (
+            <p className="folder-name-form__note" role="status">
+              There is already a project called "{projectName.trim()}".
+            </p>
+          )}
+        </form>
+      )}
+
       {error && (
         <p className="form-error" role="alert">
           {error}
         </p>
       )}
-      {removeError && (
+      {createError && (
         <p className="form-error" role="alert">
-          {removeError}
+          {createError}
         </p>
       )}
 
-      {loading && sboms.length === 0 && <p className="sidebar__note">Loading…</p>}
+      {loading && sboms.length === 0 && folders.length === 0 && (
+        <p className="sidebar__note">Loading…</p>
+      )}
 
-      {!loading && sboms.length === 0 && !uploading && (
+      {!loading && sboms.length === 0 && folders.length === 0 && !uploading && !creatingProject && (
         <div className="sidebar__empty">
           <div className="empty-state">
             <p style={{ margin: 0 }}>No SBOMs uploaded yet.</p>
@@ -154,60 +144,7 @@ export function SbomSidebar({ collapsed, onToggleCollapsed }: SbomSidebarProps) 
         </div>
       )}
 
-      {sboms.length > 0 && (
-        <ul className="sidebar__list">
-          {sboms.map((sbom) => {
-            const isSelected = selected?.id === sbom.id;
-            return (
-              <li key={sbom.id} className="sbom-row">
-                <button
-                  type="button"
-                  className="sbom-card"
-                  aria-current={isSelected ? 'true' : undefined}
-                  data-selected={isSelected}
-                  onClick={() => select(sbom.id)}
-                >
-                  <span className="sbom-card__name">{sbom.filename}</span>
-                  <span className="sbom-card__meta">
-                    {formatUploadedAt(sbom.uploadedAt)} · {sbom.componentCount} components
-                  </span>
-                  <span className="sbom-card__meta">CycloneDX {sbom.specVersion}</span>
-                  <SbomRisk sbom={sbom} />
-                  {sbom.workspacePath && (
-                    <span className="sbom-card__meta sbom-card__path" title={sbom.workspacePath}>
-                      {sbom.workspacePath}
-                    </span>
-                  )}
-                </button>
-
-                <div className="sbom-row__actions">
-                  {/* A plain link, not a fetch: the browser does the download and takes the
-                      filename from the response, which is the name it was uploaded under. */}
-                  <a
-                    className="icon-button sbom-row__action"
-                    href={sbomDocumentUrl(sbom.id)}
-                    download
-                    aria-label={`Download ${sbom.filename}`}
-                    title="Download the uploaded document"
-                  >
-                    <DownloadIcon />
-                  </a>
-
-                  <button
-                    type="button"
-                    className="icon-button sbom-row__action"
-                    onClick={() => onRemove(sbom.id, sbom.filename)}
-                    aria-label={`Delete ${sbom.filename}`}
-                    title="Delete"
-                  >
-                    ×
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {(sboms.length > 0 || folders.length > 0) && <SidebarTree />}
     </aside>
   );
 }

@@ -83,6 +83,112 @@ export interface Sbom {
    * was known before it started, so a card showing this is showing an answer in progress.
    */
   scanning: boolean;
+  /** The project or folder this is filed under. Absent means outside every project. */
+  folderId?: string;
+}
+
+/**
+ * A project, or a folder inside one (B19). There is no separate project type: a project is
+ * a folder with `parentId` absent — the same reasoning as the backend's `StoredFolder`, kept
+ * in step so "is this a project" means one check on both sides.
+ */
+export interface Folder {
+  id: string;
+  name: string;
+  parentId?: string;
+  /** ISO-8601 instant. */
+  createdAt: string;
+}
+
+export function fetchFolders(): Promise<Folder[]> {
+  return request<Folder[]>('/folders');
+}
+
+/** @param name project or folder name
+ @param parentId absent creates a project — a folder at the top level */
+export function createFolder(name: string, parentId?: string): Promise<Folder> {
+  return request<Folder>('/folders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parentId: parentId ?? null }),
+  });
+}
+
+export function renameFolder(id: string, name: string): Promise<Folder> {
+  return request<Folder>(`/folders/${id}/name`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+}
+
+/** @param parentId absent moves the folder to the top level, making it a project */
+export function moveFolder(id: string, parentId?: string): Promise<Folder> {
+  return request<Folder>(`/folders/${id}/parent`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentId: parentId ?? null }),
+  });
+}
+
+/** Its contents move up to the parent. No document is ever deleted. */
+export function deleteFolder(id: string): Promise<void> {
+  return request<void>(`/folders/${id}`, { method: 'DELETE' });
+}
+
+/**
+ * Rewrites the manual order of one level (V10).
+ *
+ * <p>Both groups in one call: a drag lands in exactly one level and the client already holds
+ * both lists, so two requests would leave the tree briefly half-reordered. Omit a group that
+ * did not change.
+ */
+export function reorderLevel(
+  parentId: string | undefined,
+  order: { folderIds?: string[]; sbomIds?: string[] },
+): Promise<void> {
+  return request<void>('/folders/order', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      parentId: parentId ?? null,
+      folderIds: order.folderIds ?? null,
+      sbomIds: order.sbomIds ?? null,
+    }),
+  });
+}
+
+/** Restores alphabetical order within one level, overwriting the manual order there. */
+export function sortLevelByName(parentId?: string): Promise<void> {
+  return request<void>('/folders/sort-by-name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentId: parentId ?? null }),
+  });
+}
+
+/** Files a document into a project or folder, or out of every one of them. */
+export function moveSbomToFolder(sbomId: string, folderId?: string): Promise<void> {
+  return request<void>(`/sboms/${sbomId}/folder`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId: folderId ?? null }),
+  });
+}
+
+/**
+ * Sets, changes or clears an SBOM's attached workspace after upload (B20).
+ *
+ * An absent or blank path clears it — a real operation, not a no-op: a workspace that has
+ * moved is worse than none, since analysis then answers confidently about a directory that
+ * is no longer the project.
+ */
+export function attachWorkspace(sbomId: string, workspacePath?: string): Promise<Sbom> {
+  return request<Sbom>(`/sboms/${sbomId}/workspace`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath: workspacePath ?? null }),
+  });
 }
 
 /**

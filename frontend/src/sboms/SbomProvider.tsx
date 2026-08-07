@@ -1,8 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { deleteSbom, fetchSboms, uploadSbom } from '../api/client';
-import type { Sbom } from '../api/client';
+import {
+  attachWorkspace as attachWorkspaceRequest,
+  createFolder as createFolderRequest,
+  deleteFolder as deleteFolderRequest,
+  deleteSbom,
+  fetchFolders,
+  fetchSboms,
+  moveFolder as moveFolderRequest,
+  moveSbomToFolder as moveSbomToFolderRequest,
+  renameFolder as renameFolderRequest,
+  reorderLevel as reorderLevelRequest,
+  sortLevelByName as sortLevelByNameRequest,
+  uploadSbom,
+} from '../api/client';
+import type { Folder, Sbom } from '../api/client';
 import { usePersistentState } from '../state/persisted';
 
 /**
@@ -106,6 +119,26 @@ interface SbomContextValue {
   /** Appends the purl if it is not already open, and makes it active either way. */
   openInspectorTab: (sbomId: string, purl: string) => void;
   closeInspectorTab: (sbomId: string, purl: string) => void;
+
+  // --- projects and folders (B19) --------------------------------------------------
+
+  /** Every project and folder, flat — the sidebar assembles the tree itself. */
+  folders: Folder[];
+  createFolder: (name: string, parentId?: string) => Promise<Folder>;
+  renameFolder: (id: string, name: string) => Promise<Folder>;
+  moveFolder: (id: string, parentId?: string) => Promise<Folder>;
+  /** Its contents move up to the parent. No document is ever deleted. */
+  deleteFolder: (id: string) => Promise<void>;
+  moveSbomToFolder: (sbomId: string, folderId?: string) => Promise<void>;
+  /** Rewrites the manual order of one level (V10). */
+  reorderLevel: (parentId: string | undefined, order: { folderIds?: string[]; sbomIds?: string[] }) => Promise<void>;
+  /** Restores alphabetical order within one level. */
+  sortLevelByName: (parentId?: string) => Promise<void>;
+
+  // --- workspace relink (B20) -------------------------------------------------------
+
+  /** Sets, changes or clears a document's workspace after upload. */
+  attachWorkspace: (sbomId: string, workspacePath?: string) => Promise<void>;
 }
 
 const SbomContext = createContext<SbomContextValue | undefined>(undefined);
@@ -281,6 +314,98 @@ export function SbomProvider({ children }: { children: ReactNode }) {
     [sboms, selectedId],
   );
 
+  // --- projects and folders (B19) ---------------------------------------------------
+  //
+  // A second top-level list beside `sboms`, on the same "backend is the source of truth"
+  // rule: every mutation is followed by a reload rather than patched locally. Kept as its
+  // own piece of state rather than nested under `sboms` because the sidebar renders both
+  // lists together and needs to tell "no folders yet" apart from "still loading".
+  const [folders, setFolders] = useState<Folder[]>([]);
+
+  const reloadFolders = useCallback(async () => {
+    try {
+      setFolders(await fetchFolders());
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadFolders();
+  }, [reloadFolders]);
+
+  const createFolder = useCallback(
+    async (name: string, parentId?: string) => {
+      const created = await createFolderRequest(name, parentId);
+      await reloadFolders();
+      return created;
+    },
+    [reloadFolders],
+  );
+
+  const renameFolder = useCallback(
+    async (id: string, name: string) => {
+      const renamed = await renameFolderRequest(id, name);
+      await reloadFolders();
+      return renamed;
+    },
+    [reloadFolders],
+  );
+
+  const moveFolder = useCallback(
+    async (id: string, parentId?: string) => {
+      const moved = await moveFolderRequest(id, parentId);
+      await reloadFolders();
+      return moved;
+    },
+    [reloadFolders],
+  );
+
+  const deleteFolderAction = useCallback(
+    async (id: string) => {
+      await deleteFolderRequest(id);
+      // A deleted folder relocates its documents to the parent, so both lists move.
+      await Promise.all([reloadFolders(), reload()]);
+    },
+    [reloadFolders, reload],
+  );
+
+  const moveSbomToFolder = useCallback(
+    async (sbomId: string, folderId?: string) => {
+      await moveSbomToFolderRequest(sbomId, folderId);
+      await reload();
+    },
+    [reload],
+  );
+
+  const reorderLevel = useCallback(
+    async (parentId: string | undefined, order: { folderIds?: string[]; sbomIds?: string[] }) => {
+      await reorderLevelRequest(parentId, order);
+      // Both lists carry order, so both are refetched — a reorder of folders leaves the
+      // document order untouched but the two are read from one tree.
+      await Promise.all([reloadFolders(), reload()]);
+    },
+    [reloadFolders, reload],
+  );
+
+  const sortLevelByName = useCallback(
+    async (parentId?: string) => {
+      await sortLevelByNameRequest(parentId);
+      await Promise.all([reloadFolders(), reload()]);
+    },
+    [reloadFolders, reload],
+  );
+
+  // --- workspace relink (B20) --------------------------------------------------------
+
+  const attachWorkspaceAction = useCallback(
+    async (sbomId: string, workspacePath?: string) => {
+      await attachWorkspaceRequest(sbomId, workspacePath);
+      await reload();
+    },
+    [reload],
+  );
+
   const value = useMemo(
     () => ({
       sboms,
@@ -294,6 +419,15 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       inspectorTabs,
       openInspectorTab,
       closeInspectorTab,
+      folders,
+      createFolder,
+      renameFolder,
+      moveFolder,
+      deleteFolder: deleteFolderAction,
+      moveSbomToFolder,
+      reorderLevel,
+      sortLevelByName,
+      attachWorkspace: attachWorkspaceAction,
     }),
     [
       sboms,
@@ -306,6 +440,15 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       inspectorTabs,
       openInspectorTab,
       closeInspectorTab,
+      folders,
+      createFolder,
+      renameFolder,
+      moveFolder,
+      deleteFolderAction,
+      moveSbomToFolder,
+      reorderLevel,
+      sortLevelByName,
+      attachWorkspaceAction,
     ],
   );
 

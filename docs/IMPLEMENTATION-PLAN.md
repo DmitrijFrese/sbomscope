@@ -6,7 +6,7 @@ Working document. Iterated across implementation sessions.
 land. Add newly-discovered work as you go. Record design decisions in the decision log
 at the bottom — including reversals, with the reasoning.
 
-Last updated: 2026-08-03 · Status: **Phases 0–7 complete. Phase 8 is complete for the Maven
+Last updated: 2026-08-07 · Status: **Phases 0–7 complete. Phase 8 is complete for the Maven
 build-tool path and has its offline Tier 1 for npm; npm and Gradle Tier 2 are not built.**
 Maven's Tier 2 passes A–D are built and verified against a real `mvn`, plus the configurable probe budget,
 Maven profiles, configurable plugin versions, queued-vs-running status, full `mvn` command and
@@ -45,19 +45,40 @@ the Excel About sheet. **The frontend has unit tests for the first time** (Vites
 Testing Library, 30), added on the maintainer's instruction after a formatter bug rendered a
 probability of 0.99945 as "100%".
 
-**Where the schema stands: V8 is the highest migration taken.** V1 baseline, V2 `osv_index`,
-V3 `fixed_version_sort`, V4 `kev_entry`/`kev_source`, V5 `epss_score`/`epss_source`, and V6–V8
-workspace reachability runs, stopped state, module mappings and coverage. Additive only, per
-constraint 8.
+**Where the schema stands: V10 is the highest migration taken.** V1 baseline, V2 `osv_index`,
+V3 `fixed_version_sort`, V4 `kev_entry`/`kev_source`, V5 `epss_score`/`epss_source`, V6–V8
+workspace reachability runs/stopped state/module mappings/coverage, V9 `folder` and
+`sbom.folder_id`, V10 `sort_order` on both. Additive only, per constraint 8. **Phase 12's own
+migration must start at V11 or later** — an earlier V10 for container images was written,
+applied to one developer database, and deliberately backed out before commit; see the
+2026-08-06 and 2026-08-07 decision log entries.
 
 README, AGENTS.md and ARCHITECTURE were brought back in step with all of it on 2026-08-01.
 
-Next: **Phase 11 Tier A (VEX consumption)**. Phase 9 now provides evidence-graded direct and
-transitive Maven/JVM call analysis. VEX follows
-as independent supplier context; container-image scanning follows the workspace work and begins
-with a design gate rather than silently expanding the project's ecosystem and engine contracts.
-B13, B14 and B12 were completed in that order on 2026-08-02. B10 and B11 were dropped on the
-same date.
+**Reordered on 2026-08-06, on the maintainer's decision, and the reason is recorded because it
+reverses a stated order.** Phase 12 was scheduled after VEX and behind a design gate. That gate
+was opened and passed the same day — measured against a real scanner, seven decisions taken, and
+constraint 7 amended rather than broken — so **container image scanning is now scheduled ahead of
+Phase 11**. Its design is settled and its measurements recorded; **no implementation exists yet.**
+An early V10 migration and scanner plumbing were written and then deliberately backed out on
+2026-08-06 so that B19/B20 could be committed as a coherent changeset — see the decision log.
+Two quality-of-life items were raised alongside it and became Phase 13.
+
+**B19 and B20 are built and verified, closed out before continuing image scanning, on the
+maintainer's instruction.** Built and verified 2026-08-06; extended with a second pass the same
+day (folder deletion, sibling-name refusal wording) and a third on 2026-08-07 — native
+drag-and-drop (no new dependency), manual ordering (V10), and a row redesign after the built
+version proved unreadable at 13px. All of it went through the real jar in a browser, not only
+the test suite. 317 backend tests and 51 frontend tests pass, `mvn clean package` is green end
+to end, and B11's directory-picker drop was not reintroduced — B20 uses the absolute-path field
+that drop settled on.
+
+Phase 9 now provides evidence-graded direct and transitive Maven/JVM call analysis. B13, B14 and
+B12 were completed in that order on 2026-08-02. B10 and B11 were dropped on the same date.
+
+**Next: Phase 12 (container image scanning)**, design settled and measured, no implementation
+on disk — its migration is V11 or later, never V10. Phase 11 (VEX) follows it, per the
+2026-08-06 reordering decision above.
 
 ---
 
@@ -77,7 +98,8 @@ same date.
 | 9 | Workspace reachability analysis | **Maven/JVM component-boundary MVP done**; vulnerable-method data remains deferred |
 | 10 | Packaging and distribution | Baseline done; samples/quickstart remain |
 | 11 | VEX — read supplier exploitability and mitigation context | Planned after Phase 9 |
-| 12 | Container image scanning | Planned after workspace analysis and VEX; design gate first |
+| 12 | Container image scanning | **Design gate passed 2026-08-06** — measured, decided, in build |
+| 13 | Projects, and a document's own settings | **Built and verified 2026-08-07** — B19 (with drag-and-drop and manual ordering), B20 |
 
 Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
 Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
@@ -1501,40 +1523,75 @@ VEX document turns up to test against, but must retain the provenance boundary a
 Goal: analyze what is actually packaged in a container image — operating-system packages and
 application dependencies, attributed to their layers — after workspace-level analysis is useful.
 
-This is deliberately a **design gate first**. It expands hard constraint 7 beyond Maven and npm,
-and therefore needs explicit maintainer agreement before implementation. OSV-Scanner already has
-[layer-aware image scanning](https://google.github.io/osv-scanner/usage/scan-image), including
-exported archives, but SBOMscope must verify its offline database, output and process contracts
-rather than assuming the SBOM scan integration transfers.
+**The design gate is passed as of 2026-08-06.** It was opened deliberately rather than drifted
+through: the phase existed as a gate precisely because image scanning touches constraint 7 and
+the offline database contract, and both were measured before anything was agreed. The
+measurements are in ARCHITECTURE.md under *External tool contract: container images* and *The
+ecosystem catalogue*; the seven decisions the maintainer took are in the decision log below.
 
-- [ ] Begin with a user-supplied Docker/OCI archive. An archive can be scanned without Docker,
-      never pulls an image and never executes container code. A later local-daemon path must
-      prove the image exists locally before invocation because an absent tag must not trigger an
-      implicit registry pull; constraint 1 forbids SBOMscope from fetching executable artifacts
-- [ ] Measure and document supported inventory before promising coverage: Linux distro packages,
-      Java jars, Node modules and other application artifacts; required per-ecosystem offline OSV
-      archives; unsupported image formats, platforms and package layouts
-- [ ] Decide whether image inventory becomes an imported CycloneDX document or a distinct
-      image/layer model. Preserve immutable digest, tag as an alias, platform/architecture, base
-      image, package origin and introducing layer either way
-- [ ] Run the scanner as an external engine behind the existing scanner interface, with explicit
-      user action, progress/cancellation, bounded resources, full activity logging and no network
-      fallback
-- [ ] Deduplicate one vulnerability found through both an embedded application artifact and an
-      OS package without erasing the two provenances
-- [ ] Reuse workspace reachability only when an image application can be tied to the analyzed
-      workspace and build artifact. Do not imply that source call analysis decides whether an OS
-      package vulnerability in the base image is exploitable
-- [ ] Show layer/base-image remediation separately from Maven/npm upgrade remedies: update the
-      base image, remove a package/layer, or update an embedded application dependency are
-      different actions
-- [ ] Verify against small, intentionally vulnerable exported images kept as inert test
-      artifacts; never commit a Dockerfile or manifest that makes repository dependency scanners
-      attribute those old packages to SBOMscope itself
+### What the measurement established — 2026-08-06
 
-**Done when**: an exported image can be scanned fully offline without executing or pulling it,
-and each finding identifies the package ecosystem, image digest/platform, introducing layer,
-available fix and the correct remediation surface without overstating workspace reachability.
+Verified against osv-scanner v2.4.0, on a machine with **no Docker, Podman, crane or skopeo
+installed**, using a `docker save`-format archive assembled directly from the public registry.
+That last detail is itself a result: the archive path needs no container tooling whatsoever.
+
+| Question | Measured answer |
+|---|---|
+| Works without a container runtime | **Yes** — archive read directly, nothing executed |
+| Fully offline | **Yes**, with `--offline`. Not with `--offline-vulnerabilities` |
+| OCI archive (`podman save` default) | **Rejected** — exit 127, `file manifest.json not found in tar` |
+| Base-image identification | Network only. `--offline` empties `base_images` and zeroes every `base_image_index` |
+| Inventory source | The scanner itself; `--all-packages` is mandatory or only vulnerable packages appear |
+| Package identity | No purl, and duplicates occur (`openssl`, `musl`, `busybox` twice in `alpine:3.10`) |
+| Ecosystem string | Report says `Alpine:v3.17`; the maintained archive is `Alpine/all.zip` |
+| Layer attribution | Free — `image_origin_details.index` into `layer_metadata` |
+| Coverage is a flag choice | `node:14-alpine`: **17 packages** by default, **478** with `javascript/packagejson` |
+
+Two of those changed the design rather than merely informing it. **Base-image identification
+sends chain IDs derived from your layer digests to deps.dev**, so it is refused and the reason
+is stated on screen; there is no offline substitute, since deps.dev's ~730k-image index is
+API-only and its BigQuery form needs a billed Google Cloud account, which is not category 2.
+And **what an image "contains" is decided by a plugin flag**, which is why coverage is opt-in
+per scan rather than a default in either direction.
+
+### The build
+
+- [x] **Design gate: measure before promising coverage** — done 2026-08-06, above
+- [ ] **Exported docker-archive only.** No daemon path in this pass. `scan image <name>` pulls an
+      absent tag, which is constraint 1 category 1, and a preflight that merely checks first
+      would still leave the pull one bug away
+- [ ] **Recognise the OCI-archive rejection** by its exact message and tell the user to
+      re-export with `podman save --format docker-archive`, rather than surfacing a scanner
+      error about a file they believe is a valid image
+- [ ] **`--offline --all-packages`, always**, with the application-artifact plugins added only
+      when the user ticked that box for this scan
+- [ ] **A new migration — V11 or later, never V10.** V10 was claimed on 2026-08-07 by B19's
+      manual ordering (`V10__manual_ordering.sql`), unrelated to this phase; the number is
+      taken and any dev database still carrying the backed-out image-scanning V10 needs the
+      cleanup described in the 2026-08-06 decision log entry before it can move forward.
+      Adds `sbom.source_type`, `image_reference`, `image_digest`, `image_os`; `image_layer`;
+      `component.layer_index`. An image is a document, so every existing surface works
+- [ ] **Synthesise purl and bom_ref**, since the report carries neither and repeats package
+      identities. Two rows sharing a synthesised purl is correct — one scan, one finding set
+- [ ] **Map the versioned ecosystem onto the base archive** (`Alpine:v3.17` → `Alpine`) wherever
+      readiness or download decides what a document needs. The versioned bucket prefixes are
+      stale by two years and must not be fetched
+- [ ] **Make the declared-dependency surfaces honestly absent for an image**: no dependency
+      graph, no bump probe, no four remedies for an OS package. Absent with a reason, never
+      empty — the `NONE`-versus-`CLEAN` rule one level out
+- [ ] **Attribute findings without naming a base image**: OS package plus layer index means
+      *rebuild on a newer base*; application artifact in a later layer means the ordinary
+      upgrade remedy. State that the base image is deliberately not identified
+- [ ] **Never let workspace reachability speak for an OS package.** Phase 9's evidence is about
+      Maven/JVM call paths in an analysed source tree, and an apk package is outside its
+      universe entirely — an `UNASSESSED` that says so, not a computed negative
+- [ ] **Fixtures are inert.** Commit the scanner's JSON report, not an image tarball and never a
+      Dockerfile; the repository is public and a manifest declaring old packages would have
+      dependency scanners attribute them to SBOMscope
+
+**Done when**: an exported image can be scanned fully offline with no container runtime present,
+every finding names its ecosystem, introducing layer and available fix, the remedy offered is the
+one that actually applies to that kind of package, and nothing claims to know the base image.
 
 ---
 
@@ -2571,13 +2628,155 @@ rows with neither string in any of them; GHSA rating descending opens on CRITICA
 on LOW, matching Severity; Published descending opens on 2026-07-21 and ascending on 2018-10-17;
 and the controls row is still a single 39px line.
 
+---
+
+## Phase 13 — Projects, and a document's own settings
+
+Two items raised from use on 2026-08-06, alongside the container-image gate. Both are about the
+sidebar and the things an uploaded document should have been able to say about itself.
+
+### B19 — SBOMs organise into projects — **built and verified 2026-08-06, extended 2026-08-07**
+
+The sidebar is a flat list ordered by upload date. That is fine at five documents and is not
+what a real machine looks like after a month: several products, each with a few modules, plus
+whatever was uploaded once to answer a question.
+
+**One `folder` table, self-referencing, and a project is a folder with no parent.** Two tables
+for "project" and "folder" would make *"an SBOM may sit at any level"* three cases in every
+query instead of a property of the schema. Depth is capped at a project plus two levels beneath
+it, enforced in `FolderService` on both insert and move — a product rule about how deep a
+280px column stays readable, so it belongs in the service and not in a constraint.
+
+- [x] **V9: `folder` (id, name, parent_id, created_at) and `sbom.folder_id`, both nullable.**
+      A null parent is a project; a null `folder_id` is a document outside every project, which
+      is the ordinary state and stays first-class rather than being a "no project" bucket.
+      `parent_id` is self-referencing with no `ON DELETE CASCADE` — deleting relocates in
+      `FolderService`, never cascades, which is what keeps a document alive through it
+- [x] **The tree renders folders and loose documents together**, at every level
+- [x] **Move by an explicit "Move to…" control.** Built as a plain `<select>` (`MoveToMenu` in
+      `SidebarTree.tsx`): keyboard-reachable, needs no popover machinery, and depth is spelled
+      out as a text prefix since an `<option>` cannot be reliably indented with CSS. Verified
+      live: moving `vuln-multi-module.cdx.json` into "Verification Project" and back to the top
+      level both worked, and a nested "backend" subfolder appeared correctly indented and
+      excluded as its own destination
+- [x] **Drag-and-drop, added 2026-08-07 as a supplement to the menu, never a replacement.**
+      Native HTML5, no dependency — see the decision log for why `dnd-kit`/`react-dnd` were
+      unnecessary here. Covers filing into a folder, an explicit root drop zone for "outside
+      every project", spring-loaded collapsed folders (600ms dwell), list auto-scroll near its
+      edges, and refusing an illegal target before the drop lands (`dragover` left
+      un-prevented, so the cursor itself says no). The menu stays permanently, because HTML5
+      drag has no keyboard equivalent
+- [x] **Manual ordering, added 2026-08-07 (V10, `sort_order` on `folder` and `sbom`).** Folders
+      sort before documents at every level; both are reorderable by dragging to an edge of a
+      sibling row, which shows an insertion line rather than a highlight — a folder row is two
+      drop targets at once (its edges reorder, its middle files into it), and a highlight would
+      have claimed the wrong one. A new folder or document lands on top of its group
+      (`MIN(sort_order) - 1`, no sibling rewrite). "Sort by name" in the row menu overwrites the
+      manual order for one level as an escape hatch. `reorderFolders`/`reorderSboms` refuse a
+      list that is not exactly the group's current membership, so a reorder cannot smuggle a
+      move past the depth/cycle/name checks that `move` exists to apply
+- [x] **Deleting a folder relocates its contents to the parent and never deletes a document.**
+      `FolderRepository.reparentChildren`/`reassignSboms` plus `ON DELETE SET NULL` as a backstop
+      on `fk_sbom_folder`. Pinned by `FolderServiceTest` at both levels (a nested folder, and a
+      whole project) — the document is still findable by id after its folder is gone either way
+- [x] **Expansion state is persisted through `usePersistentState`** under
+      `sidebar.expandedFolders`, keyed by folder id. No revive logic needed beyond a type guard:
+      a stored id naming a folder since deleted simply never matches a rendered node, so nothing
+      has to filter it out by hand
+- [x] Rolled-up severity counts on a project row, from `Sbom.severityCounts` the sidebar already
+      fetches — `rollupSeverity` in `folderTree.ts`, recursive over every document at any depth.
+      Verified live: moving a document with 146 High findings into a fresh project immediately
+      showed 146 on the project row itself
+- [x] **Row redesign, 2026-08-07, after the built version proved unreadable.** Four
+      always-present action buttons reserved ~94px of a 280px column *permanently* — hidden with
+      `opacity`, which does not give the space back — leaving folder names roughly a third of
+      the row. Collapsed into one `⋯` menu, drawn `position: fixed` in a portal to `<body>` so
+      opening it neither squeezes the row nor grows the list, and dismissed by Escape, an
+      outside click, scroll or resize. Indentation 16px → 12px, internal gaps 4px → 2px. An
+      empty folder's disclosure chevron is disabled and greyed rather than hidden, so the
+      row's columns stay aligned and the folder remains a valid drop target
+- [x] **Sibling names are unique case-insensitively**, checked live in the browser as the reader
+      types (`siblingNameTaken`) rather than only after submitting, and the same rule is what a
+      drag onto a colliding destination refuses mid-drag with the reason shown
+- [x] **Renaming projects and subfolders is possible now.** Double-click a folder name or use
+      the three dot menu to enter the rename mode. In that mode a new unique name can be assigned
+      - if there is a sibling with the same name that the user is trying to give, a warning appears
+      and renaming is not possible. In rename mode the user can mark parts of the name by left-clicking
+      into the name text field and dragging the mouse. The "Escape" key or selecting another component
+      exits the rename mode.
+
+**Aggregation is deliberately not built, and the model is shaped so it needs no migration.**
+Selecting a project and seeing every finding beneath it would reverse the 2026-07-26 "one SBOM
+at a time" decision, and would put a document column, a de-duplication rule (the same purl in
+three SBOMs — one row or three?), paging and the About sheet all in play at once. The input it
+would need is a recursive walk of `folder.parent_id` plus a `sbom.folder_id` lookup, which this
+schema already answers. So it stays a screen-and-query question for later, not a schema one.
+
+**Done when**: documents can be filed into projects and subfolders up to three levels, moved
+between them, and no folder operation can lose an upload. **Met** — verified against the real
+jar: created a project, created a subfolder inside it, moved a real document in and back out,
+and confirmed the depth-cap and sibling-name-collision refusals both at the service level
+(`FolderServiceTest`, 9 cases) and over HTTP (`FolderControllerTest`, 7 cases).
+
+### B20 — Attach a workspace to a document that has none — **built and verified 2026-08-06**
+
+`sbom.workspace_path` has existed since V1 and is settable **only as a request parameter at
+upload time**. `SbomController` has no update endpoint at all. So a document uploaded without a
+workspace — which is most of them, since the path is easy to omit and its value is not obvious
+until later — can never gain one, and Phase 9's whole reachability surface is permanently
+unavailable for it. The only workaround is to delete and re-upload, which discards the document
+and its scan history to change one string.
+
+- [x] **`PATCH /api/sboms/{id}/workspace` taking `workspacePath`**, which sets, changes or
+      clears it. A dedicated sub-resource rather than a general update endpoint, since the two
+      fields SBOMscope lets a reader change after the fact (workspace, folder) have unrelated
+      validation and belong to unrelated features — one endpoint each keeps a PATCH from growing
+      an unrelated branch every time a third field needs the same treatment
+- [x] **Validate that it exists, is a directory and is readable**, and report which of those
+      failed. Reuses `SbomService.normaliseWorkspacePath` — the same check upload already runs —
+      so the message a typo produces is identical whichever route hit it, not a second reading
+- [x] **An absolute-path text field, following B11's drop.** `WorkspaceEditor` in
+      `SidebarTree.tsx` — a plain `<input type="text">`, no picker
+- [x] **Changing the path invalidates workspace analysis computed against the old one — verified
+      as an existing property, not new code.** `WorkspaceReachabilityService.inspect` re-reads
+      `sbom.workspacePath()` and recomputes the fingerprint from scratch on every call; it never
+      needed to know the path changed, because it never assumed the old one. The half that
+      matters — a different fingerprint is refused reuse — is pinned by
+      `WorkspaceReachabilityServiceTest.reusesOnlyCompletedOrActuallyLiveMatchingRuns`, already in
+      the suite before this item
+- [x] The control lives with the document's identity in the sidebar card — a chain-link entry
+      in the row's `⋯` menu (Download/Attach-or-Change-workspace/Move/Delete since the
+      2026-08-07 redesign collapsed the row's separate action buttons into one menu), opening
+      the same `WorkspaceEditor` inline
+
+**Done when**: any document can gain, change or lose a workspace path after upload, with
+validation stated, and no analysis survives a path change unmarked. **Met** — verified against
+the real jar: attaching a nonexistent path surfaced *"Workspace path does not exist: …"*
+verbatim, attaching a real one showed the path on the card and switched the control from
+"Attach a workspace" to "Change workspace", and Clear removed it and switched the label back.
+**10 backend tests are B20's own**: `SbomServiceWorkspaceTest` (7) plus three in
+`SbomControllerTest` — set-change-clear over HTTP, a rejected nonexistent path, and an unknown
+SBOM id answering 404 rather than 400. B19 accounts for the other 17 of the 27 added this
+session, and the two items share the minimal-SBOM fixture rather than each carrying one.
+
+---
+
 ### Backlog
 
 - [ ] **Diff two SBOMs, or trend several.** This reopens a closed question: the decision log
       dropped "group SBOMs into projects" and named trend analysis as what would bring it
-      back. It has. A data-model question before it is a screen — findings are keyed by purl
-      and shared across SBOMs, so "how did this project change" needs a notion of *this
-      project* that does not currently exist
+      back. It has, and B19 (2026-08-06) now provides the missing half — *this project* is a
+      real `folder` row with a real set of documents beneath it. What remains is the same
+      question as before: findings are keyed by purl and shared across SBOMs, so "how did this
+      project change" still needs a de-duplication rule (the same purl in three SBOMs — one row
+      or three?) and a decision about aggregating the findings view, which B19 deliberately did
+      not build. A screen-and-query question now, not a schema one
+- [ ] **A pre-existing frontend test is over its timeout, found while verifying B19/B20.**
+      `DependencyGraphPanel.test.ts` → *"shows the exact total and continues numbering through
+      the next 100 routes"* ran in 16.4s against the suite's 5s default under load, though it
+      passed at 5s on an idle machine. Not touched by B19/B20 and not a regression they caused;
+      raised here so it is not mistaken for one when the suite next runs slow. Needs either a
+      longer per-test timeout or a smaller fixture
 - [ ] **Persist the probe history across restarts.** Monitoring's Processes tab keeps finished
       runs for the session only, matching probe progress itself, which is deliberately
       session-scoped so a restart re-validates against whatever Maven configuration is current.
@@ -5138,3 +5337,303 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   as the SBOM declaration point and displays the resolved target version; CycloneDX does not prove
   whether that version was literally written there, inherited from dependency management or
   selected from a range.
+- 2026-08-06 — **The container-image design gate is passed, on measurement rather than on
+  enthusiasm.** Seven decisions, taken one at a time by the maintainer after the facts were
+  established against osv-scanner v2.4.0. The measurements live in ARCHITECTURE.md; what belongs
+  here is why each choice went the way it did.
+
+  **Constraint 7 is amended rather than broken, and the amendment is the useful part.** The old
+  wording — "target ecosystems are Maven and npm, don't generalize prematurely" — was drawing a
+  line in the wrong place. Reporting an ecosystem is cheap and stays honest: OSV supplies a name,
+  a version, an advisory and a fix for every ecosystem it publishes, so adding one costs an
+  archive and a row in a list. **Reasoning** about an ecosystem is what is expensive, because the
+  dependency graph, the four remedies, `VersionOrder` and the Maven probe all assume declared
+  dependencies with resolvable trees, and an OS package has none of that: nothing declares
+  `openssl 1.1.1k-r0` and the remedy is a newer base image, not a version change. So the
+  constraint now permits new ecosystems in the catalogue and forbids extending the reasoning
+  surfaces to them. An image built on Debian genuinely contains dpkg packages, and refusing to
+  name their vulnerabilities would have been a scanner hiding findings, not restraint.
+
+  **Exported docker-archive only, and no daemon path in this pass.** `osv-scanner scan image
+  <name>` pulls the image when it is not found locally, which is constraint 1 category 1 —
+  fetching executable content on the user's behalf. A preflight that checks for local presence
+  first was considered and refused for now: it leaves the pull one bug or one race away, and the
+  archive path costs the user a single `docker save`. Verified on a machine with no Docker,
+  Podman, crane or skopeo, which makes the no-runtime claim a measurement rather than a promise.
+
+  **Only docker-archive is readable, and podman's default is not it.** An OCI archive fails with
+  exit 127 and `file manifest.json not found in tar`. That exact string is recognised so the
+  answer is *"re-export with `podman save --format docker-archive`"* rather than a scanner error
+  about a file the user is certain is an image. Established by building both formats and running
+  each.
+
+  **`--offline`, not `--offline-vulnerabilities`, and the difference is a disclosure.** The
+  weaker flag leaves base-image identification calling deps.dev's `QueryContainerImages` with
+  chain IDs computed from the image's own layer digests — a question about *your* image, so
+  category 3 by shape. Measured on `alpine:3.10`: the weaker flag named `alpine` plus two
+  unrelated Docker Hub repositories sharing a chain ID, while `--offline` empties `base_images`
+  and zeroes every `base_image_index`.
+
+  **Base images are therefore not named, and there is no offline substitute — checked, not
+  assumed.** deps.dev's ~730k-image index is reachable only through that API; its BigQuery form
+  needs a billed Google Cloud account, and a dataset requiring credentials is the opposite of
+  category 2's "one fixed URL, no credentials, carried on a USB stick". Nothing publishes "base
+  image → vulnerabilities" as a file, and structurally nothing would, because an image's
+  vulnerabilities *are* its packages' vulnerabilities and those are already computed offline
+  here. What the reader actually wants from identification is **attribution**, and that is
+  answerable without it: an OS package is a base-image concern, an application artifact in a
+  later layer is the reader's own. The absence is stated on screen with its reason, rather than
+  left to read as a gap.
+
+  **Coverage is opt-in per scan, because it is a flag choice rather than a fact.** `scan image`
+  defaults to the `artifact` preset and finds operating-system packages only; adding
+  `javascript/packagejson` took `node:14-alpine` from **17 packages to 478**, the extra 461 being
+  npm's own bundled internals. Neither number is the honest default on its own — a silent 17
+  would hide an embedded vulnerable jar, and a silent 478 would bury every real finding under the
+  base image's plumbing — so the user ticks a box and meets the consequence deliberately.
+
+  **An image is a document, reusing `sbom` and `component`.** A separate image/layer model was
+  the truer shape and was rejected on the cost it imposes everywhere else: it needs a second
+  findings path or a projection into the shared one, which is the duplication this architecture
+  has refused repeatedly. Reuse makes the findings table, the filters, the severity chips, KEV
+  and EPSS, the export and the sidebar work with no new code. The price is paid explicitly:
+  `spec_version` is null, `component_dependency` is empty, and the declared-dependency surfaces
+  must render as honestly absent for an image rather than as empty — the `NONE`-versus-`CLEAN`
+  rule one level out.
+
+  **Layer attribution is stored because the scanner gives it away.**
+  `image_origin_details.index` is already an index into the report's `layer_metadata`, so
+  `component.layer_index` plus a small `image_layer` table costs one integer per component and
+  buys *"this came in with the base layer"*. Phase 12's own bullet had asked for introducing
+  layer to be preserved; it turned out to be free.
+
+  **Two report facts that will bite anything written against this later.** Package records carry
+  **no purl** and repeat identities — `alpine:3.10` lists `openssl`, `musl` and `busybox` twice —
+  so purl and bom_ref are synthesised, and two rows sharing a synthesised purl is correct rather
+  than a collision. And the report's ecosystem is **versioned** (`Alpine:v3.17`) while the
+  maintained archive is not (`Alpine/all.zip`); the versioned bucket prefixes exist but were last
+  written in October 2024 against the base archives' daily updates, so mapping the wrong way
+  would silently serve two-year-old advisories.
+- 2026-08-06 — **The ecosystem catalogue is measured, and Ubuntu is the number that matters.**
+  Every archive size in ARCHITECTURE.md is a `Content-Length` taken on the day, not an estimate.
+  The approved set is Alpine, Debian, Ubuntu, Red Hat, Rocky Linux and AlmaLinux for operating
+  systems, plus the widely-used language ecosystems alongside the existing Maven and npm.
+
+  Almost all of it is small — the entire language set beyond npm is about 61 MB, and four of the
+  six OS archives are under 25 MB. **Ubuntu is 570 MB**, nearly three times npm and by a wide
+  margin the largest thing OSV publishes. It is offered because Ubuntu is a common base image,
+  and its size is stated before it is chosen rather than discovered during the download, because
+  it is the one entry where the cost is a genuine obstacle on a restricted machine and on the
+  USB-stick workflow this product is built around.
+
+  **Wider coverage costs archives, not architecture.** One invocation, one cache directory; the
+  scanner loads only the ecosystems it actually found and says so in its own output. The existing
+  per-ecosystem download buttons and per-document readiness check already model this exactly, so
+  the change is a longer list rather than a new mechanism.
+- 2026-08-06 — **Projects are one self-referencing `folder` table, and aggregation is deliberately
+  deferred with the schema shaped to accept it.** A project is a folder with no parent, which
+  makes "an SBOM may sit at any level" a property of the model rather than three cases in every
+  query. The depth cap — a project plus two levels — is enforced in the service, because it is a
+  judgement about how deep a 280px column stays readable and not a statement about trees.
+
+  **The aggregate findings view was offered and declined for now.** Selecting a project and
+  seeing everything beneath it would reverse the 2026-07-26 "one SBOM at a time" decision and put
+  a document column, a de-duplication rule for a purl appearing in three SBOMs, paging and the
+  About sheet all in play at once. It is not built. What was decided instead is that the model
+  must not need a migration to gain it later, and it does not: the SBOM set beneath a project is
+  a recursive walk of `parent_id` plus a `folder_id` lookup, which is the entire input such a
+  query would take.
+
+  **Deleting a folder relocates its contents and never deletes a document**, on the reasoning the
+  purge design already uses — targets differ by what they cost to undo, and an upload lost to a
+  mis-clicked folder delete takes its scan history with it. **Move is an explicit control rather
+  than drag-and-drop** in the first pass: a three-level drop target inside a collapsible column is
+  a lot of surface for an occasional action, and drag-and-drop is unreachable by keyboard.
+- 2026-08-06 — **A workspace can be attached after upload, and B11's drop is honoured rather than
+  quietly reversed.** `sbom.workspace_path` has existed since V1 and was settable only as an
+  upload request parameter — `SbomController` has no update endpoint — so a document uploaded
+  without one could never gain it, and Phase 9's entire reachability surface was permanently
+  unavailable for it. The only workaround was delete-and-re-upload, discarding the document and
+  its scan history to change one string.
+
+  **It is an absolute-path text field, not a picker.** B11 was dropped on 2026-08-02 because a
+  backend-rendered directory browser turns the local server into a filesystem browser and a
+  native `JFileChooser` fails headless or opens behind the browser. That reasoning is untouched
+  by this item, and the temptation to reintroduce a picker "just for this one field" is exactly
+  what the drop decision exists to refuse.
+
+  **Clearing the path is as important as setting it**, which is why the endpoint takes all three
+  operations. A workspace that has moved is worse than none, because analysis then answers
+  confidently about a directory that is no longer the project — and a path change invalidates
+  runs computed against the old one rather than leaving them to be read as current.
+- 2026-08-06 — **B19 and B20 built, then verified end to end before continuing image scanning —
+  on explicit instruction to close both out fully rather than leave a frontend gap.** The prior
+  entries record the design; three things surfaced only by building and running it.
+
+  **A function-based unique index does not exist in H2.** `uq_folder_sibling_name` was written
+  as `(parent_id, LOWER(name))` and failed the very first Flyway run with a syntax error, not a
+  runtime one — caught immediately rather than discovered later. It turned out to be the wrong
+  fix twice over: even a plain `(parent_id, name)` index would not have enforced the rule, since
+  H2 treats NULL parents as distinct and would have left every top-level project free to collide
+  with another of the same name — the exact case a user meets first. The rule lives in
+  `FolderRepository.siblingNameExists`, checked explicitly for both the null-parent and the
+  real-parent case, which is also what lets the error name the folder that already has the name.
+
+  **`@Transactional` on the test class is not optional once a test mutates shared-name state.**
+  `FolderServiceTest` and `FolderControllerTest` initially ran without it, following
+  `SbomControllerTest`'s precedent — but that precedent works only because SBOM filenames are
+  never unique-constrained. Two test methods each creating a folder called "Project" collided on
+  the sibling-name rule, correctly, because nothing rolled either one back. `OsvArchiveMatcherTest`
+  and `PurgeTest` already carry this pattern; it is now stated in both new files' class comments
+  rather than left to be rediscovered.
+
+  **A JSON filter-query keeps a null field as an element; a plain field path does not.**
+  `$.workspacePath` on a single object evaluating to `null` satisfies Spring's `.doesNotExist()`
+  — that is why the pre-existing upload test's assertion already worked. But
+  `$[?(@.id=='x')].folderId` is an *indefinite* path producing an array, and Spring's own
+  `doesNotExist()` for that shape asserts the array is empty, which `[null]` is not. Two
+  assertions written the first way both failed with `Expected: an empty collection but: <[null]>`
+  — fixed to `contains(nullValue())`, which is the correct statement of what a cleared field on a
+  filtered row actually looks like on the wire.
+
+  **The "changing the workspace invalidates analysis" guarantee needed no new code, and saying so
+  precisely mattered more than writing a redundant test.** `WorkspaceReachabilityService.inspect`
+  already re-reads `sbom.workspacePath()` and recomputes the fingerprint from scratch on every
+  call — it was never written to assume the path is stable, so B20 satisfies the guarantee by
+  construction. The half worth pinning — a changed fingerprint is refused reuse — was already
+  covered by `WorkspaceReachabilityServiceTest.reusesOnlyCompletedOrActuallyLiveMatchingRuns`
+  before this session touched anything. Building a second, heavier integration test through real
+  WALA bytecode analysis to re-prove the same fact would have been the kind of duplication this
+  project avoids elsewhere.
+
+  **Verified live, not only by the suite**: a project and a nested subfolder created through the
+  UI, a real document moved into the subfolder with its rollup severity chip updating on the
+  project row immediately, a workspace attach rejected with the backend's exact validation
+  message, and the same path accepted, shown, changed and cleared — the button label flipping
+  between "Attach a workspace" and "Change workspace" correctly at each step. `mvn clean package`
+  is green: 312 backend tests, 38 frontend tests, both suites and the typecheck wired into the
+  one build command per AGENTS.md's working loop.
+- 2026-08-06 — **Phase 12's first implementation slice was written and then backed out, on the
+  maintainer's instruction to close B19/B20 out first.** Recorded because reverting working code
+  is the kind of thing that looks like an accident six months later.
+
+  **What was backed out**: `V10__container_images.sql` (`sbom.source_type`/`image_reference`/
+  `image_digest`/`image_os`, the `image_layer` table, `component.layer_index`), `ImageLayer`,
+  `OsvScannerRunner.scanImage` with its OCI-archive rejection, `OsvReport`'s `image_metadata`
+  binding, and the image fields threaded through `StoredSbom`, `SbomRepository`,
+  `SbomController` and the frontend `Sbom` type. **What was kept**: every measurement and every
+  decision — the scanner contract, the ecosystem catalogue, the seven decisions above. The
+  expensive part of that work was establishing the facts, and none of it is lost.
+
+  **The reason it had to be a revert rather than a partial stage.** The image fields sat *inside*
+  the same record declaration and the same `INSERT` statements as B19's `folder_id`, so no
+  hunk-level split existed. Worse, staging the code without `V10` would have produced a commit
+  that **cannot start**: `SBOM_MAPPER` would read `source_type` from a schema that has no such
+  column. A commit that does not boot is a worse artefact than a revert.
+
+  **Resolved the same day, and by a different route than predicted.** The maintainer's dev
+  database had the backed-out V10 applied, leaving its schema a version ahead of the migrations
+  in the repository. The database was cleaned directly (backed up first): the four image
+  columns, the `image_layer` table and the `flyway_schema_history` row for version 10 were all
+  removed with the application stopped, restoring the schema to exactly V9 — confirmed by a
+  clean boot logging `Successfully validated 9 migrations`. **This was expected to be Phase
+  12's problem to solve when it resumed; it was not.** B19's third pass claimed V10 for real,
+  the same day, for manual ordering (`V10__manual_ordering.sql`) — a genuine, tested, committed
+  migration, unrelated to container images. **Phase 12's own migration must therefore start at
+  V11 or later, never V10.** Anyone else's development database that still has the backed-out
+  V10 applied needs the same cleanup described above before it can take V10 for ordering.
+
+  Documentation was corrected to match rather than left describing unbuilt schema as real:
+  ARCHITECTURE's data model no longer lists the V10 tables as existing, its ecosystem catalogue
+  is marked *approved for Phase 12* rather than current, and the README's Core-features table no
+  longer advertises container image scanning as a shipped feature. The design sections stay,
+  clearly labelled as intent.
+- 2026-08-07 — **B19 gains dragging, manual ordering and a redesigned row, after using it.**
+  Everything here came from the maintainer looking at the built feature, which is why none of
+  it was in the specification.
+
+  **Drag-and-drop is added, and the case against it was weaker than the first pass claimed.**
+  The objection that holds is keyboard and screen-reader access: HTML5 drag has no keyboard
+  equivalent, so dragging may never be the *only* way to file something — the "Move to…" menu
+  stays, and that is what made dragging safe to add at all. The objection that was
+  over-weighted was drop precision: moving an item is cheap and instantly reversible, so a
+  mis-drop costs one more drag rather than lost work. That is the same "targets differ by what
+  they cost to undo" reasoning the purge design uses, and here it argues *for* dragging.
+
+  **Native HTML5, no library.** `dnd-kit` and `react-dnd` both do this better in general and
+  neither earns its weight (constraint 9): with folders and documents in separate groups and
+  no cross-group reordering, the gestures are "into this folder", "before/after this sibling"
+  and "onto the root zone" — no insertion hit-testing across heterogeneous lists, no drag
+  layer, no sensors.
+
+  **Four things the platform does not give away**, each built because the drop is unusable
+  without it: collapsed folders **spring-load** after a 600ms dwell, since you cannot drop into
+  something whose children are not rendered; the list **auto-scrolls** near its edges from a
+  single rAF loop, because `dragover` stops firing when the pointer holds still and holding
+  still at the edge is exactly the "keep scrolling" gesture; "outside every project" gets its
+  own **root drop zone**, since it is not a row; and a refused drop is refused *before* it
+  lands — `dragover` is left un-prevented so the cursor says no, with the reason shown while
+  the drag is still in hand.
+
+  **The move rules are mirrored client-side, and that is a mirror rather than a second
+  authority.** `canMoveFolder` reproduces `FolderService`'s depth, cycle and sibling-name
+  checks so an impossible destination is greyed out in the menu and refuses the drop; the
+  backend still decides, because two tabs can race. Prompted by the maintainer asking whether
+  sibling names are unique — they are, case-insensitively — which also turned the create and
+  rename fields into live checks against the folder list the sidebar already holds, instead of
+  a round trip that comes back red.
+
+  **A synchronous ref, not state, decides drop legality.** `dragging` in React state is a
+  render behind, so a `dragover` arriving before the re-render judged every drop illegal. In
+  practice a mouse moves between `dragstart` and the first `dragover`, so the race is nearly
+  invisible — which is exactly what makes it worth removing rather than relying on. Found by
+  driving a real drag from the console, where the two events are one statement apart.
+
+  **Manual ordering (V10), on the maintainer's request**: folders first at every level, then
+  documents, with drag-reordering inside each group. Order is stored per sibling group rather
+  than globally, ascending, and a new row takes `MIN - 1` so it lands on top — the placement
+  chosen so a new upload appears where the reader is already looking. A **Sort by name** menu
+  item overwrites the manual order for one level, as the escape hatch. `buildFolderTree` stopped
+  sorting, because the backend's order is now the reader's own and re-sorting would discard it.
+
+  **The strict reorder check found a test leak rather than a product bug.** `reorderFolders`
+  refuses a list that is not exactly the group's membership — otherwise a reorder would be a
+  move that skipped every validation. That immediately failed, because `SbomControllerTest` is
+  not `@Transactional` and the folder it creates through MockMvc **commits** into the shared
+  in-memory database, so the top level contained a folder no ordering test had made. Fixed at
+  both ends: the ordering tests work inside a parent they own, and that test now deletes what
+  it created.
+
+  **The row was redesigned because the names had become unreadable.** Four action buttons
+  reserved about 94px of a 280px column *permanently* — `opacity: 0` hides a control without
+  giving its space back — leaving folder names roughly a third of the row. They collapsed into
+  one `⋯` menu, the severity rollup dropped its words for counts, indentation went 16px → 12px
+  and the internal gaps 4px → 2px. Measured after: a root folder name went from ellipsising at
+  ~12 characters to 155px of usable width.
+
+  **The menu had to be drawn over the tree, not inside it.** Rendered inline it was a flex
+  sibling of the name — squeezing it to "b…", the opposite of the problem it was solving — and
+  it pushed every row below it down. It is now `position: fixed` in a portal to `<body>`,
+  positioned from the trigger in a `useLayoutEffect` so it never paints in the wrong place,
+  flipping above the trigger when there is no room below. It dismisses on Escape, on a click
+  anywhere outside, on scroll and on resize.
+
+  **Two accessibility faults caught by reading the tree rather than looking at it.** A `title`
+  on the folder-name button *displaced its accessible name*, so every folder announced itself
+  as "Click to open, double-click to rename" instead of as its own name; the tooltip moved to
+  the row, where it is the conventional ellipsis affordance and displaces nothing. And single
+  click on the name used to start a rename, which made the obvious gesture do the surprising
+  thing and left renaming undiscoverable — click now toggles the folder, double-click renames,
+  and there is an explicit Rename item in the menu.
+
+  **An empty folder greys out its chevron and stays closed**, on the maintainer's request. The
+  control is disabled rather than hidden so the columns stay aligned down the tree, and the
+  folder remains a drop target — filing something into it is precisely how it stops being empty.
+- 2026-08-07 — **The rename field hides its row's rollup and menu while active**, after the
+  maintainer reported the field crowded on a 280px row with the severity rollup and the `⋯`
+  trigger still occupying space beside it. Measured before fixing: a folder's name button was
+  84px with a 69px rollup beside it; the rename input claimed only what was left. Both are
+  conditionally unmounted for the duration of the rename rather than hidden with CSS, so
+  `NameField`'s `flex: 1 1 auto` claims the freed width automatically — verified after: the
+  input grew from what the name button had to 113px on the same row, and both return the
+  moment the rename is submitted or cancelled.

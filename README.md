@@ -87,14 +87,15 @@ process is written to a log you can read inside the application.
 
 ## Core features
 
-| Feature | Description |
-|---|---|
-| **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. Several files at once, reported per file so one malformed document does not hide the rest. The stored document can be downloaded back, byte for byte. |
-| **Workspace reachability analysis — experimental Maven slice** | Reads existing `target/classes` and exact dependency JARs from a configured **read-only** Maven cache. Each mapped module is analyzed against its own SBOM dependency closure; WALA reports direct/transitive bytecode paths into a component, or an explicit incomplete/ambiguous result. It does not build the workspace or claim a vulnerable method was reached. Runs are isolated, cancellable, retryable, and capped by configurable defaults of 10 minutes and 1 GiB heap. |
-| **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below). |
-| **Upgrade paths** | Maven and npm both get offline advisory-derived upgrade/pin guidance; npm also gets a ready-to-paste `overrides` snippet. For the transitive question Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — only the Maven path drives your configured `mvn`, ranking every major line as its own candidate rather than guessing at one winner. npm and Gradle have no Tier 2 probe. |
-| **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves. Parent routes are numbered cards: the first 100 are shown immediately, another 100 can be loaded on request, and each card identifies the module or intermediate component whose SBOM edge introduces the selected version. |
-| **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD, library cells to the artifact's registry page and version cells to that exact version. A second sheet records what was selected, so a filtered workbook can account for its own size. |
+| Feature | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+|---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. Several files at once, reported per file so one malformed document does not hide the rest. The stored document can be downloaded back, byte for byte.                                                                                                                                                                                                                                                                                  |
+| **Projects** | File your documents into projects and subfolders, up to three levels, or leave them loose — both live in the same sidebar. Drag to file and to reorder, with folders first and documents beneath at every level, or use the "Move to…" menu, which stays because dragging has no keyboard equivalent. Your arrangement is remembered; "Sort by name" restores alphabetical order for one level. "Rename" renames a project or subfolder. Deleting a folder never deletes a document; its contents move up. |
+| **Workspace reachability analysis — experimental Maven slice** | Reads existing `target/classes` and exact dependency JARs from a configured **read-only** Maven cache. Each mapped module is analyzed against its own SBOM dependency closure; WALA reports direct/transitive bytecode paths into a component, or an explicit incomplete/ambiguous result. It does not build the workspace or claim a vulnerable method was reached. Runs are isolated, cancellable, retryable, and capped by configurable defaults of 10 minutes and 1 GiB heap.                          |
+| **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below).                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Upgrade paths** | Maven and npm both get offline advisory-derived upgrade/pin guidance; npm also gets a ready-to-paste `overrides` snippet. For the transitive question Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — only the Maven path drives your configured `mvn`, ranking every major line as its own candidate rather than guessing at one winner. npm and Gradle have no Tier 2 probe.                                                                                  |
+| **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves. Parent routes are numbered cards: the first 100 are shown immediately, another 100 can be loaded on request, and each card identifies the module or intermediate component whose SBOM edge introduces the selected version.                                                                                                                                                                                        |
+| **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD, library cells to the artifact's registry page and version cells to that exact version. A second sheet records what was selected, so a filtered workbook can account for its own size.                                                                                                                                                                                                                                                           |
 
 ## How it works
 
@@ -348,10 +349,17 @@ your mirror carries different plugin versions than the ones SBOMscope pins, set 
 
 ## Scope
 
-SBOMscope is currently built for **a single developer running it on their own machine**
-against **Maven and npm** projects. Running it as a shared network service, and
-supporting further ecosystems, are possible later directions but explicitly out of
-scope for the first version.
+SBOMscope is built for **a single developer running it on their own machine**. Running it as
+a shared network service is a possible later direction but explicitly out of scope.
+
+**Maven and npm are the only ecosystems SBOMscope supports today**, as the ecosystem-boundary
+note above states. The planned direction, settled on 2026-08-06 when container image scanning
+was designed, draws the line somewhere more useful than a list of package managers: Maven and
+npm are what SBOMscope **reasons** about — the dependency graph, the upgrade remedies and the
+Maven probe all rest on a model of declared dependencies with resolvable trees, and that model
+is theirs. An ecosystem added later may be **reported** — name, version, advisory, severity,
+exploitation signals, fix version — without anything pretending there is a `pom.xml` to pin it
+in. None of that is built yet; see [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md).
 
 The available Maven workspace analysis is **component-boundary** evidence: it can show that
 compiled application bytecode reaches a library, but the local Maven OSV archive currently has no
