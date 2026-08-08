@@ -89,7 +89,35 @@ public class FolderService {
         folders.rename(id, name);
         activityLog.record(ActivityLogger.Category.DATA, "FOLDER", "RENAMED",
                 "\"%s\" to \"%s\"".formatted(folder.name(), name));
-        return new StoredFolder(folder.id(), name, folder.parentId(), folder.createdAt());
+        return new StoredFolder(folder.id(), name, folder.parentId(), folder.createdAt(),
+                folder.rollupMode());
+    }
+
+    /**
+     * Sets how this folder's documents count toward its own row and every ancestor's (V11).
+     *
+     * <p>Its own endpoint rather than a field on rename, following the rule B20 stated for the
+     * workspace path: the fields a reader may change after the fact have unrelated validation,
+     * and one endpoint each keeps a PATCH from growing a branch per field.
+     *
+     * <p><b>Nothing checks that a {@code CURRENT} folder really holds versions of one thing.</b>
+     * That would be a heuristic over filenames or root-component versions, and it is the reader's
+     * declaration to make.
+     */
+    @Transactional
+    public StoredFolder setRollupMode(UUID id, RollupMode mode) {
+        Map<UUID, StoredFolder> byId = byId();
+        StoredFolder folder = require(byId, id);
+
+        folders.updateRollupMode(id, mode);
+        activityLog.record(ActivityLogger.Category.DATA, "FOLDER", "ROLLUP_MODE",
+                "\"%s\" now %s".formatted(folder.name(), switch (mode) {
+                    case SUM -> "adds up everything inside it";
+                    case CURRENT -> "counts only its current document";
+                    case MUTED -> "is not counted";
+                }));
+        return new StoredFolder(folder.id(), folder.name(), folder.parentId(), folder.createdAt(),
+                mode);
     }
 
     /**
@@ -132,7 +160,8 @@ public class FolderService {
         activityLog.record(ActivityLogger.Category.DATA, "FOLDER", "MOVED",
                 newParentId == null ? "\"%s\" to the top level".formatted(folder.name())
                         : "\"%s\" into \"%s\"".formatted(folder.name(), require(byId, newParentId).name()));
-        return new StoredFolder(folder.id(), folder.name(), newParentId, folder.createdAt());
+        return new StoredFolder(folder.id(), folder.name(), newParentId, folder.createdAt(),
+                folder.rollupMode());
     }
 
     /**
@@ -184,25 +213,54 @@ public class FolderService {
     }
 
     /**
-     * Restores alphabetical order within one level, for both groups.
+     * Restores a computed order within one level, for both groups — by name or by date,
+     * ascending or descending.
      *
      * <p>The escape hatch for a hand-arranged list that has stopped being useful. It
      * overwrites the manual order deliberately and only for the level asked about — sorting
      * the whole tree from one menu item would be a much larger action than the menu it sits in
-     * suggests.
+     * suggests. A one-off action rather than a persisted preference: it writes the same
+     * {@code sort_order} a manual drag would, so a later drag can move things again exactly as
+     * it always could.
+     *
+     * @param field     what to order by
+     * @param ascending A→Z / oldest-first when true, the reverse when false
      */
     @Transactional
-    public void sortByName(UUID parentId) {
+    public void sort(UUID parentId, FolderSortField field, boolean ascending) {
+        Comparator<StoredFolder> folderOrder = folderComparator(field);
+        Comparator<StoredSbom> sbomOrder = sbomComparator(field);
+        if (!ascending) {
+            folderOrder = folderOrder.reversed();
+            sbomOrder = sbomOrder.reversed();
+        }
         folders.reorder(folders.childrenOf(parentId).stream()
-                .sorted(Comparator.comparing(folder -> folder.name().toLowerCase(Locale.ROOT)))
+                .sorted(folderOrder)
                 .map(StoredFolder::id)
                 .toList());
         sboms.reorder(sboms.childrenOf(parentId).stream()
-                .sorted(Comparator.comparing(sbom -> sbom.filename().toLowerCase(Locale.ROOT)))
+                .sorted(sbomOrder)
                 .map(StoredSbom::id)
                 .toList());
         activityLog.record(ActivityLogger.Category.DATA, "FOLDER", "SORTED",
-                parentId == null ? "the top level" : "inside a folder");
+                "%s by %s, %s".formatted(
+                        parentId == null ? "the top level" : "inside a folder",
+                        field == FolderSortField.NAME ? "name" : "date",
+                        ascending ? "ascending" : "descending"));
+    }
+
+    private static Comparator<StoredFolder> folderComparator(FolderSortField field) {
+        return switch (field) {
+            case NAME -> Comparator.comparing(folder -> folder.name().toLowerCase(Locale.ROOT));
+            case DATE -> Comparator.comparing(StoredFolder::createdAt);
+        };
+    }
+
+    private static Comparator<StoredSbom> sbomComparator(FolderSortField field) {
+        return switch (field) {
+            case NAME -> Comparator.comparing(sbom -> sbom.filename().toLowerCase(Locale.ROOT));
+            case DATE -> Comparator.comparing(StoredSbom::uploadedAt);
+        };
     }
 
     private static void requireSameMembers(List<UUID> current, List<UUID> requested, String what) {

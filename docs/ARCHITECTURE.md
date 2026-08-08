@@ -41,6 +41,7 @@ All created by Flyway migrations under `backend/src/main/resources/db/migration`
 folder                   a project, or a folder inside one (V9)
   id, name, parent_id → folder, created_at,
   sort_order                                                            (V10)
+  rollup_mode                                                           (V11)
   (sibling-name uniqueness is enforced in FolderService, not by an index — see below)
 
 sbom                     an uploaded document
@@ -131,6 +132,59 @@ is harmless because only the relative order is ever read. An explicit reorder re
 group to a dense `0..n-1`, which is also why a reorder request must list **exactly** that
 group's membership: a reorder accepting a foreign id would be a move that skipped the depth,
 cycle and name checks, and `FolderService.reorderFolders` refuses it for that reason.
+
+**`rollup_mode` (V11) exists because the folder rollup is a sum, and a sum is only sound over
+disjoint things.** The sidebar totals every document beneath a folder recursively; a folder
+holding five versions of one product is not disjoint, and summing it states that product's
+findings five times. `SUM` is the default and V9's behaviour; `MUTED` contributes nothing;
+`CURRENT` is where the real decision lives.
+
+**`CURRENT` treats a sibling document and a sibling subfolder as two different kinds of claim,
+not as competing candidates for one pick — corrected 2026-08-08 after the maintainer's own use
+surfaced the first version's mistake.** That first version picked only the single topmost child
+of *either* kind, so a folder holding one document and one subfolder counted only whichever
+happened to render first and silently discarded the other — found live on the maintainer's own
+sidebar, where a project's real subfolder was being dropped from its total entirely. The
+corrected rule, stated by the maintainer directly: several documents sitting **directly** in the
+folder are *versions of the same upload* — pick the newest, set the rest aside. A **subfolder**
+is a *submodule* of the thing this folder is versioning — its own SBOMs, complete on their own
+terms, never an alternate draft of anything at this level. So every subfolder's contribution is
+summed in **unconditionally**, each respecting its own mode (`MUTED` included), and only the top
+*direct* document is added on top of that — never a subfolder competing with a document for the
+same slot.
+
+Three consequences worth keeping straight. **The disjointness guarantee survives intact even
+though `CURRENT` can now contribute several documents at once**, because "a sum is only sound
+over disjoint things" was always about no real document being counted twice, not about
+contributing exactly one — every document still appears in exactly one place in the tree, so the
+union of what a `CURRENT` folder contributes is still a set of distinct documents, and an
+ancestor summing it is still summing disjoint things. **`MUTED` suppresses its own row's counts
+as well**, since a folder that hid its numbers from its parent while displaying them itself would
+be two different claims about the same documents; it does **not** mute its children, because
+muting stops what crosses that folder's boundary rather than hiding a subtree — which is also why
+a `MUTED` subfolder sitting inside a `CURRENT` one is excluded from that unconditional sum rather
+than treated as a submodule with nothing to report. And **neither blank state is left to be read
+as "clean"** — a muted row states *"not counted"* and a `CURRENT` row with at least one direct
+document states *"of n"*, the same rule that keeps `NONE` from rendering like `CLEAN` one level
+out. A `CURRENT` folder with **no** direct documents at all shows no such note and behaves
+exactly like `SUM` — there is nothing at this level being set aside, only subfolders being
+summed, so the "others not counted" framing would be a false claim.
+
+**Which direct document is "current" is positional, and the row says so — but only a document
+ever carries that mark, never a subfolder.** It is the first in `sort_order, uploaded_at DESC`
+among the folder's own direct documents, so V10's `MIN(sort_order) - 1` placement makes it the
+newest upload until the reader drags another above it — no per-upload bookkeeping, and
+overridable with the dragging that already exists. Greatest `uploaded_at` was rejected as
+invisible on screen and wrong when an older SBOM is backfilled, and parsing a version out of a
+filename as a heuristic this codebase deliberately has only one of. Because the rule is
+positional, the representative row carries a visible `current` mark; without it, an unrelated
+drag would silently change a folder's totals. A subfolder never carries this mark, because a
+subfolder is never in competition for it — it is either summed in whole (unmuted) or excluded
+whole (muted), with no "current version of a subfolder" concept at this level at all. Nothing
+checks that a folder's direct documents really are versions of one thing — that is the reader's
+declaration, not something to infer. The arithmetic is all in `folderTree.ts`
+(`contributingSboms`, `representativeSbom`), over severity counts the sidebar already fetches, so
+no mode costs a query.
 
 **The move rules are duplicated into the browser deliberately, as a mirror.**
 `folderTree.ts`'s `canMoveFolder` reproduces the depth, cycle and sibling-name checks so the UI

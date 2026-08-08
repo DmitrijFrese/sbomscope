@@ -90,7 +90,7 @@ process is written to a log you can read inside the application.
 | Feature | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **SBOM upload** | CycloneDX JSON, as produced by the Maven and npm CycloneDX plugins. Several files at once, reported per file so one malformed document does not hide the rest. The stored document can be downloaded back, byte for byte.                                                                                                                                                                                                                                                                                  |
-| **Projects** | File your documents into projects and subfolders, up to three levels, or leave them loose — both live in the same sidebar. Drag to file and to reorder, with folders first and documents beneath at every level, or use the "Move to…" menu, which stays because dragging has no keyboard equivalent. Your arrangement is remembered; "Sort by name" restores alphabetical order for one level. "Rename" renames a project or subfolder. Deleting a folder never deletes a document; its contents move up. |
+| **Projects** | File your documents into projects and subfolders, up to three levels, or leave them loose — both live in the same sidebar. Drag to file and to reorder, with folders first and documents beneath at every level, or use the "Move to…" menu, which stays because dragging has no keyboard equivalent. Your arrangement is remembered; "Sort by" restores name or date order — either direction — for one level in one click. "Rename" renames a project or subfolder. Deleting a folder never deletes a document; its contents move up. A folder shows the severity counts of everything beneath it, and says what it is counting — see below. |
 | **Workspace reachability analysis — experimental Maven slice** | Reads existing `target/classes` and exact dependency JARs from a configured **read-only** Maven cache. Each mapped module is analyzed against its own SBOM dependency closure; WALA reports direct/transitive bytecode paths into a component, or an explicit incomplete/ambiguous result. It does not build the workspace or claim a vulnerable method was reached. Runs are isolated, cancellable, retryable, and capped by configurable defaults of 10 minutes and 1 GiB heap.                          |
 | **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below).                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Upgrade paths** | Maven and npm both get offline advisory-derived upgrade/pin guidance; npm also gets a ready-to-paste `overrides` snippet. For the transitive question Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — only the Maven path drives your configured `mvn`, ranking every major line as its own candidate rather than guessing at one winner. npm and Gradle have no Tier 2 probe.                                                                                  |
@@ -154,6 +154,33 @@ A browser-based UI served by the local backend.
   directly in a type-ahead finder, which lists worst-first and marks each library with the
   severity standing against it — including a distinct mark for one nothing has scanned, since
   "not checked" must never look like "nothing found".
+
+### What a folder's numbers are counting
+
+A folder adds up the findings of every document beneath it, which is the right answer when the
+documents are separate things and the wrong one when they are not. Keeping three versions of one
+product in a folder to watch it improve is a normal thing to do, and counting all three states
+that product's problems three times.
+
+So each folder says what its documents *are*, from the row's `⋯` menu:
+
+- **Separate things** — add them all up. The default, and what every existing folder does.
+- **Versions of one thing** — among the documents sitting directly in the folder, count only
+  the top one: the newest upload until you drag another above it, marked *current* in the list
+  so the number always has a visible source, with the folder reading "of 5" rather than leaving
+  you to wonder what happened to the other four. A subfolder inside it is a different kind of
+  thing, not another version competing for that slot — it counts in full, on its own terms
+  (including its own "versions of one thing" or "not to be counted" setting), the same way it
+  would under "separate things". So a project can hold three whole-app snapshots directly — only
+  the newest matters — alongside a `backend` and a `frontend` subfolder whose current findings
+  always count toward the total.
+- **Not to be counted** — for anything archived or scratch. It is left out of its own row and
+  out of every project above it, and the row says **not counted** rather than going blank,
+  because an empty severity area would claim that nothing was found. The documents inside still
+  show their own findings, and a folder inside it still adds up its own.
+
+Nothing checks whether a folder really holds versions of one product — that is your statement
+about your own material, not something worth guessing at from filenames.
 
 **Every search field takes a regular expression**, behind a `.*` toggle beside it, with full
 Java syntax — lookahead, lookbehind, backreferences, named groups. A second toggle, `!`, inverts

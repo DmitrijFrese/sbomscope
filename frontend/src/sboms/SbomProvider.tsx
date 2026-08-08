@@ -12,10 +12,11 @@ import {
   moveSbomToFolder as moveSbomToFolderRequest,
   renameFolder as renameFolderRequest,
   reorderLevel as reorderLevelRequest,
-  sortLevelByName as sortLevelByNameRequest,
+  setFolderRollupMode as setFolderRollupModeRequest,
+  sortLevel as sortLevelRequest,
   uploadSbom,
 } from '../api/client';
-import type { Folder, Sbom } from '../api/client';
+import type { Folder, FolderSortField, RollupMode, Sbom } from '../api/client';
 import { usePersistentState } from '../state/persisted';
 
 /**
@@ -127,13 +128,15 @@ interface SbomContextValue {
   createFolder: (name: string, parentId?: string) => Promise<Folder>;
   renameFolder: (id: string, name: string) => Promise<Folder>;
   moveFolder: (id: string, parentId?: string) => Promise<Folder>;
+  /** Whether a folder adds its documents up, speaks for its current one, or counts nowhere (V11). */
+  setFolderRollupMode: (id: string, rollupMode: RollupMode) => Promise<Folder>;
   /** Its contents move up to the parent. No document is ever deleted. */
   deleteFolder: (id: string) => Promise<void>;
   moveSbomToFolder: (sbomId: string, folderId?: string) => Promise<void>;
   /** Rewrites the manual order of one level (V10). */
   reorderLevel: (parentId: string | undefined, order: { folderIds?: string[]; sbomIds?: string[] }) => Promise<void>;
-  /** Restores alphabetical order within one level. */
-  sortLevelByName: (parentId?: string) => Promise<void>;
+  /** Restores a computed order within one level — by name or by date, either direction. */
+  sortLevel: (parentId: string | undefined, field: FolderSortField, ascending: boolean) => Promise<void>;
 
   // --- workspace relink (B20) -------------------------------------------------------
 
@@ -361,6 +364,15 @@ export function SbomProvider({ children }: { children: ReactNode }) {
     [reloadFolders],
   );
 
+  const setFolderRollupMode = useCallback(
+    async (id: string, rollupMode: RollupMode) => {
+      const updated = await setFolderRollupModeRequest(id, rollupMode);
+      await reloadFolders();
+      return updated;
+    },
+    [reloadFolders],
+  );
+
   const deleteFolderAction = useCallback(
     async (id: string) => {
       await deleteFolderRequest(id);
@@ -388,9 +400,9 @@ export function SbomProvider({ children }: { children: ReactNode }) {
     [reloadFolders, reload],
   );
 
-  const sortLevelByName = useCallback(
-    async (parentId?: string) => {
-      await sortLevelByNameRequest(parentId);
+  const sortLevel = useCallback(
+    async (parentId: string | undefined, field: FolderSortField, ascending: boolean) => {
+      await sortLevelRequest(parentId, field, ascending);
       await Promise.all([reloadFolders(), reload()]);
     },
     [reloadFolders, reload],
@@ -423,10 +435,11 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       createFolder,
       renameFolder,
       moveFolder,
+      setFolderRollupMode,
       deleteFolder: deleteFolderAction,
       moveSbomToFolder,
       reorderLevel,
-      sortLevelByName,
+      sortLevel,
       attachWorkspace: attachWorkspaceAction,
     }),
     [
@@ -444,10 +457,11 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       createFolder,
       renameFolder,
       moveFolder,
+      setFolderRollupMode,
       deleteFolderAction,
       moveSbomToFolder,
       reorderLevel,
-      sortLevelByName,
+      sortLevel,
       attachWorkspaceAction,
     ],
   );

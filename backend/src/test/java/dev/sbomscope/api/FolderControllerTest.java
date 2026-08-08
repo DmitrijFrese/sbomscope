@@ -125,4 +125,80 @@ class FolderControllerTest {
         mockMvc.perform(delete("/api/folders/00000000-0000-0000-0000-000000000000"))
                 .andExpect(status().isNotFound());
     }
+
+    @Test
+    void aFolderReportsItsRollupModeAndSumsByDefault() throws Exception {
+        String id = create("Counting", null);
+
+        mockMvc.perform(get("/api/folders"))
+                .andExpect(jsonPath("$[?(@.id == '" + id + "')].rollupMode").value(contains("SUM")));
+    }
+
+    @Test
+    void setsTheRollupModeAndKeepsItThroughARename() throws Exception {
+        String id = create("Checkout releases", null);
+
+        mockMvc.perform(patch("/api/folders/" + id + "/rollup-mode")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rollupMode\":\"CURRENT\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rollupMode").value("CURRENT"));
+
+        mockMvc.perform(patch("/api/folders/" + id + "/name")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Checkout\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rollupMode").value("CURRENT"));
+    }
+
+    @Test
+    void refusesARollupModeThatDoesNotExistAndNamesTheOnesThatDo() throws Exception {
+        // Parsed in the controller rather than bound by Jackson, so this is a 400 the reader
+        // can act on instead of a deserialisation failure about an enum they never see.
+        String id = create("Counting", null);
+
+        mockMvc.perform(patch("/api/folders/" + id + "/rollup-mode")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rollupMode\":\"LATEST\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("CURRENT")));
+    }
+
+    @Test
+    void sortsAFolderByNameInEitherDirection() throws Exception {
+        String parent = create("Ordering", null);
+        String zebra = create("Zebra", parent);
+        String alpha = create("Alpha", parent);
+        // New folders land on top, so Alpha starts above Zebra before any sort runs.
+        mockMvc.perform(get("/api/folders"))
+                .andExpect(jsonPath("$[?(@.parentId == '" + parent + "')].name")
+                        .value(contains("Alpha", "Zebra")));
+
+        mockMvc.perform(post("/api/folders/sort")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":\"" + parent + "\",\"field\":\"NAME\",\"ascending\":false}"))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/folders"))
+                .andExpect(jsonPath("$[?(@.parentId == '" + parent + "')].name")
+                        .value(contains("Zebra", "Alpha")));
+
+        mockMvc.perform(post("/api/folders/sort")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":\"" + parent + "\",\"field\":\"NAME\",\"ascending\":true}"))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/folders"))
+                .andExpect(jsonPath("$[?(@.parentId == '" + parent + "')].name")
+                        .value(contains("Alpha", "Zebra")));
+    }
+
+    @Test
+    void refusesASortFieldThatDoesNotExistAndNamesTheOnesThatDo() throws Exception {
+        String parent = create("Ordering", null);
+
+        mockMvc.perform(post("/api/folders/sort")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentId\":\"" + parent + "\",\"field\":\"SIZE\",\"ascending\":true}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("DATE")));
+    }
 }

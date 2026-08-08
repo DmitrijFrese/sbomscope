@@ -1,0 +1,32 @@
+-- V11 - how a folder contributes its documents' severity counts upward (B19, fourth pass).
+--
+-- Additive, as constraint 8 requires.
+--
+-- The sidebar's folder rollup is a SUM over every document beneath a folder, recursively, and
+-- a sum is only sound when the things summed are DISJOINT. Readers store several versions of
+-- one product in a folder to compare them or watch progress, and there the sum counts the same
+-- product three times - a number that is not merely unhelpful but false.
+--
+-- Three modes rather than a boolean, because "do not add these up" turns out to be two
+-- different intents that want different answers on the row:
+--
+--   SUM     - the default and the existing behaviour. These are separate things; add them up.
+--   CURRENT - these are versions of one thing. The folder contributes exactly ONE document:
+--             the first in its own display order (sort_order, uploaded_at DESC), which is the
+--             newest upload until the reader drags another to the top. That keeps every
+--             ancestor a sum over disjoint things, which a per-document "do not report" flag
+--             could not guarantee.
+--   MUTED   - archived or scratch material. Contributes nothing upward and shows no counts on
+--             its own row either, since a folder that hid its numbers from its parent while
+--             displaying them itself would be two different claims about the same documents.
+--
+-- DEFAULT 'SUM' is the point of the default: every folder that exists today keeps the
+-- behaviour verified on 2026-08-07 exactly, and the column names the exception rather than
+-- withdrawing the feature. Off-by-default was considered and rejected - see the decision log.
+--
+-- Stored as VARCHAR with no CHECK constraint, matching how dependency_scope and the analysis
+-- status columns are already handled here: the enum lives in Java, where an unknown value can
+-- be reported as such rather than surfacing as an opaque integrity violation.
+
+ALTER TABLE folder
+    ADD COLUMN rollup_mode VARCHAR(16) NOT NULL DEFAULT 'SUM';

@@ -92,12 +92,24 @@ export interface Sbom {
  * a folder with `parentId` absent — the same reasoning as the backend's `StoredFolder`, kept
  * in step so "is this a project" means one check on both sides.
  */
+/**
+ * How a folder's documents count toward its own row and every ancestor's (V11).
+ *
+ * - `SUM` — separate things, added up. The default, and the only behaviour before V11.
+ * - `CURRENT` — versions of one thing: exactly one document counts, the first in the folder's
+ *   own display order.
+ * - `MUTED` — counted nowhere, and the row says so rather than rendering empty.
+ */
+export type RollupMode = 'SUM' | 'CURRENT' | 'MUTED';
+
 export interface Folder {
   id: string;
   name: string;
   parentId?: string;
   /** ISO-8601 instant. */
   createdAt: string;
+  /** Absent only for a response predating V11; treat that as `SUM`. */
+  rollupMode?: RollupMode;
 }
 
 export function fetchFolders(): Promise<Folder[]> {
@@ -122,7 +134,10 @@ export function renameFolder(id: string, name: string): Promise<Folder> {
   });
 }
 
-/** @param parentId absent moves the folder to the top level, making it a project */
+/**
+ * @param id       the folder being moved
+ * @param parentId absent moves the folder to the top level, making it a project
+ */
 export function moveFolder(id: string, parentId?: string): Promise<Folder> {
   return request<Folder>(`/folders/${id}/parent`, {
     method: 'PATCH',
@@ -132,6 +147,15 @@ export function moveFolder(id: string, parentId?: string): Promise<Folder> {
 }
 
 /** Its contents move up to the parent. No document is ever deleted. */
+/** Sets whether a folder adds its documents up, speaks for its current one, or counts nowhere. */
+export function setFolderRollupMode(id: string, rollupMode: RollupMode): Promise<Folder> {
+  return request<Folder>(`/folders/${id}/rollup-mode`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rollupMode }),
+  });
+}
+
 export function deleteFolder(id: string): Promise<void> {
   return request<void>(`/folders/${id}`, { method: 'DELETE' });
 }
@@ -158,12 +182,25 @@ export function reorderLevel(
   });
 }
 
-/** Restores alphabetical order within one level, overwriting the manual order there. */
-export function sortLevelByName(parentId?: string): Promise<void> {
-  return request<void>('/folders/sort-by-name', {
+/** What "Sort by" in a folder's menu can order its direct contents by. */
+export type FolderSortField = 'NAME' | 'DATE';
+
+/**
+ * Restores a computed order within one level, overwriting the manual order there — a one-off
+ * action, not a persisted preference, so a later drag can move things again exactly as before.
+ *
+ * @param field     NAME or DATE
+ * @param ascending A→Z / oldest-first when true, the reverse when false
+ */
+export function sortLevel(
+  parentId: string | undefined,
+  field: FolderSortField,
+  ascending: boolean,
+): Promise<void> {
+  return request<void>('/folders/sort', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parentId: parentId ?? null }),
+    body: JSON.stringify({ parentId: parentId ?? null, field, ascending }),
   });
 }
 
@@ -981,6 +1018,7 @@ export interface ScanStatus {
 }
 
 /**
+ * @param query      sort, filter and scope selection shared by the view and the export
  * @param scopeParam what to call the dependency-scope filter. The export endpoint already
  *   uses `scope` for its visible/all selector, so there it is sent as `scope_filter` — two
  *   meanings on one parameter name is exactly how an export stops matching its screen.
@@ -1031,8 +1069,11 @@ export function fetchFindings(sbomId: string, query: FindingQuery): Promise<Scan
  * Download URL for the export. Built as a plain link rather than a fetch so the browser
  * handles the download itself, filename and all.
  *
- * @param scope 'visible' reproduces the current page, filter and sort; 'all' keeps only
- *              the sort and exports every finding.
+ * @param sbomId         the document being exported
+ * @param query          sort, filter and scope selection, shared with the view
+ * @param scope          'visible' reproduces the current page, filter and sort; 'all' keeps
+ *                        only the sort and exports every finding.
+ * @param visibleColumns absent exports every column; a list restricts the workbook to those
  */
 export function exportUrl(
   sbomId: string,
@@ -1227,8 +1268,10 @@ export function openLogFolder(): Promise<LogStatus> {
 }
 
 /**
+ * @param limit  how many recent entries to return
  * @param filter matched against the columns the panel shows, not the stored JSON
  * @param regex  read `filter` as a Java regular expression rather than as literal text
+ * @param negate hide rows that match `filter` instead of showing only those that do
  */
 export function fetchActivity(limit = 200, filter = '', regex = false, negate = false): Promise<ActivityEvent[]> {
   return request<ActivityEvent[]>(`/logs/activity?${logParams(limit, filter, regex, negate)}`);

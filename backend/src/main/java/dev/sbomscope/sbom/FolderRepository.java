@@ -26,17 +26,29 @@ public class FolderRepository {
             rs.getObject("id", UUID.class),
             rs.getString("name"),
             rs.getObject("parent_id", UUID.class),
-            toInstant(rs.getObject("created_at", OffsetDateTime.class)));
+            toInstant(rs.getObject("created_at", OffsetDateTime.class)),
+            RollupMode.parse(rs.getString("rollup_mode")));
 
     private static Instant toInstant(OffsetDateTime value) {
         return value == null ? null : value.toInstant();
     }
 
     public void insert(StoredFolder folder) {
-        jdbc.sql("INSERT INTO folder (id, name, parent_id, created_at, sort_order) VALUES (?, ?, ?, ?, ?)")
+        jdbc.sql("""
+                INSERT INTO folder (id, name, parent_id, created_at, sort_order, rollup_mode)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """)
                 .params(folder.id(), folder.name(), folder.parentId(),
                         folder.createdAt().atOffset(ZoneOffset.UTC),
-                        topOfGroup(folder.parentId()))
+                        topOfGroup(folder.parentId()),
+                        folder.rollupMode().name())
+                .update();
+    }
+
+    /** Sets how this folder's documents count toward its own row and its ancestors' (V11). */
+    public void updateRollupMode(UUID id, RollupMode mode) {
+        jdbc.sql("UPDATE folder SET rollup_mode = ? WHERE id = ?")
+                .params(mode.name(), id)
                 .update();
     }
 

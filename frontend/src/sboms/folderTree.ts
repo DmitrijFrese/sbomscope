@@ -91,22 +91,80 @@ export function buildFolderTree(folders: Folder[], sboms: Sbom[]): FolderTree {
 }
 
 /**
- * Every document under a project, at any depth — what a project row's severity rollup and
- * a "delete this project" confirmation both need to know about.
+ * Every document under a project, at any depth, regardless of rollup mode — what a "delete
+ * this project" confirmation needs, since deleting relocates all of them whatever they count
+ * toward.
+ *
+ * <p>**Not what the severity rollup reads.** See `contributingSboms` for that.
  */
 export function sbomsUnder(node: FolderNode): Sbom[] {
   return [...node.sboms, ...node.children.flatMap(sbomsUnder)];
 }
 
 /**
- * Summed severity counts across every document under a project, recursively.
+ * The one *direct* document a `CURRENT` folder picks among its own siblings: the first in
+ * display order. Never reaches into a subfolder — see `contributingSboms` for why a subfolder
+ * is a different kind of thing than a sibling document and is never in competition with one.
+ *
+ * <p>The backend returns both lists ordered by `sort_order` with `uploaded_at DESC` as the
+ * tie-break, and a new or moved document takes `MIN(sort_order) - 1` — so this is the newest
+ * upload until the reader drags another to the top, and dragging is how they override it.
+ *
+ * <p>`null` when the folder holds no direct document at all — a folder built entirely from
+ * subfolders has nothing at this level to mark "current", which is correct: everything it
+ * contains already comes in through `contributingSboms`' unconditional subfolder sum.
+ */
+export function representativeSbom(node: FolderNode): Sbom | null {
+  return node.sboms[0] ?? null;
+}
+
+/**
+ * The documents a folder contributes — to its own row's counts, and to every ancestor's.
+ *
+ * <p>**A sum is only sound over disjoint things**, which is the whole reason a mode exists —
+ * no real document may be counted twice. `SUM` is the default and the original behaviour:
+ * every direct document and every subfolder's own contribution, unconditionally. `MUTED`
+ * contributes nothing anywhere.
+ *
+ * <p>**`CURRENT` treats a sibling document and a sibling subfolder as two different kinds of
+ * claim, not as competing candidates for one pick.** Several documents sitting directly in the
+ * folder are read as several *versions of the same upload* — the reader wants one, the newest
+ * by default, the rest set aside. A subfolder is read as a *submodule* of the thing this folder
+ * is versioning — its own SBOMs, current and complete on their own terms, not an alternate
+ * draft of anything at this level. So every subfolder's contribution is summed in
+ * unconditionally (each respecting its own mode, MUTED included), and only the top *direct*
+ * document is added to that — never zero-or-one documents in isolation, and never a subfolder
+ * competing with a document for the same slot. Raised by the maintainer 2026-08-08 after the
+ * first version of this mode picked only ever the single topmost child of either kind, silently
+ * discarding whichever subfolders did not happen to sit first.
+ *
+ * <p>A `MUTED` folder's own children are unaffected in themselves: a folder inside it still
+ * aggregates and still shows its own numbers on its own row. Muting stops what crosses *this*
+ * folder's boundary, not what happens beneath it.
+ */
+export function contributingSboms(node: FolderNode): Sbom[] {
+  switch (node.folder.rollupMode ?? 'SUM') {
+    case 'MUTED':
+      return [];
+    case 'CURRENT': {
+      const fromSubfolders = node.children.flatMap(contributingSboms);
+      const topDirect = representativeSbom(node);
+      return topDirect ? [...fromSubfolders, topDirect] : fromSubfolders;
+    }
+    default:
+      return [...node.sboms, ...node.children.flatMap(contributingSboms)];
+  }
+}
+
+/**
+ * Summed severity counts across the documents this folder contributes, recursively.
  *
  * <p>Read from `Sbom.severityCounts`, which the sidebar already fetches for the flat list —
  * this is arithmetic over data already on the client, not a second query.
  */
 export function rollupSeverity(node: FolderNode): Partial<Record<SeverityBand, number>> {
   const totals: Partial<Record<SeverityBand, number>> = {};
-  for (const sbom of sbomsUnder(node)) {
+  for (const sbom of contributingSboms(node)) {
     for (const band of CARD_BANDS) {
       const count = sbom.severityCounts[band] ?? 0;
       if (count > 0) {

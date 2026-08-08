@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import dev.sbomscope.sbom.FolderService;
+import dev.sbomscope.sbom.FolderSortField;
+import dev.sbomscope.sbom.RollupMode;
 import dev.sbomscope.sbom.StoredFolder;
 
 /**
@@ -35,10 +37,11 @@ class FolderController {
         this.folders = folders;
     }
 
-    record FolderResponse(UUID id, String name, UUID parentId, Instant createdAt) {
+    record FolderResponse(UUID id, String name, UUID parentId, Instant createdAt,
+                          RollupMode rollupMode) {
         static FolderResponse from(StoredFolder folder) {
             return new FolderResponse(folder.id(), folder.name(), folder.parentId(),
-                    folder.createdAt());
+                    folder.createdAt(), folder.rollupMode());
         }
     }
 
@@ -81,6 +84,26 @@ class FolderController {
     }
 
     /**
+     * @param rollupMode SUM, CURRENT or MUTED. Parsed here rather than bound by Jackson so an
+     *                   unrecognised value is a 400 naming the modes that exist, not a
+     *                   deserialisation failure about an enum the reader never sees
+     */
+    record RollupModeRequest(String rollupMode) {}
+
+    /**
+     * Sets how this folder's documents count toward its own row and its ancestors' (V11).
+     *
+     * <p>Its own sub-resource for the reason the two above are: the fields a folder exposes for
+     * editing have unrelated validation, and one endpoint each is what keeps a general PATCH
+     * from acquiring a branch per field.
+     */
+    @PatchMapping("/{id}/rollup-mode")
+    FolderResponse setRollupMode(@PathVariable("id") UUID id,
+                                 @RequestBody RollupModeRequest request) {
+        return FolderResponse.from(folders.setRollupMode(id, RollupMode.parse(request.rollupMode())));
+    }
+
+    /**
      * @param parentId  the level being reordered; null is the top level
      * @param folderIds every folder in that level, in the order to display them
      * @param sbomIds   every document in that level, likewise. Either may be omitted when
@@ -106,10 +129,23 @@ class FolderController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Restores alphabetical order within one level, overwriting the manual order there. */
-    @PostMapping("/sort-by-name")
-    ResponseEntity<Void> sortByName(@RequestBody(required = false) ReorderRequest request) {
-        folders.sortByName(request == null ? null : request.parentId());
+    /**
+     * @param parentId  the level being sorted; null is the top level
+     * @param field     "NAME" or "DATE"; blank or absent means NAME. Parsed here rather than
+     *                  bound by Jackson so an unrecognised value is a 400 naming the fields
+     *                  that exist, not a deserialisation failure about an enum never seen
+     * @param ascending A→Z / oldest-first when true, the reverse when false. Defaults true
+     *                  when the whole body is omitted, matching the field default
+     */
+    record SortRequest(UUID parentId, String field, boolean ascending) {}
+
+    /** Restores a computed order within one level — by name or by date — overwriting the
+     *  manual order there. */
+    @PostMapping("/sort")
+    ResponseEntity<Void> sort(@RequestBody(required = false) SortRequest request) {
+        folders.sort(request == null ? null : request.parentId(),
+                FolderSortField.parse(request == null ? null : request.field()),
+                request == null || request.ascending());
         return ResponseEntity.noContent().build();
     }
 

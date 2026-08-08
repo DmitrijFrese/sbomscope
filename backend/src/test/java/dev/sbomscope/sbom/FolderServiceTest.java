@@ -35,6 +35,9 @@ class FolderServiceTest {
     @Autowired
     private SbomService sboms;
 
+    @Autowired
+    private SbomRepository sbomRepository;
+
     private static final String MINIMAL_SBOM = """
             {"bomFormat":"CycloneDX","specVersion":"1.6","components":[
               {"type":"library","bom-ref":"pkg:maven/example/lib@1.0.0",
@@ -213,7 +216,7 @@ class FolderServiceTest {
     }
 
     @Test
-    void sortByNameOverwritesTheManualOrderForThatLevelOnly() {
+    void sortByNameAscendingOverwritesTheManualOrderForThatLevelOnly() {
         StoredFolder parent = folders.create("Ordering", null);
         StoredFolder zebra = folders.create("Zebra", parent.id());
         StoredFolder alpha = folders.create("Alpha", parent.id());
@@ -221,9 +224,49 @@ class FolderServiceTest {
         folders.reorderFolders(parent.id(), List.of(zebra.id(), alpha.id()));
         assertThat(childrenOf(parent)).extracting(StoredFolder::name).containsExactly("Zebra", "Alpha");
 
-        folders.sortByName(parent.id());
+        folders.sort(parent.id(), FolderSortField.NAME, true);
 
         assertThat(childrenOf(parent)).extracting(StoredFolder::name).containsExactly("Alpha", "Zebra");
+    }
+
+    @Test
+    void sortByNameDescendingIsTheReverseOfAscending() {
+        StoredFolder parent = folders.create("Ordering", null);
+        folders.create("Alpha", parent.id());
+        folders.create("Zebra", parent.id());
+
+        folders.sort(parent.id(), FolderSortField.NAME, false);
+
+        assertThat(childrenOf(parent)).extracting(StoredFolder::name).containsExactly("Zebra", "Alpha");
+    }
+
+    @Test
+    void sortByDateOrdersFoldersByCreationAndDocumentsByUpload() throws InterruptedException {
+        StoredFolder parent = folders.create("Ordering", null);
+        // Named so alphabetical order is the reverse of creation order — proving the DATE
+        // field actually drives this, not a coincidence with NAME.
+        StoredFolder second = folders.create("A-second", parent.id());
+        // A folder's created_at and a document's uploaded_at both come from Instant.now() at
+        // the moment of the call, with no injectable clock — a short real sleep is what makes
+        // two consecutive calls land in different, comparable instants.
+        Thread.sleep(5);
+        StoredFolder third = folders.create("B-third", parent.id());
+
+        StoredSbom secondDoc = uploadDocument("z-second.cdx.json");
+        folders.moveSbom(secondDoc.id(), parent.id());
+        Thread.sleep(5);
+        StoredSbom thirdDoc = uploadDocument("y-third.cdx.json");
+        folders.moveSbom(thirdDoc.id(), parent.id());
+
+        folders.sort(parent.id(), FolderSortField.DATE, true);
+        assertThat(childrenOf(parent)).extracting(StoredFolder::id).containsExactly(second.id(), third.id());
+        assertThat(sbomRepository.childrenOf(parent.id())).extracting(StoredSbom::id)
+                .containsExactly(secondDoc.id(), thirdDoc.id());
+
+        folders.sort(parent.id(), FolderSortField.DATE, false);
+        assertThat(childrenOf(parent)).extracting(StoredFolder::id).containsExactly(third.id(), second.id());
+        assertThat(sbomRepository.childrenOf(parent.id())).extracting(StoredSbom::id)
+                .containsExactly(thirdDoc.id(), secondDoc.id());
     }
 
     @Test
@@ -247,5 +290,95 @@ class FolderServiceTest {
 
         assertThatThrownBy(() -> folders.moveSbom(doc.id(), UUID.randomUUID()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // --- rollup mode (V11) ---
+    //
+    // The arithmetic itself is the browser's — the sidebar already holds every document's
+    // severity counts, so rolling up is arithmetic over data on the client rather than a
+    // second query, and folderTree.test.ts is where the three modes are exercised. What the
+    // backend owes is that the mode is stored, defaulted and carried through the operations
+    // that rebuild a StoredFolder, which is what these pin.
+
+    @Test
+    void aNewFolderSumsItsContentsUntilToldOtherwise() {
+        // The default is load-bearing: every folder that existed before V11 keeps the
+        // behaviour verified on 2026-08-07, and the column names the exception instead.
+        StoredFolder project = folders.create("Payments", null);
+
+        assertThat(project.rollupMode()).isEqualTo(RollupMode.DEFAULT);
+        assertThat(reload(project.id()).rollupMode()).isEqualTo(RollupMode.SUM);
+    }
+
+    @Test
+    void theRollupModeIsStoredAndReadBack() {
+        StoredFolder versions = folders.create("Checkout releases", null);
+
+        assertThat(folders.setRollupMode(versions.id(), RollupMode.CURRENT).rollupMode())
+                .isEqualTo(RollupMode.CURRENT);
+        assertThat(reload(versions.id()).rollupMode()).isEqualTo(RollupMode.CURRENT);
+
+        folders.setRollupMode(versions.id(), RollupMode.MUTED);
+        assertThat(reload(versions.id()).rollupMode()).isEqualTo(RollupMode.MUTED);
+    }
+
+    @Test
+    void renamingAndMovingPreserveTheRollupMode() {
+        // Both rebuild a StoredFolder from its parts rather than re-reading it, so a field
+        // added later is silently dropped unless it is threaded through — which would reset a
+        // muted folder to summing as a side effect of renaming it.
+        StoredFolder project = folders.create("Parent", null);
+        StoredFolder scratch = folders.create("Scratch", null);
+        folders.setRollupMode(scratch.id(), RollupMode.MUTED);
+
+        assertThat(folders.rename(scratch.id(), "Scratch renamed").rollupMode())
+                .isEqualTo(RollupMode.MUTED);
+        assertThat(folders.move(scratch.id(), project.id()).rollupMode())
+                .isEqualTo(RollupMode.MUTED);
+        assertThat(reload(scratch.id()).rollupMode()).isEqualTo(RollupMode.MUTED);
+    }
+
+    @Test
+    void anUnknownRollupModeNamesTheOnesThatExist() {
+        assertThatThrownBy(() -> RollupMode.parse("LATEST"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SUM")
+                .hasMessageContaining("CURRENT")
+                .hasMessageContaining("MUTED");
+    }
+
+    @Test
+    void anAbsentRollupModeFallsBackToTheDefaultRatherThanFailing() {
+        assertThat(RollupMode.parse(null)).isEqualTo(RollupMode.SUM);
+        assertThat(RollupMode.parse("  ")).isEqualTo(RollupMode.SUM);
+        assertThat(RollupMode.parse("current")).isEqualTo(RollupMode.CURRENT);
+    }
+
+    @Test
+    void settingTheModeOnAnUnknownFolderIsRejected() {
+        assertThatThrownBy(() -> folders.setRollupMode(UUID.randomUUID(), RollupMode.MUTED))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void anUnknownSortFieldNamesTheOnesThatExist() {
+        assertThatThrownBy(() -> FolderSortField.parse("SIZE"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("NAME")
+                .hasMessageContaining("DATE");
+    }
+
+    @Test
+    void anAbsentSortFieldFallsBackToNameRatherThanFailing() {
+        assertThat(FolderSortField.parse(null)).isEqualTo(FolderSortField.NAME);
+        assertThat(FolderSortField.parse("  ")).isEqualTo(FolderSortField.NAME);
+        assertThat(FolderSortField.parse("date")).isEqualTo(FolderSortField.DATE);
+    }
+
+    private StoredFolder reload(UUID id) {
+        return folders.findAll().stream()
+                .filter(folder -> folder.id().equals(id))
+                .findFirst()
+                .orElseThrow();
     }
 }

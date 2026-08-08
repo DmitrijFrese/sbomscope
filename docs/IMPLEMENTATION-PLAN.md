@@ -45,15 +45,15 @@ the Excel About sheet. **The frontend has unit tests for the first time** (Vites
 Testing Library, 30), added on the maintainer's instruction after a formatter bug rendered a
 probability of 0.99945 as "100%".
 
-**Where the schema stands: V10 is the highest migration taken.** V1 baseline, V2 `osv_index`,
+**Where the schema stands: V11 is the highest migration taken.** V1 baseline, V2 `osv_index`,
 V3 `fixed_version_sort`, V4 `kev_entry`/`kev_source`, V5 `epss_score`/`epss_source`, V6–V8
 workspace reachability runs/stopped state/module mappings/coverage, V9 `folder` and
-`sbom.folder_id`, V10 `sort_order` on both. Additive only, per constraint 8. **Phase 12's own
-migration must start at V11 or later** — an earlier V10 for container images was written,
-applied to one developer database, and deliberately backed out before commit; see the
-2026-08-06 and 2026-08-07 decision log entries.
+`sbom.folder_id`, V10 `sort_order` on both, V11 `folder.rollup_mode`. Additive only, per
+constraint 8. **Phase 12's own migration must start at V12 or later** — an earlier V10 for
+container images was written, applied to one developer database, and deliberately backed out
+before commit; see the 2026-08-06 and 2026-08-07 decision log entries.
 
-README, AGENTS.md and ARCHITECTURE were brought back in step with all of it on 2026-08-01.
+README, AGENTS.md and ARCHITECTURE were brought back in step with all of it on 2026-08-08.
 
 **Reordered on 2026-08-06, on the maintainer's decision, and the reason is recorded because it
 reverses a stated order.** Phase 12 was scheduled after VEX and behind a design gate. That gate
@@ -66,18 +66,28 @@ Two quality-of-life items were raised alongside it and became Phase 13.
 
 **B19 and B20 are built and verified, closed out before continuing image scanning, on the
 maintainer's instruction.** Built and verified 2026-08-06; extended with a second pass the same
-day (folder deletion, sibling-name refusal wording) and a third on 2026-08-07 — native
+day (folder deletion, sibling-name refusal wording), a third on 2026-08-07 — native
 drag-and-drop (no new dependency), manual ordering (V10), and a row redesign after the built
-version proved unreadable at 13px. All of it went through the real jar in a browser, not only
-the test suite. 317 backend tests and 51 frontend tests pass, `mvn clean package` is green end
-to end, and B11's directory-picker drop was not reintroduced — B20 uses the absolute-path field
-that drop settled on.
+version proved unreadable at 13px — a fourth on 2026-08-08: rollup modes (V11), so a folder
+holding several versions of one product stops reporting that product's findings once per
+version — and a fifth the same day, from using it: fixed a two-cause drag-and-drop jitter
+(native `dragenter`/`dragleave` storming across a row's child elements, and the refusal banner
+shifting the list under a stationary pointer), moved the `current` mark to its own line so a
+long filename cannot clip it, generalised "Sort by name" into four one-off actions — name or
+date, either direction — and corrected `CURRENT` itself after the maintainer's own sidebar
+exposed a real bug: a folder holding both a document and a subfolder was silently dropping
+whichever one did not happen to sit first, rather than summing every subfolder unconditionally
+and picking only among direct documents. All of it went through the real jar in a browser, not
+only the test suite. 332 backend tests and 62 frontend tests pass, `mvn clean package` is green
+end to end, and B11's directory-picker drop was not reintroduced — B20 uses the absolute-path
+field that
+drop settled on.
 
 Phase 9 now provides evidence-graded direct and transitive Maven/JVM call analysis. B13, B14 and
 B12 were completed in that order on 2026-08-02. B10 and B11 were dropped on the same date.
 
 **Next: Phase 12 (container image scanning)**, design settled and measured, no implementation
-on disk — its migration is V11 or later, never V10. Phase 11 (VEX) follows it, per the
+on disk — its migration is V12 or later, since V10 and V11 are both spent. Phase 11 (VEX) follows it, per the
 2026-08-06 reordering decision above.
 
 ---
@@ -99,7 +109,7 @@ on disk — its migration is V11 or later, never V10. Phase 11 (VEX) follows it,
 | 10 | Packaging and distribution | Baseline done; samples/quickstart remain |
 | 11 | VEX — read supplier exploitability and mitigation context | Planned after Phase 9 |
 | 12 | Container image scanning | **Design gate passed 2026-08-06** — measured, decided, in build |
-| 13 | Projects, and a document's own settings | **Built and verified 2026-08-07** — B19 (with drag-and-drop and manual ordering), B20 |
+| 13 | Projects, and a document's own settings | **Built and verified 2026-08-08** — B19 (with drag-and-drop, manual ordering and rollup modes), B20 |
 
 Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
 Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
@@ -1565,8 +1575,9 @@ per scan rather than a default in either direction.
       error about a file they believe is a valid image
 - [ ] **`--offline --all-packages`, always**, with the application-artifact plugins added only
       when the user ticked that box for this scan
-- [ ] **A new migration — V11 or later, never V10.** V10 was claimed on 2026-08-07 by B19's
-      manual ordering (`V10__manual_ordering.sql`), unrelated to this phase; the number is
+- [ ] **A new migration — V12 or later, never V10 or V11.** V10 was claimed on 2026-08-07 by
+      B19's manual ordering (`V10__manual_ordering.sql`) and V11 on 2026-08-08 by B19's rollup
+      modes (`V11__folder_rollup_mode.sql`), both unrelated to this phase; those numbers are
       taken and any dev database still carrying the backed-out image-scanning V10 needs the
       cleanup described in the 2026-08-06 decision log entry before it can move forward.
       Adds `sbom.source_type`, `image_reference`, `image_digest`, `image_os`; `image_layer`;
@@ -2635,7 +2646,7 @@ and the controls row is still a single 39px line.
 Two items raised from use on 2026-08-06, alongside the container-image gate. Both are about the
 sidebar and the things an uploaded document should have been able to say about itself.
 
-### B19 — SBOMs organise into projects — **built and verified 2026-08-06, extended 2026-08-07**
+### B19 — SBOMs organise into projects — **built and verified 2026-08-06, extended 2026-08-07 and 2026-08-08**
 
 The sidebar is a flat list ordered by upload date. That is fine at five documents and is not
 what a real machine looks like after a month: several products, each with a few modules, plus
@@ -2671,10 +2682,22 @@ it, enforced in `FolderService` on both insert and move — a product rule about
       sibling row, which shows an insertion line rather than a highlight — a folder row is two
       drop targets at once (its edges reorder, its middle files into it), and a highlight would
       have claimed the wrong one. A new folder or document lands on top of its group
-      (`MIN(sort_order) - 1`, no sibling rewrite). "Sort by name" in the row menu overwrites the
+      (`MIN(sort_order) - 1`, no sibling rewrite). "Sort by" in the row menu overwrites the
       manual order for one level as an escape hatch. `reorderFolders`/`reorderSboms` refuse a
       list that is not exactly the group's current membership, so a reorder cannot smuggle a
       move past the depth/cycle/name checks that `move` exists to apply
+- [x] **Sort by date, and both fields either direction, added 2026-08-08.** "Sort by name" was
+      one action with no direction; the menu now offers four — name A→Z/Z→A, date newest/oldest
+      first — still a one-off rewrite of `sort_order`, not a persisted preference, so a later
+      drag can move things again exactly as before. `FolderService.sort(parentId, field,
+      ascending)` replaced `sortByName(parentId)`; `POST /api/folders/sort` replaced
+      `/sort-by-name`, parsing `field` through `FolderSortField.parse` the same way
+      `RollupMode.parse` already does, and carrying direction as a plain `boolean ascending`
+      rather than a second enum, matching `FindingQuery.ascending`'s existing convention. Date
+      orders folders by `created_at` and documents by `uploaded_at` — no new column, both
+      already existed. Verified against the real jar with folder and document names chosen so
+      alphabetical order is the *reverse* of creation/upload order, so each of the four menu
+      items produces a distinguishable, individually-confirmed result rather than a coincidence
 - [x] **Deleting a folder relocates its contents to the parent and never deletes a document.**
       `FolderRepository.reparentChildren`/`reassignSboms` plus `ON DELETE SET NULL` as a backstop
       on `fk_sbom_folder`. Pinned by `FolderServiceTest` at both levels (a nested folder, and a
@@ -2705,6 +2728,76 @@ it, enforced in `FolderService` on both insert and move — a product rule about
       into the name text field and dragging the mouse. The "Escape" key or selecting another component
       exits the rename mode.
 
+- [x] **Rollup modes, added 2026-08-08 (V11, `folder.rollup_mode`).** The rollup is a **sum**,
+      and a sum is only sound over **disjoint** things — a folder holding five versions of one
+      product is not disjoint, and summing it reports that product five times. Three modes, set
+      per folder from the row's `⋯` menu and worded as what the documents *are*: `SUM` (the
+      default and V9's behaviour), `CURRENT` (versions of one thing), `MUTED` (contributes
+      nothing, here or upward). A `MUTED` folder's own children are unaffected — muting stops
+      what crosses *that* folder's boundary, not what happens beneath it, so a folder inside it
+      still aggregates on its own row. The muted row reads **"not counted"** rather than
+      rendering empty, because a blank severity area over 146 High findings is the
+      `NONE`-versus-`CLEAN` failure one level out
+- [x] **"Current" is the top *direct document*, and the row says so.** The representative is
+      the first document in `sort_order, uploaded_at DESC` among the folder's own direct
+      documents — never reaching into a subfolder, see the correction below — which is the
+      newest upload until the reader drags another above it, so it needs no per-upload
+      bookkeeping and is overridable with the dragging V10 already built. It carries a visible
+      `current` mark, without which a drag would silently change a folder's numbers
+- [x] **`CURRENT` corrected, 2026-08-08, after the maintainer's own use surfaced a real bug in
+      it.** The first version picked only the single topmost child of *either* kind — folder or
+      document — so a `CURRENT` folder holding one document and one subfolder counted only
+      whichever happened to render first, silently dropping the other. Found live on the
+      maintainer's own sidebar (`Ordner`, `CURRENT`, holding one direct document and a subfolder
+      two levels down with 41 critical/146 high/97 medium/13 low in it): the folder reported
+      only its own document's 1 medium, the whole subfolder invisible to the total. Asked what
+      the intended behaviour was; the maintainer's answer, verbatim: *"I might have several
+      sboms of the same application and just want one version considered. The folders might
+      contain sboms of sub modules that I want to count towards the total sum."* The corrected
+      rule treats a direct document and a subfolder as two different kinds of claim rather than
+      competitors for one pick: every subfolder sums in **unconditionally** (each respecting its
+      own mode, `MUTED` included), and only the top *direct* document is added to that — never
+      zero, and never a subfolder standing in for a document's slot. `representativeSbom`
+      narrowed to only ever return a direct sibling or `null`; `contributingSboms`'s `CURRENT`
+      case became `[...subfolders.flatMap(contributingSboms), ...topDirectDocument]`. The
+      disjointness guarantee survives intact — it was always about no document being counted
+      twice, not about contributing exactly one, and every document still appears in exactly one
+      place in the tree. The "of *n*" note now counts only direct documents, not the whole
+      subtree, since only direct siblings are ever set aside; a `CURRENT` folder with no direct
+      documents at all shows no such note and behaves exactly like `SUM`, because nothing at that
+      level is being excluded. Verified against the maintainer's own real data after the fix:
+      `Ordner` correctly reports 41 critical/146 high/**98** medium (97 from the subfolder + 1
+      of its own)/13 low
+- [x] **The `current` mark moved to its own line above the name, 2026-08-08.** Found in use:
+      appended inline after the filename, the mark could land wherever `overflow-wrap: anywhere`
+      happened to break a long filename — including right where the row-action button's
+      permanently reserved 30px starts, clipping it. A short fixed word on its own
+      `inline-block` line above `.sbom-card__name` never competes with that space. Verified
+      against the real jar on the 24-character `vuln-multi-module.cdx.json`: the mark's box sits
+      fully inside the card and entirely above the name's own bounding box
+- [x] **Drag-and-drop jitter fixed, 2026-08-08 — two independent causes, found while reproducing
+      "dragging a folder onto the topmost folder is jittery, hard to even screenshot".**
+      1. **Native `dragenter`/`dragleave` bubble like `mouseover`/`mouseout`, not like
+         `mouseenter`/`mouseleave`.** A folder row's drag handlers sit on `.folder-row__header`,
+         which contains several children (chevron, icon, name, rollup, `⋯` trigger); crossing
+         from the header onto any of them fired a `dragleave` on the header — clearing
+         `activeTarget`/`insertion` — immediately followed by a fresh `dragenter`. Slowly aiming
+         at a content-heavy row was enough to storm that clear/recompute cycle continuously.
+         Fixed with `pointer-events: none` on every direct child of `.folder-row__header` and
+         `.sbom-row` while `data-drag-active` is set on `.sidebar__list`, so hit-testing always
+         resolves to the row itself — confirmed by dispatching real `DragEvent`s across a row's
+         full width and reading `getComputedStyle(child).pointerEvents`.
+      2. **The refusal banner shifted the whole list when it mounted.** `.sidebar__drag-refusal`
+         rendered in normal flow directly above `.sidebar__list`; appearing on an illegal target
+         pushed every row beneath it down under a pointer that had not moved, which could flip
+         `edgeFor`'s zone computation on the very row being hovered and re-trigger the same
+         toggle — a layout-driven loop needing no further mouse movement. Measured directly on
+         the real jar: mounting the banner moved the topmost row **52.7px** — more than the
+         row's own height. Fixed by making the banner `position: absolute` inside a new
+         `.sidebar__body` wrapper, overlaying the list instead of pushing it; the same measurement
+         after the fix reads **0px**. Costs nothing: the banner only appears over a target that
+         will not receive the drop anyway
+
 **Aggregation is deliberately not built, and the model is shaped so it needs no migration.**
 Selecting a project and seeing every finding beneath it would reverse the 2026-07-26 "one SBOM
 at a time" decision, and would put a document column, a de-duplication rule (the same purl in
@@ -2712,11 +2805,38 @@ three SBOMs — one row or three?), paging and the About sheet all in play at on
 would need is a recursive walk of `folder.parent_id` plus a `sbom.folder_id` lookup, which this
 schema already answers. So it stays a screen-and-query question for later, not a schema one.
 
+**When it is built it must read `rollup_mode`, not the raw subtree.** The severity rollup is the
+only thing that respects the modes today, because it is the only thing that aggregates. An
+aggregate findings view walking `sbom.folder_id` directly would reintroduce exactly the
+double-count V11 removed — listing one product's findings once per stored version — while the
+folder row beside it showed the corrected number. `contributingSboms` is the shape that answer
+has to take, whichever side of the wire it ends up computed on.
+
 **Done when**: documents can be filed into projects and subfolders up to three levels, moved
 between them, and no folder operation can lose an upload. **Met** — verified against the real
 jar: created a project, created a subfolder inside it, moved a real document in and back out,
 and confirmed the depth-cap and sibling-name-collision refusals both at the service level
 (`FolderServiceTest`, 9 cases) and over HTTP (`FolderControllerTest`, 7 cases).
+
+**The rollup modes are verified against the real jar too (2026-08-08).** V11 applied to the
+existing database (`schema "PUBLIC" … now at version v11`) and every folder already there read
+back `SUM`, so nothing changed for anyone. A project holding a subfolder with
+`vuln-multi-module.cdx.json` (41 critical, 146 high, 97 medium, 13 low) and
+`sbomscope-before-fix.json` (1 medium) then showed, on the subfolder **and on the project
+above it**: `41 · 146 · 98 · 13` under `SUM`; `1 medium — the current of 2 versions` under
+`CURRENT`; and *"not counted"* on the folder with the project above it showing nothing at all
+under `MUTED`. Reordering the two documents moved the `current` mark and changed the counts to
+97 medium — the other document alone, not a sum. 20 tests added: 11 in `folderTree.test.ts`
+(the modes, the ancestor propagation, and the subfolder/muted-child fallbacks), 6 in
+`FolderServiceTest` and 3 in `FolderControllerTest`.
+
+**One known consequence, accepted rather than fixed.** A `SUM` folder whose only contents are
+muted renders no counts, exactly like an empty one — the muted child says *"not counted"* on
+its own row, but only while its parent is expanded. Collapsed, a project can therefore read as
+clean when what it really holds is a deliberate exclusion. Left as is because muting is an
+explicit declaration and "nothing is reported to me" is its honest consequence; if it turns out
+to mislead in use, the fix is a marker on an ancestor whose subtree contains a muted folder,
+which needs no schema change.
 
 ### B20 — Attach a workspace to a document that has none — **built and verified 2026-08-06**
 
@@ -2770,7 +2890,22 @@ session, and the two items share the minimal-SBOM fixture rather than each carry
       question as before: findings are keyed by purl and shared across SBOMs, so "how did this
       project change" still needs a de-duplication rule (the same purl in three SBOMs — one row
       or three?) and a decision about aggregating the findings view, which B19 deliberately did
-      not build. A screen-and-query question now, not a schema one
+      not build. A screen-and-query question now, not a schema one.
+
+      **2026-08-08 moved this closer than it looks.** A `CURRENT` folder is the reader stating,
+      explicitly, *"these documents are versions of one thing, in this order"* — which is
+      exactly the input a trend needs and the thing that previously had to be guessed at. The
+      folder names the series, `sort_order` names the sequence, and the current one is already
+      identified. What is still missing is only the de-duplication rule above and a screen to
+      put it on; the "which documents belong to one story" half is now declared data
+- [ ] **An explicit "this is the current version" pin, if the positional rule proves too
+      subtle.** `CURRENT` takes the top document in the folder's own order, which is automatic
+      and drag-overridable and, once, positional enough that an unrelated reorder changes a
+      folder's totals — mitigated today by marking the row rather than by asking. Should that
+      mitigation prove insufficient in use, the fix is a nullable override on `sbom` defaulting
+      to the existing rule, which is additive and disturbs none of the arithmetic. Deliberately
+      not built now: it reintroduces per-document bookkeeping, which is why the per-document
+      proposal was rejected in the first place
 - [ ] **A pre-existing frontend test is over its timeout, found while verifying B19/B20.**
       `DependencyGraphPanel.test.ts` → *"shows the exact total and continues numbering through
       the next 100 routes"* ran in 16.4s against the suite's 5s default under load, though it
@@ -5542,6 +5677,8 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   migration, unrelated to container images. **Phase 12's own migration must therefore start at
   V11 or later, never V10.** Anyone else's development database that still has the backed-out
   V10 applied needs the same cleanup described above before it can take V10 for ordering.
+  *(Superseded 2026-08-08: V11 was then taken by B19's rollup modes, so Phase 12 starts at V12.
+  The reasoning above is unchanged — this is the second time the same number was assumed free.)*
 
   Documentation was corrected to match rather than left describing unbuilt schema as real:
   ARCHITECTURE's data model no longer lists the V10 tables as existing, its ecosystem catalogue
@@ -5637,3 +5774,202 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   `NameField`'s `flex: 1 1 auto` claims the freed width automatically — verified after: the
   input grew from what the name button had to 113px on the same row, and both return the
   moment the rename is submitted or cancelled.
+- 2026-08-08 — **Folders gain a rollup mode, because a sum over versions of one product is a
+  false number.** Raised by the maintainer: readers store several versions of one SBOM in a
+  folder to compare them or watch progress, and the recursive severity rollup then counts that
+  product once per version. The framing that decided the design is that **the rollup is a sum,
+  and a sum is only sound over disjoint things** — so the fix belongs where "are these disjoint"
+  is decided, which is the folder, not the number.
+
+  **Two proposals were on the table and neither was taken as offered.** A per-folder boolean
+  *defaulting to off* has the right unit and the wrong default: it would withdraw a feature
+  verified the day before from every folder that already exists, when the disjoint-modules
+  project is the common case and the version stack is the exception — a default should name the
+  exception. It also left one semantic unstated, which is where the actual bug hides: "draw no
+  number on this row" and "contribute nothing upward" are different flags, and had it been only
+  the first, the same double-count would have survived one level up. A per-**document** "report
+  to parents" flag defaulting to on has the right default and the wrong unit: five versions mean
+  unchecking four, every new upload defaults to reporting, and promoting v1.6 means remembering
+  to demote v1.5 — permanent manual bookkeeping whose failure mode is a silently wrong count in
+  a security tool. "These are versions of each other" is a fact about the *set*, not about any
+  member of it.
+
+  **What was built instead: `SUM` / `CURRENT` / `MUTED` on the folder** (V11), the third added
+  by the maintainer for archived or scratch material that should pollute no total. `CURRENT`
+  contributes exactly **one** document, which is the property that makes the whole tree keep
+  working: every ancestor is still summing disjoint things, a guarantee the per-document flag
+  could not offer. `MUTED` suppresses its own row's counts as well as its contribution, because
+  a folder hiding its numbers from its parent while displaying them itself would be two
+  different claims about the same documents — and it does **not** mute its children, since
+  muting stops what crosses that folder's boundary rather than hiding a subtree.
+
+  *(Corrected the same day, below: "CURRENT contributes exactly one document" turned out to be
+  the wrong rule for a folder holding both a subfolder and a document — it silently discarded
+  whichever one did not sit first. The disjointness property this paragraph is really after
+  survives the correction; the "exactly one" mechanism achieving it does not.)*
+
+  **"Which version is current" was the question that needed care, and three answers were
+  rejected.** Greatest `uploaded_at` is truthful to the name and invisible on screen, and wrong
+  whenever somebody backfills an older SBOM — upload order is not version order. Parsing a
+  version out of the filename or the root component is a heuristic, and this codebase carries
+  exactly one on purpose and labels it. An explicit per-document pin is unambiguous but
+  reintroduces the bookkeeping the per-document flag was rejected for, and its sane default
+  would be the chosen rule anyway. **The rule is the first document in the folder's own display
+  order**: V10 already lands a new or moved document at `MIN(sort_order) - 1`, so it is the
+  newest upload by default and the reader overrides it by dragging — no new UI and no per-upload
+  chore. Its one failure mode is that an unrelated drag changes a folder's numbers, which is why
+  the representative row carries a visible `current` mark: the rule is positional, so the mark
+  has to be positional too. The mode was named `CURRENT` rather than `LATEST` for exactly this
+  reason — "latest" would claim a recency the rule does not actually enforce.
+
+  **Deduplicating by purl instead of summing was considered and rejected**, and it is the
+  tempting one because it needs no configuration. It reports the historical worst rather than
+  the current state: a CVE that existed only in v1.0 and was fixed in v1.2 survives the union.
+  It would also move the rollup from client-side arithmetic over data the sidebar already holds
+  to a backend query, for a worse answer.
+
+  **Nothing validates that a `CURRENT` folder really holds versions of one thing.** That would
+  mean guessing from filenames or root components; it stays the reader's declaration.
+
+  **This takes V11, so Phase 12's image-scanning migration is V12 or later.** The plan's Phase
+  12 item named V11 when it was written; that number is now spent, and the note there has been
+  updated.
+
+- 2026-08-08 — **The sidebar's drag-and-drop had a two-cause jitter, found by the maintainer
+  trying to drag one folder onto the topmost one and reporting the state "keeps jumping between
+  several states" — visible enough to be hard to even screenshot.** Both causes were confirmed
+  by measurement against the real jar, not inferred from reading the code alone.
+
+  **Cause one: native `dragenter`/`dragleave` bubble like `mouseover`/`mouseout`, not like
+  `mouseenter`/`mouseleave`.** A folder row's drag handlers sit on `.folder-row__header`, which
+  contains several children — the disclosure chevron, the folder icon, the name button, the
+  severity rollup, the `⋯` menu trigger. Crossing from the header's own padding onto any of
+  those fired a `dragleave` on the header — clearing `activeTarget`/`insertion` — immediately
+  followed by a fresh `dragenter`, so simply moving the pointer across a row's own contents
+  stormed that clear-then-recompute cycle. Worse on the topmost, most content-heavy row, which
+  is exactly where the maintainer was aiming. Fixed with `pointer-events: none` on every direct
+  child of `.folder-row__header` and `.sbom-row` while a new `data-drag-active` attribute is set
+  on `.sidebar__list`, so hit-testing during any drag always resolves to the row element itself,
+  which alone holds the handlers — removing the storm at its source rather than debouncing it.
+
+  **Cause two: the refusal banner shifted the whole list when it mounted.**
+  `.sidebar__drag-refusal` rendered in normal flow directly above `.sidebar__list`, so appearing
+  over an illegal target pushed every row beneath it down under a pointer that had not moved.
+  Since `edgeFor` re-reads a row's live `getBoundingClientRect()` on every `dragover`, that
+  single shift could flip which zone the pointer was in, which could re-toggle the banner,
+  shifting the list again — a loop needing no further mouse movement to sustain itself. Measured
+  directly: mounting the banner moved the topmost row **52.7px**, more than the row's own
+  height. Fixed by wrapping the refusal banner and the list in a new `.sidebar__body`
+  (`position: relative`) and making the banner `position: absolute` inside it, so it overlays
+  the list instead of pushing it — the identical measurement afterwards reads **0px**. Costs
+  nothing: the banner only ever appears over a target that is not going to receive the drop
+  anyway.
+
+  Verification for both dispatched real `DragEvent`s against the live dev server (not a mock),
+  and took each measurement with the fix active and then temporarily neutralised, for a clean
+  before/after rather than a single-sided claim. A literal screenshot and a fully native
+  mouse-driven drag were both unavailable in the tool environment used, so the evidence is DOM
+  measurement — arguably the more precise instrument for a bug that is fundamentally about event
+  bubbling and layout math.
+
+- 2026-08-08 — **The `current` mark moved off the name line, after the maintainer noticed it
+  could render incompletely.** It was appended inline after the filename inside
+  `.sbom-card__name`, which wraps with `overflow-wrap: anywhere` — so on a long filename the
+  mark could land wherever the browser happened to break the text, including right where the
+  row-action button's permanently-reserved 30px begins, clipping it. Moved to its own
+  `inline-block` line above the name, where a short fixed word can never collide with wrapped
+  text. Verified against the real jar on `vuln-multi-module.cdx.json` (24 characters): the
+  mark's box sits entirely above the name's own bounding box and fully inside the card.
+
+- 2026-08-08 — **"Sort by name" generalised into "Sort by", four one-off actions, on the
+  maintainer's request for a date option with both directions.** `FolderService.sortByName`
+  became `sort(parentId, FolderSortField field, boolean ascending)`; `POST
+  /api/folders/sort-by-name` became `POST /api/folders/sort`. No back-compat shim for the old
+  name or endpoint — this is the application's own frontend talking to its own backend inside
+  one jar, not a published API, so a clean rename costs nothing a wrapper would have avoided.
+
+  **Direction is a plain `boolean ascending`, not a second enum**, deliberately matching
+  `FindingQuery.ascending`'s existing convention rather than inventing a parallel one — this
+  codebase already had exactly one answer to "how is a sort direction represented" and the
+  finding view had already settled it. `FolderSortField` itself follows `RollupMode`'s shape
+  instead — its own file, a `DEFAULT`, and a `parse(String)` naming the values that exist —
+  because both are small controlled-vocabulary values arriving in a request body, and the two
+  should look and behave alike for whoever touches either next.
+
+  **The menu is four flat `menuitem` buttons in a labelled group, not a submenu and not
+  `menuitemradio`s.** Four items fit as plain buttons without the second layer of positioning a
+  submenu would need inside an already-portal-drawn menu — the same reasoning `ROLLUP_CHOICES`
+  used first. Not radios, unlike the rollup modes: a sort is a one-off action with nothing to
+  check as "current" afterwards, exactly as the original single "Sort by name" button already
+  was, so adding checked-state semantics here would claim a persistence the feature does not
+  have.
+
+  **Date orders a folder by `created_at` and a document by `uploaded_at` — both already
+  existed**, so this needed no migration. Verified against the real jar with folder and document
+  names deliberately chosen so alphabetical order is the *reverse* of creation/upload order,
+  so each of the four menu items had to produce a distinguishable, individually-confirmed
+  result to pass — agreement between name-order and date-order on the test data would have
+  hidden a bug where the field choice was ignored.
+
+- 2026-08-08 — **`CURRENT` corrected: a subfolder and a direct document are different kinds of
+  claim, not competitors for one pick.** Found by the maintainer using their own sidebar, not by
+  a test: a `CURRENT` project (`Ordner`) held one document directly and a subfolder two levels
+  down (`test2`) holding a document with 41 critical, 146 high, 97 medium and 13 low findings.
+  `Ordner`'s row reported only its own document's 1 medium — the entire subfolder invisible to
+  the total. The mechanism was exactly what the earlier entry above describes and had seemed
+  sufficient at the time: pick the single topmost child of *either* kind, folder or document.
+  Folders render before documents at every level, so on the actual real data the direct document
+  should have lost to the subfolder outright — instead the implementation checked direct
+  documents first regardless of position, so the subfolder was never even considered while any
+  direct document existed. Either ordering of that mistake produces the same class of failure:
+  something the reader can see in the tree does not reach the number above it.
+
+  Asked what the intended behaviour was rather than guessing a second time. The maintainer's
+  answer, verbatim: *"If 'versions of a thing' is set onto a folder, I would sum up all folders
+  and then the topmost sbom. The reasoning is, that I might have several sboms of the same
+  application and just want one version considered. The folders might contain sboms of sub
+  modules that I want to count towards the total sum."*
+
+  **The corrected rule drops the idea of "one pick among all children" entirely.** A direct
+  document competes with other direct documents for the top slot, exactly as before. A subfolder
+  never competes with anything — every subfolder sums in unconditionally, each through its own
+  `contributingSboms` respecting its own mode (a `MUTED` subfolder still contributes nothing,
+  precisely because that recursion is unconditional rather than skipped). The folder's total is
+  that unconditional subfolder sum plus, if the folder has any direct documents at all, the top
+  one. `representativeSbom` narrowed to answer only "which direct document, if any" — it no
+  longer walks into children at all, since a subfolder is never a candidate for the mark a
+  document-only fallback used to search for. `contributingSboms`'s `CURRENT` case became
+  `[...node.children.flatMap(contributingSboms), ...topDirectDocument]`.
+
+  **This does not weaken the disjointness property the mode exists for.** "A sum is only sound
+  over disjoint things" was always a statement about no real document being counted twice, not
+  about a folder contributing exactly one document — every document still appears in exactly one
+  place in the tree regardless of how many documents a `CURRENT` folder now passes upward.
+  "Contributes exactly one" was a stronger claim than the invariant actually needed, and it was
+  the wrong stronger claim.
+
+  **One rendering consequence followed and had to be fixed alongside it.** The "of *n*" note
+  previously counted every document in the whole subtree (`sbomsUnder`), which was correct when
+  "the others" meant everyone not picked. Under the corrected rule a subfolder's documents are
+  never "the others not counted" — they are always counted, just via a different path — so
+  counting them into "of *n*" would overstate how many versions are being set aside. `documentsBeneath`
+  stayed as the whole-subtree count for `MUTED`'s note (still correct: muting excludes
+  everything, subfolders included) and a new `directDocumentCount` (`node.sboms.length`) drives
+  `CURRENT`'s note instead. A `CURRENT` folder with zero direct documents now shows no "of *n*"
+  note at all and renders exactly like `SUM` — there is nothing being set aside at that level,
+  only subfolders being summed, so the "others not counted" framing would itself be a false
+  statement.
+
+  **Three of the eleven `folderTree.test.ts` cases for this mode were testing the behaviour
+  being removed** (a folder with no direct documents "falling through" to the first child in
+  order; a direct document "preferring" itself over a subfolder's contents rather than adding to
+  them; skipping a muted child while "looking for something to speak for") and were rewritten
+  rather than deleted, since the properties they were guarding — muted exclusion, no-crash on an
+  empty folder, a direct document winning its own slot — are all still real, just reached through
+  different assertions now. A new test transcribes the maintainer's own scenario verbatim (three
+  whole-app snapshots directly in the folder, a summing submodule, a muted archive) as the
+  primary regression guard for this exact class of bug. Verified against the maintainer's own
+  real data after the fix: `Ordner` correctly reports 41 critical, 146 high, 98 medium (97 from
+  `test2` plus its own 1), 13 low — every scratch folder created to test the mixed and
+  zero-direct-document cases was removed afterward, and the maintainer's own tree was read but
+  never mutated.

@@ -3,7 +3,7 @@ import type { DragEvent, FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 
 import { SEVERITY_LABELS, sbomDocumentUrl } from '../api/client';
-import type { Folder, Sbom, SeverityBand } from '../api/client';
+import type { Folder, FolderSortField, RollupMode, Sbom, SeverityBand } from '../api/client';
 import {
   buildFolderTree,
   canMoveFolder,
@@ -13,7 +13,9 @@ import {
   flattenFolderOptions,
   MAX_FOLDER_DEPTH,
   reorderWithin,
+  representativeSbom,
   rollupSeverity,
+  sbomsUnder,
   siblingNameTaken,
 } from '../sboms/folderTree';
 import type { FolderNode, MoveCheck } from '../sboms/folderTree';
@@ -101,7 +103,7 @@ interface TreeContextValue {
     relativeToId: string,
     edge: 'before' | 'after',
   ) => Promise<void>;
-  sortByName: (parentId?: string) => Promise<void>;
+  sortLevel: (parentId: string | undefined, field: FolderSortField, ascending: boolean) => Promise<void>;
 }
 
 const TreeContext = createContext<TreeContextValue | null>(null);
@@ -140,19 +142,81 @@ function SeverityChips({ counts }: { counts: Partial<Record<SeverityBand, number
  * than dimmed — on the card there is room for a zero to mean "checked, none", here there is
  * not, and the full breakdown is one click away on the document itself.
  */
-function SeverityRollup({ counts }: { counts: Partial<Record<SeverityBand, number>> }) {
+function SeverityRollup({
+  counts,
+  mode,
+  documentsBeneath,
+  directDocumentCount,
+}: {
+  counts: Partial<Record<SeverityBand, number>>;
+  mode: RollupMode;
+  /** Every document beneath the folder at any depth, regardless of mode — what MUTED's note
+   *  counts, since muting excludes the whole subtree, subfolders included. */
+  documentsBeneath: number;
+  /** Documents sitting directly in this folder, not inside a subfolder — what CURRENT's "of n"
+   *  counts. Only direct siblings compete for the pick; a subfolder is never one of the
+   *  alternatives being set aside, so its contents do not belong in this number. */
+  directDocumentCount: number;
+}) {
+  // MUTED says so in words rather than rendering nothing. A folder holding 146 High findings
+  // with a blank severity area claims "nothing found" while meaning "not counted" — the same
+  // mistake as letting NONE render like CLEAN, one level out. It is stated even at zero
+  // documents, because the mode is a property of the folder and not of what is in it today.
+  if (mode === 'MUTED') {
+    return (
+      <span
+        className="folder-row__rollup folder-row__rollup--muted"
+        title={
+          documentsBeneath === 0
+            ? 'Not counted here or in any project above.'
+            : `Not counted here or in any project above. ${documentsBeneath} document${
+                documentsBeneath === 1 ? '' : 's'
+              } beneath still show their own findings.`
+        }
+      >
+        not counted
+      </span>
+    );
+  }
+
   const present = CARD_BANDS.filter((band) => (counts[band] ?? 0) > 0);
-  if (present.length === 0) return null;
+  const breakdown = present
+    .map((band) => `${counts[band]} ${SEVERITY_LABELS[band].toLowerCase()}`)
+    .join(', ');
+
+  // CURRENT only has an "others not counted" story when there is more than one direct
+  // document to choose among. With none — every document here comes from a subfolder, which
+  // is always included rather than picked — it renders exactly like SUM: no note, because
+  // nothing at this level is being set aside.
+  const picksAmongSiblings = mode === 'CURRENT' && directDocumentCount > 0;
+
+  // With nothing to show, CURRENT still needs the "of n versions" note when it is actually
+  // picking among siblings, or a version folder whose current document is clean would be
+  // indistinguishable from a summing one that is empty.
+  if (present.length === 0 && !picksAmongSiblings) return null;
+
   return (
     <span
       className="folder-row__rollup"
-      title={present.map((band) => `${counts[band]} ${SEVERITY_LABELS[band].toLowerCase()}`).join(', ')}
+      title={
+        picksAmongSiblings
+          ? `${breakdown || 'Nothing found'} — the current of ${directDocumentCount} version${
+              directDocumentCount === 1 ? '' : 's'
+            }. The others are not counted; anything in a subfolder is always included.`
+          : breakdown
+      }
     >
       {present.map((band) => (
         <span key={band} className="risk-count" data-band={band.toLowerCase()}>
           <strong>{counts[band]}</strong>
         </span>
       ))}
+      {picksAmongSiblings && (
+        <span className="folder-row__rollup-note">
+          {present.length === 0 && 'none · '}
+          of {directDocumentCount}
+        </span>
+      )}
     </span>
   );
 }
@@ -422,7 +486,23 @@ function NameField({
   );
 }
 
-function SbomListItem({ sbom, depth }: { sbom: Sbom; depth: number }) {
+/**
+ * @param sbom      the document this row renders
+ * @param depth     nesting level, for indentation
+ * @param isCurrent this document is the one its `CURRENT` folder speaks for. Marked on the row
+ *                  because the alternative is a folder total whose source is invisible: the
+ *                  rule is "the top document", and dragging another above it silently changes
+ *                  the folder's numbers unless the mark is there to move with it
+ */
+function SbomListItem({
+  sbom,
+  depth,
+  isCurrent = false,
+}: {
+  sbom: Sbom;
+  depth: number;
+  isCurrent?: boolean;
+}) {
   const { selected, select, remove } = useSboms();
   const { drag, folderOptions, moveSbom, reportError, sboms, reorder } = useTree();
   const [moving, setMoving] = useState(false);
@@ -503,6 +583,19 @@ function SbomListItem({ sbom, depth }: { sbom: Sbom; depth: number }) {
         data-selected={isSelected}
         onClick={() => select(sbom.id)}
       >
+        {/* Its own line above the name, not appended inline: the name wraps with
+            `overflow-wrap: anywhere` so a long filename can break at any character, and an
+            inline badge riding along with it could land at the wrapped edge right where the
+            row-action button's reserved space starts — clipped rather than shown. A short,
+            fixed-width word on its own line never has that problem. */}
+        {isCurrent && (
+          <span
+            className="sbom-card__current"
+            title="The version this folder counts. The others are not counted — drag another to the top to change it."
+          >
+            current
+          </span>
+        )}
         <span className="sbom-card__name">{sbom.filename}</span>
         <span className="sbom-card__meta">
           {formatUploadedAt(sbom.uploadedAt)} · {sbom.componentCount} components
@@ -649,8 +742,37 @@ function WorkspaceEditor({ sbom, onDone }: { sbom: Sbom; onDone: () => void }) {
   );
 }
 
+/**
+ * The three modes, in the order they narrow: everything, one, nothing.
+ *
+ * <p>Named for what the documents *are* rather than for the arithmetic, because that is the
+ * fact the reader actually holds. "Add them up" is a consequence of "they are separate
+ * things", and nobody opens this menu having already decided which sum they want.
+ */
+const ROLLUP_CHOICES: { mode: RollupMode; label: string; detail: string }[] = [
+  { mode: 'SUM', label: 'Separate things', detail: 'Add them all up' },
+  { mode: 'CURRENT', label: 'Versions of one thing', detail: 'Count only the top one' },
+  { mode: 'MUTED', label: 'Not to be counted', detail: 'Left out of every total' },
+];
+
+/**
+ * The four one-off sort actions offered per level: two fields, each in both directions.
+ *
+ * <p>Flat items rather than a submenu, the same reasoning as {@link ROLLUP_CHOICES} — a
+ * submenu inside a portal-drawn menu is a second layer of positioning for four choices that
+ * fit as plain buttons. Unlike the rollup modes these carry no "current" state to check: a
+ * sort is a thing that happens once and can be dragged out of again, not a folder property, so
+ * the items are ordinary `menuitem`s rather than `menuitemradio`s.
+ */
+const SORT_CHOICES: { field: FolderSortField; ascending: boolean; label: string; detail: string }[] = [
+  { field: 'NAME', ascending: true, label: 'Name', detail: 'A to Z' },
+  { field: 'NAME', ascending: false, label: 'Name', detail: 'Z to A' },
+  { field: 'DATE', ascending: false, label: 'Date', detail: 'Newest first' },
+  { field: 'DATE', ascending: true, label: 'Date', detail: 'Oldest first' },
+];
+
 function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
-  const { createFolder, renameFolder, deleteFolder } = useSboms();
+  const { createFolder, renameFolder, deleteFolder, setFolderRollupMode } = useSboms();
   const {
     drag,
     folders,
@@ -662,7 +784,7 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
     moveFolder,
     reportError,
     reorder,
-    sortByName,
+    sortLevel,
   } = useTree();
 
   const [renaming, setRenaming] = useState(false);
@@ -743,6 +865,11 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
   }
 
   const rollup = rollupSeverity(node);
+  const mode: RollupMode = node.folder.rollupMode ?? 'SUM';
+  const beneath = sbomsUnder(node);
+  // Only meaningful for a CURRENT folder, and computed from the same function the rollup used,
+  // so the marked row and the counted document cannot disagree.
+  const currentId = mode === 'CURRENT' ? representativeSbom(node)?.id : undefined;
   const excluded = descendantIds(node);
   const moveOptions = folderOptions.filter((option) => !excluded.has(option.id));
 
@@ -888,7 +1015,14 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
         {/* Hidden while renaming: the field is already tight on a 280px row, and the rollup
             plus the menu trigger were taking the width back from it for information that is
             not what the reader is doing right now. Both return the moment the field closes. */}
-        {!renaming && <SeverityRollup counts={rollup} />}
+        {!renaming && (
+          <SeverityRollup
+            counts={rollup}
+            mode={mode}
+            documentsBeneath={beneath.length}
+            directDocumentCount={node.sboms.length}
+          />
+        )}
 
         {!renaming && (
           <RowMenu
@@ -936,21 +1070,63 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
             <MoveIcon className="row-menu__icon" /> Move
           </button>
           {!isEmpty && (
-            <button
-              type="button"
-              role="menuitem"
-              className="row-menu__item"
-              onClick={() => {
-                setMenuOpen(false);
-                void sortByName(id);
-              }}
-            >
-              <span className="row-menu__icon" aria-hidden="true">
-                A↓
-              </span>{' '}
-              Sort by name
-            </button>
+            <div className="row-menu__group">
+              <p className="row-menu__group-label">Sort by</p>
+              {SORT_CHOICES.map((choice) => (
+                <button
+                  key={`${choice.field}-${choice.ascending}`}
+                  type="button"
+                  role="menuitem"
+                  className="row-menu__item row-menu__item--choice"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void sortLevel(id, choice.field, choice.ascending);
+                  }}
+                >
+                  <span className="row-menu__icon" aria-hidden="true">
+                    {choice.ascending ? '↑' : '↓'}
+                  </span>
+                  <span>
+                    {choice.label}
+                    <span className="row-menu__item-detail">{choice.detail}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
           )}
+
+          {/* The three modes as three checkable items rather than a submenu: there are only
+              three, they are mutually exclusive, and a submenu inside a portal-drawn menu is
+              a second layer of positioning for one choice. Worded as what the folder IS —
+              separate things, versions, not counted — because that is the reader's fact; how
+              it is counted follows from it and is the description underneath. */}
+          <div className="row-menu__group" role="group" aria-label="Counting">
+            <p className="row-menu__group-label">These documents are</p>
+            {ROLLUP_CHOICES.map((choice) => (
+              <button
+                key={choice.mode}
+                type="button"
+                role="menuitemradio"
+                aria-checked={mode === choice.mode}
+                className="row-menu__item row-menu__item--choice"
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (choice.mode === mode) return;
+                  void setFolderRollupMode(id, choice.mode).catch((e: unknown) =>
+                    reportError(e instanceof Error ? e.message : 'Could not change that.'),
+                  );
+                }}
+              >
+                <span className="row-menu__icon" aria-hidden="true">
+                  {mode === choice.mode ? '✓' : ''}
+                </span>
+                <span>
+                  {choice.label}
+                  <span className="row-menu__item-detail">{choice.detail}</span>
+                </span>
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             role="menuitem"
@@ -1004,7 +1180,12 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
             <FolderRow key={child.folder.id} node={child} depth={depth + 1} />
           ))}
           {node.sboms.map((sbom) => (
-            <SbomListItem key={sbom.id} sbom={sbom} depth={depth + 1} />
+            <SbomListItem
+              key={sbom.id}
+              sbom={sbom}
+              depth={depth + 1}
+              isCurrent={sbom.id === currentId}
+            />
           ))}
         </ul>
       )}
@@ -1019,7 +1200,7 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
  * per-node interaction state, and the drag wiring from `useSidebarDrag`.
  */
 export function SidebarTree() {
-  const { sboms, folders, moveSbomToFolder, moveFolder, reorderLevel, sortLevelByName } =
+  const { sboms, folders, moveSbomToFolder, moveFolder, reorderLevel, sortLevel: sortLevelRequest } =
     useSboms();
   const drag = useSidebarDrag();
   const [dropError, setDropError] = useState<string | null>(null);
@@ -1063,9 +1244,9 @@ export function SidebarTree() {
         setDropError(e instanceof Error ? e.message : 'Could not reorder that level.');
       }
     },
-    sortByName: async (parentId) => {
+    sortLevel: async (parentId, field, ascending) => {
       try {
-        await sortLevelByName(parentId);
+        await sortLevelRequest(parentId, field, ascending);
       } catch (e) {
         setDropError(e instanceof Error ? e.message : 'Could not sort that level.');
       }
@@ -1102,22 +1283,28 @@ export function SidebarTree() {
         </p>
       )}
 
-      {/* Why the drop under the pointer is being refused, stated while the drag is still in
-          the reader's hand rather than as an error after they let go. */}
-      {drag.dragging && drag.refusal && (
-        <p className="sidebar__drag-refusal" role="status">
-          {drag.refusal}
-        </p>
-      )}
+      {/* `sidebar__body` is the positioning context for the refusal banner below: it has to
+          overlay the list rather than sit above it in normal flow, or its own mount/unmount
+          would shift every row's bounding box under a pointer that has not moved — see the
+          comment on `.sidebar__drag-refusal`. */}
+      <div className="sidebar__body">
+        {/* Why the drop under the pointer is being refused, stated while the drag is still in
+            the reader's hand rather than as an error after they let go. */}
+        {drag.dragging && drag.refusal && (
+          <p className="sidebar__drag-refusal" role="status">
+            {drag.refusal}
+          </p>
+        )}
 
-      <ul className="sidebar__list" ref={drag.scrollRef}>
-        {tree.roots.map((node) => (
-          <FolderRow key={node.folder.id} node={node} depth={0} />
-        ))}
-        {tree.looseSboms.map((sbom) => (
-          <SbomListItem key={sbom.id} sbom={sbom} depth={0} />
-        ))}
-      </ul>
+        <ul className="sidebar__list" ref={drag.scrollRef} data-drag-active={!!drag.dragging}>
+          {tree.roots.map((node) => (
+            <FolderRow key={node.folder.id} node={node} depth={0} />
+          ))}
+          {tree.looseSboms.map((sbom) => (
+            <SbomListItem key={sbom.id} sbom={sbom} depth={0} />
+          ))}
+        </ul>
+      </div>
 
       {/* "Outside every project" is not a row, so it needs a target of its own. Shown only
           during a drag: a permanent strip would be clutter for a gesture nobody is making. */}

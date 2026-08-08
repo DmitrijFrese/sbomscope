@@ -177,6 +177,17 @@ body {
   color: var(--text-muted);
 }
 
+/* The positioning context for `.sidebar__drag-refusal` below, and otherwise a transparent
+   pass-through: it just carries the flex role `.sidebar__list` used to take directly from
+   `.sidebar`, one level further in. */
+.sidebar__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .sidebar__list {
   flex: 1;
   min-height: 0;
@@ -184,6 +195,21 @@ body {
   margin: 0;
   padding: var(--space-2);
   list-style: none;
+}
+
+/* While any drag is in progress, a row's own children (icons, buttons, text) must not
+   receive their own dragenter/dragleave — unlike mouseenter/mouseleave, those events bubble
+   like mouseover/mouseout, so crossing from a row's padding onto a nested button mid-drag
+   fires a leave on the row and a fresh enter right after, clearing and immediately
+   recomputing activeTarget/insertion for every pixel of nested content the pointer happens
+   to cross. `pointer-events: none` on the direct children (inherited by everything inside
+   them) routes every drag event to the row element itself, which alone holds the handlers —
+   removing the flicker at its source rather than debouncing it. Restricted to drag children
+   only: `.folder-row__header` and `.sbom-row` keep `pointer-events: auto`, since they are
+   the actual drop targets. */
+.sidebar__list[data-drag-active='true'] .folder-row__header > *,
+.sidebar__list[data-drag-active='true'] .sbom-row > * {
+  pointer-events: none;
 }
 
 .sbom-card {
@@ -409,6 +435,41 @@ body {
   font-size: 11px;
 }
 
+/* "not counted" and "of 5" are statements about the rollup rather than counts in it, so they
+   take the muted colour the card's meta lines use — present enough to read, quiet enough not
+   to compete with the numbers beside them. Never `display: none` and never a bare blank: a
+   folder that is not counted has to say so, or an empty severity area claims "nothing found"
+   about documents that may hold plenty. */
+.folder-row__rollup--muted,
+.folder-row__rollup-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.folder-row__rollup-note {
+  align-self: center;
+}
+
+/* Which version a CURRENT folder speaks for. Above the name on its own line, not inline
+   with it: the name wraps with `overflow-wrap: anywhere`, so a badge riding along with long
+   filename text could land right where the row-action button's reserved space starts and get
+   clipped instead of shown. A short fixed word in its own block never competes for that
+   space. `display: inline-block` so its own border hugs the word rather than the full row
+   width, and a small bottom margin separates it from the name below. */
+.sbom-card__current {
+  display: inline-block;
+  margin-bottom: 2px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
 .folder-row__action {
   flex: 0 0 auto;
   width: 22px;
@@ -471,6 +532,37 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* The counting choice, separated from the actions above it by a rule rather than by spacing
+   alone: everything above does something once, and these three set a state that stays. */
+.row-menu__group {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border-strong);
+}
+
+.row-menu__group-label {
+  margin: 0;
+  padding: 2px var(--space-2);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* Two lines, so the label can name what the documents are and the detail can say what that
+   costs — align to the top or the tick floats against the middle of a two-line item. */
+.row-menu__item--choice {
+  align-items: flex-start;
+}
+
+.row-menu__item-detail {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
 }
 
 /* Naming a folder, with the sibling-name rule checked as you type. */
@@ -566,8 +658,19 @@ body {
   border-style: solid;
 }
 
-/* Why the target under the pointer is refusing, said during the drag rather than after it. */
+/* Why the target under the pointer is refusing, said during the drag rather than after it.
+   `position: absolute`, deliberately, over `.sidebar__body`: an in-flow banner mounting and
+   unmounting as the reason toggles pushed every row beneath it up and down under a pointer
+   that had not moved, which could flip `edgeFor`'s zone computation on the very row being
+   hovered and re-trigger the same toggle — a layout-driven jitter loop with no further mouse
+   movement required. Overlaying costs nothing: it only ever appears over an illegal target,
+   which is not going to receive the drop anyway. */
 .sidebar__drag-refusal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
   margin: 0;
   padding: var(--space-2) var(--space-4);
   font-size: 12px;

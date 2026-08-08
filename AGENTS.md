@@ -636,9 +636,58 @@ parent the test owns, never to the top level.
   interrupt — the same fact the stderr-deadlock note above turns on. `MavenInvocation` publishes
   the live process per thread so `BumpProbeService.cancel` can reach it.
 
+- **A service that returns a record it *rebuilt* silently drops any field added later.**
+  `FolderService.rename` and `.move` do not re-read the row they changed; they construct a new
+  `StoredFolder` from the parts they already hold and return that. Adding `rollupMode` in V11
+  therefore made renaming a muted folder answer `SUM` — the database was right, the response was
+  not, and the sidebar would have shown the folder reverting as a side effect of an unrelated
+  edit. The compiler does not help: a canonical constructor call with the new argument missing is
+  a compile error, but a *convenience* overload keeping the old arity compiles perfectly and
+  quietly defaults the field. When adding a field to a record a service reconstructs, grep for
+  every `new <Record>(` and check each one, and prefer pinning it with a test that renames and
+  then asserts the untouched field — `FolderServiceTest.renamingAndMovingPreserveTheRollupMode`
+  is that test.
+
 - **`.formatted()` binds to the last literal in a concatenation, not the whole expression.**
   `"a %s" + "b %s".formatted(x, y)` leaves the first placeholder literal and silently drops the
   extra argument — no compiler warning, no exception, just a broken message that only shows up
   when someone reads it. Parenthesise the whole string: `("a %s" + "b %s").formatted(x, y)`.
   Introduced twice in one session, once in a diagnostic message meant to be read on the machine
   that was failing.
+
+- **Native `dragenter`/`dragleave` bubble like `mouseover`/`mouseout`, not like
+  `mouseenter`/`mouseleave` — a drop-target element with interactive children will storm.** The
+  sidebar's folder row attaches its drag handlers to `.folder-row__header`, which contains
+  several children (a disclosure button, an icon, the name, the severity rollup, the `⋯`
+  trigger). Moving the pointer from the header's own padding onto any of those children fired a
+  `dragleave` on the header — clearing the highlighted-drop-target state — immediately followed
+  by a fresh `dragenter`, so simply aiming at a content-heavy row stormed a clear-then-recompute
+  cycle continuously; reported by the maintainer as the whole row "jumping between several
+  states". The fix is `pointer-events: none` on the row's direct children while any drag is in
+  progress (`.sidebar__list[data-drag-active='true'] .folder-row__header > *` in `app.css`), so
+  hit-testing always resolves to the row element itself, which alone holds the handlers — this
+  routes every event to one place instead of trying to debounce a storm after the fact. Any
+  future drop target with clickable content inside it needs the same treatment, not just this
+  one row.
+
+  **A second, independent cause compounded it: an element that mounts conditionally on drag
+  state can shift the very row the pointer is hovering, if it sits above it in normal flow.**
+  The "why this drop is refused" banner mounted only while there was a refusal reason, directly
+  above the row list; appearing pushed every row beneath it down under a pointer that had not
+  moved, and since the reorder-zone math re-reads each row's live `getBoundingClientRect()` on
+  every `dragover`, that shift alone could flip which zone the pointer was in and re-trigger the
+  same toggle — a loop sustaining itself with no further mouse movement. Measured directly: one
+  mount moved the row below it 52.7px, more than the row's own height. The general lesson: any
+  element whose mount/unmount is driven by drag state, and which sits above a drop target in
+  normal flow, is a candidate for the same bug — make it `position: absolute` (as
+  `.sidebar__drag-refusal` now is) so it overlays instead of reflowing, rather than assuming a
+  banner is layout-inert because it looks like one.
+
+  **Manually dispatched `DragEvent`s cannot be used to prove or disprove either bug on their
+  own**, because they bypass the browser's own hit-testing — the exact mechanism `pointer-events`
+  changes. A test that fires `dragenter`/`dragleave` on elements it chose itself will "pass" or
+  "fail" based on which elements it chose, not on what a real cursor crossing real pixels would
+  trigger. What manual dispatch *can* prove is that the CSS and state machinery are wired up
+  correctly (computed `pointer-events`, `data-drag-active` toggling, layout measurements before
+  and after a mount) — verify the mechanism this way, and rely on the mechanism's own
+  well-documented nature (not a novel theory) for the rest.

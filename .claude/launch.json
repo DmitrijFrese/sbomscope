@@ -6,6 +6,12 @@
       "runtimeExecutable": "java",
       "runtimeArgs": ["-jar", "backend/target/sbomscope.jar"],
       "port": 8080
+    },
+    {
+      "name": "sbomscope-frontend-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "port": 5173
     }
   ]
 }
