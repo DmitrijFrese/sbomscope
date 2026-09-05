@@ -272,4 +272,53 @@ class SbomControllerTest {
         // Deleting it here keeps the shared in-memory database as this test found it.
         mvc.perform(delete("/api/folders/" + folderId)).andExpect(status().isNoContent());
     }
+
+    @Test
+    void importsDirectlyIntoAFolder() throws Exception {
+        MockMvc mvc = mockMvc();
+        String folderId = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                                .post("/api/folders")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"name\":\"Imported into\",\"parentId\":null}"))
+                        .andExpect(status().isCreated())
+                        .andReturn().getResponse().getContentAsString(),
+                "$.id");
+
+        // The response, not a later list call: the sidebar draws the new card from what the
+        // upload returned, so a document filed correctly in the database and reported at the
+        // top level here would appear to jump folders on the next reload.
+        String id = com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(multipart("/api/sboms")
+                                .file(fixture("npm-frontend.cdx.json"))
+                                .param("folderId", folderId))
+                        .andExpect(status().isCreated())
+                        .andExpect(jsonPath("$.folderId").value(folderId))
+                        .andReturn().getResponse().getContentAsString(),
+                "$.id");
+
+        mvc.perform(delete("/api/sboms/" + id)).andExpect(status().isNoContent());
+        mvc.perform(delete("/api/folders/" + folderId)).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void refusesAnImportIntoAFolderThatDoesNotExist() throws Exception {
+        MockMvc mvc = mockMvc();
+        // Counted rather than asserted against an empty list: this class is not @Transactional,
+        // so documents committed by the tests above are still here, and "the same number as
+        // before" is the claim that survives that. The same reasoning as the folder cleanup.
+        int before = ((java.util.List<?>) com.jayway.jsonpath.JsonPath.read(
+                mvc.perform(get("/api/sboms")).andReturn().getResponse().getContentAsString(),
+                "$")).size();
+
+        mvc.perform(multipart("/api/sboms")
+                        .file(fixture("npm-frontend.cdx.json"))
+                        .param("folderId", "3f1a5c4e-0000-4000-8000-000000000000"))
+                .andExpect(status().isBadRequest());
+
+        // Refused before anything was stored: the point of checking the folder first is that a
+        // rejected import leaves nothing behind for the user to find and delete.
+        mvc.perform(get("/api/sboms")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(before));
+    }
 }

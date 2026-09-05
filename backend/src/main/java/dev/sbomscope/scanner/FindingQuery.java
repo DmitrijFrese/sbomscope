@@ -50,6 +50,10 @@ public record FindingQuery(
          * interested in.
          */
         Set<DependencyScope> scopes,
+        /** Show only component identities that occur at more than one version in this SBOM. */
+        boolean duplicatesOnly,
+        /** Keep only the worst finding for each exact component purl. */
+        boolean worstPerVersion,
         Integer limit,
         Integer offset) {
 
@@ -65,18 +69,20 @@ public record FindingQuery(
 
     /** Default view: vulnerabilities only, most severe first. */
     public static FindingQuery defaults() {
-        return new FindingQuery(SortField.SEVERITY, false, null, false, false, null, null, null, null);
+        return new FindingQuery(SortField.SEVERITY, false, null, false, false,
+                null, null, false, false, null, null);
     }
 
     /** Every row including clean components — used for whole-inventory exports. */
     public static FindingQuery everything() {
         return new FindingQuery(SortField.SEVERITY, false, null, false, false,
-                EnumSet.allOf(SeverityBand.class), null, null, null);
+                EnumSet.allOf(SeverityBand.class), null, false, false, null, null);
     }
 
     /** Same selection, but every matching row rather than one page. */
     public FindingQuery withoutPaging() {
-        return new FindingQuery(sort, ascending, filter, regexFilter, negateFilter, severities, scopes, null, null);
+        return new FindingQuery(sort, ascending, filter, regexFilter, negateFilter,
+                severities, scopes, duplicatesOnly, worstPerVersion, null, null);
     }
 
     /** Whether a text filter is actually present, in either mode. */
@@ -104,14 +110,15 @@ public record FindingQuery(
     }
 
     /**
-     * Same ordering and the same severity selection, but no text filter or paging.
+     * Same ordering and selection, but no text filter or paging.
      *
-     * <p>The severity selection is kept deliberately: someone who has narrowed to
-     * critical and high and then exports "all" means all critical and high findings, not
-     * a sudden reappearance of everything they filtered out.
+     * <p>The severity, dependency-scope, duplicated-library and worst-per-version selections are kept
+     * deliberately: someone who has narrowed the rows and then exports "all" means all rows
+     * in that selection, not a sudden reappearance of everything they filtered out.
      */
     public FindingQuery unfiltered() {
-        return new FindingQuery(sort, ascending, null, false, false, severities, scopes, null, null);
+        return new FindingQuery(sort, ascending, null, false, false,
+                severities, scopes, duplicatesOnly, worstPerVersion, null, null);
     }
 
     public boolean selectsEverySeverity() {
@@ -119,9 +126,16 @@ public record FindingQuery(
     }
 
     public enum SortField {
-        /** By library coordinates. purl orders group-then-artifact, which is what a
-         *  reader scanning an alphabetical list expects. */
+        /** By group, artifact, Maven type and classifier, in coordinate reading order. */
         COMPONENT,
+        /**
+         * By the component version, ordered as a version rather than as a string — {@code 1.9.0}
+         * before {@code 1.10.0}, which lexical ordering gets backwards.
+         *
+         * <p>Rows with no version sort last in <em>both</em> directions: no version is not a
+         * version and must not answer "which component is oldest" or "which is newest".
+         */
+        VERSION,
         /** By numeric CVSS score — the ordering that reflects risk rather than spelling. */
         SEVERITY,
         /**
@@ -229,6 +243,66 @@ public record FindingQuery(
                 bands.add(SeverityBand.valueOf(value.trim().toUpperCase()));
             }
             return bands.isEmpty() ? vulnerableBands() : bands;
+        }
+
+        /**
+         * Which band a finding falls in, for code that holds a row rather than a query.
+         *
+         * <p><b>The SQL in {@code VulnerabilityRepository.BAND_EXPRESSION} is the same
+         * statement, and the two must not drift.</b> The thresholds were a single definition
+         * living in SQL until the SBOM diff needed to band rows it had already fetched; a
+         * second reading of them written beside that caller is how the diff and the table
+         * come to disagree about what is critical. Same reasoning as
+         * {@code VersionOrder.sortKey} building its key from the comparator's own parse, and
+         * pinned the same way — {@code SeverityBandAgreementTest} walks a real fixture and
+         * asserts this method and the SQL classify every row identically.
+         *
+         * @param hasFinding false for a component with no vulnerability at all, which is
+         *                   {@link #CLEAN} — never {@link #NONE}, which is a real
+         *                   vulnerability whose severity is unknown
+         * @param score      the CVSS score, null when the advisory carries none
+         */
+        public static SeverityBand of(boolean hasFinding, java.math.BigDecimal score) {
+            if (!hasFinding) {
+                return CLEAN;
+            }
+            if (score == null) {
+                return NONE;
+            }
+            if (score.compareTo(new java.math.BigDecimal("9.0")) >= 0) {
+                return CRITICAL;
+            }
+            if (score.compareTo(new java.math.BigDecimal("7.0")) >= 0) {
+                return HIGH;
+            }
+            if (score.compareTo(new java.math.BigDecimal("4.0")) >= 0) {
+                return MEDIUM;
+            }
+            return LOW;
+        }
+
+        /**
+         * What a reader is shown for this band, in one place.
+         *
+         * <p>Written out twice before this existed — once in {@code ExportDescription} and once
+         * in {@code DiffExcelExporter} — which is two chances for a workbook to disagree with
+         * the screen about what a band is called. The frontend holds the same six strings in
+         * {@code SEVERITY_LABELS}; that copy is unavoidable across the wire, but there is no
+         * reason for two of them on this side.
+         *
+         * <p>{@link #CLEAN} reads <em>Clean</em> rather than "No vulnerabilities": the long
+         * form spent a filter chip's whole width saying what one word says, and the Glossary is
+         * where the distinction from {@link #NONE} is explained.
+         */
+        public String label() {
+            return switch (this) {
+                case CRITICAL -> "Critical";
+                case HIGH -> "High";
+                case MEDIUM -> "Medium";
+                case LOW -> "Low";
+                case NONE -> "Unscored";
+                case CLEAN -> "Clean";
+            };
         }
     }
 }

@@ -90,6 +90,8 @@ class ScanController {
              * rather than the SBOM, which is the opposite of what a headline is for.
              */
             Map<FindingQuery.SeverityBand, Integer> severityCounts,
+            /** Rows per band after every current filter except severity selection itself. */
+            Map<FindingQuery.SeverityBand, Integer> filteredSeverityCounts,
             /** Rows matching the current filter — the size an unpaged export would have. */
             int filteredCount,
             /**
@@ -162,6 +164,8 @@ class ScanController {
             @RequestParam(value = "negate", defaultValue = "false") boolean negate,
             @RequestParam(value = "severity", required = false) List<String> severity,
             @RequestParam(value = "scope_filter", required = false) List<String> scopeFilter,
+            @RequestParam(value = "duplicatesOnly", defaultValue = "false") boolean duplicatesOnly,
+            @RequestParam(value = "worstPerVersion", defaultValue = "false") boolean worstPerVersion,
             @RequestParam(value = "column", required = false) List<String> column,
             @RequestParam(value = "limit", required = false) Integer limit,
             @RequestParam(value = "offset", required = false) Integer offset) throws IOException {
@@ -174,7 +178,7 @@ class ScanController {
         // stops matching the screen it came from.
         FindingQuery onScreen = new FindingQuery(sort, isAscending(direction), filter, regex, negate,
                 FindingQuery.SeverityBand.parse(severity),
-                FindingQuery.parseScopes(scopeFilter), limit, offset);
+                FindingQuery.parseScopes(scopeFilter), duplicatesOnly, worstPerVersion, limit, offset);
 
         // "visible" reproduces the screen exactly; "all" keeps the ordering and the
         // severity selection but drops the text filter and paging.
@@ -229,6 +233,8 @@ class ScanController {
             @RequestParam(value = "negate", defaultValue = "false") boolean negate,
             @RequestParam(value = "severity", required = false) List<String> severity,
             @RequestParam(value = "scope", required = false) List<String> scope,
+            @RequestParam(value = "duplicatesOnly", defaultValue = "false") boolean duplicatesOnly,
+            @RequestParam(value = "worstPerVersion", defaultValue = "false") boolean worstPerVersion,
             @RequestParam(value = "limit", required = false) Integer limit,
             @RequestParam(value = "offset", required = false) Integer offset) {
 
@@ -236,7 +242,7 @@ class ScanController {
 
         FindingQuery query = new FindingQuery(sort, isAscending(direction), filter, regex, negate,
                 FindingQuery.SeverityBand.parse(severity),
-                FindingQuery.parseScopes(scope), limit, offset);
+                FindingQuery.parseScopes(scope), duplicatesOnly, worstPerVersion, limit, offset);
 
         // One call, then both fields derived from it: asking isStale() separately would query
         // the same thing twice and let the flag and the reason disagree mid-request.
@@ -255,6 +261,7 @@ class ScanController {
                 // "n of m components affected" stays true whatever is being viewed.
                 scans.countFindings(id, FindingQuery.defaults()),
                 scans.countsByBand(id),
+                scans.filteredCountsByBand(id, query),
                 scans.countRows(id, query.withoutPaging()),
                 loadedFeeds(),
                 scans.rows(id, query).stream().map(RowResponse::from).toList());

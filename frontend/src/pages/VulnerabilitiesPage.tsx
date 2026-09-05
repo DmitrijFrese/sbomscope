@@ -57,12 +57,14 @@ const DEFAULT_QUERY: FindingQuery = {
   regex: false,
   // Same reasoning: exclusion is a mode the reader turns on, never a guess.
   negate: false,
-  // Opens on what needs attention; tick "No vulnerabilities" to bring the rest of the
+  // Opens on what needs attention; tick "Clean" to bring the rest of the
   // inventory into the same table.
   severities: VULNERABLE_BANDS,
   // All three by default. Severity opens narrowed because most rows are not worth reading;
   // there is no scope that is normally not worth reading.
   scopes: SCOPES,
+  duplicatesOnly: false,
+  worstPerVersion: false,
   pageSize: 20,
   page: 0,
 };
@@ -91,6 +93,10 @@ function reviveQuery(stored: FindingQuery): FindingQuery {
     // the toggle would render indeterminate and disagree with what the table is showing.
     regex: stored.regex === true,
     negate: stored.negate === true,
+    // Absent in queries stored before the duplicated-library filter existed.
+    duplicatesOnly: stored.duplicatesOnly === true,
+    // Absent in queries saved before the one-row-per-component-version filter existed.
+    worstPerVersion: stored.worstPerVersion === true,
     pageSize: PAGE_SIZES.includes(stored.pageSize) ? stored.pageSize : DEFAULT_QUERY.pageSize,
     page: 0,
   };
@@ -98,6 +104,50 @@ function reviveQuery(stored: FindingQuery): FindingQuery {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
+}
+
+export function SeverityChip({
+  band,
+  filtered,
+  total,
+  selected,
+  onToggle,
+}: {
+  band: SeverityBand;
+  filtered?: number;
+  total?: number;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const label = SEVERITY_LABELS[band];
+  const hasCounts = filtered !== undefined && total !== undefined;
+  const narrowed = hasCounts && total > 0 && filtered < total;
+  const accessibleLabel = hasCounts
+    ? narrowed
+      ? `${label} — ${filtered} of ${total} shown`
+      : `${label} — ${filtered}`
+    : label;
+  return (
+    <button
+      type="button"
+      className="chip"
+      data-band={band.toLowerCase()}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
+      aria-pressed={selected}
+      onClick={onToggle}
+    >
+      {label}
+      {filtered !== undefined && <span className="chip__count">{filtered}</span>}
+      {/* The denominator, in words, and only while something is actually hidden.
+          It was a proportional fill first, and that failed twice for one reason: the real
+          ratios are things like 2 of 146, and 1.4% of a 70-pixel chip is a six-pixel mark —
+          which the pill's own 999px corner radius then clips away. Both attempts had exactly
+          the right numbers in the computed style and showed the reader nothing. A length is
+          the wrong encoding at this size; the number is not. */}
+      {narrowed && <span className="chip__total">of {total}</span>}
+    </button>
+  );
 }
 
 /** Long free text: clamped so one verbose advisory cannot set the height of every row. */
@@ -124,6 +174,20 @@ const EXPLOIT_FEEDS: { id: string; label: string; column: ColumnId }[] = [
   { id: 'EPSS', label: 'EPSS scores', column: 'epss' },
 ];
 
+/**
+ * The artifact half of a coordinate: everything the backend put after the group.
+ *
+ * <p>`name` alone until B25, and `coordinates` can now carry Maven's type and classifier when
+ * they are not `jar`/absent. Taking the tail of the backend's own string keeps the rule about
+ * *which* parts are worth showing in one place rather than restating it here.
+ */
+export function artifactLineOf(row: Pick<FindingRow, 'coordinates' | 'group' | 'name'>): string {
+  const prefix = row.group ? `${row.group}:` : null;
+  return prefix && row.coordinates.startsWith(prefix)
+    ? row.coordinates.slice(prefix.length)
+    : row.name;
+}
+
 /** One cell, chosen by column id. Kept beside the column list it switches over. */
 function renderCell(column: ColumnId, row: FindingRow) {
   switch (column) {
@@ -143,6 +207,11 @@ function renderCell(column: ColumnId, row: FindingRow) {
     // Repeated groups are deliberately not suppressed on runs. A row has to stand alone — it
     // survives filtering, paging and the export — and one whose group is inherited from the row
     // above is wrong in all three.
+    //
+    // The artifact line shows everything after the group rather than `name` alone, because
+    // since B25 `coordinates` carries Maven's type and classifier when they are not the
+    // defaults — `commons-lang3:test-jar:tests`. Sliced off the backend's own string rather
+    // than reassembled here: which parts are worth showing is one rule and it lives there.
     case 'component':
       return (
         <span className="component-cell">
@@ -159,11 +228,11 @@ function renderCell(column: ColumnId, row: FindingRow) {
               // anybody actually wants to hear. Same reasoning as B16's accessible names.
               aria-label={row.coordinates}
             >
-              {row.name}
+              {artifactLineOf(row)}
             </a>
           ) : (
             <span className="component-cell__name mono" aria-label={row.coordinates}>
-              {row.name}
+              {artifactLineOf(row)}
             </span>
           )}
         </span>
@@ -586,28 +655,52 @@ export function VulnerabilitiesPage() {
         {/* The chips and the severity counts described the same six bands, so showing both
             was saying everything twice — and the counts had to live somewhere, which cost a
             band of vertical space wherever they went. Merged: each chip carries its own
-            total, which also makes the numbers clickable.
+            count, which also makes the numbers clickable.
 
-            The count is what selecting that band puts on screen, and it does not move with
-            the filter — it describes the SBOM, so the chips stay comparable however the view
-            is narrowed. */}
+            The visible number is what selecting that band would put on screen under every
+            non-severity filter. The whole-SBOM total remains encoded as a proportional fill
+            and in the accessible name when filtering has narrowed the band. */}
         <div className="chips" role="group" aria-label="Severity">
           {SEVERITY_BANDS.map((band) => {
-            const count = status?.severityCounts?.[band];
+            const filtered = status?.filteredSeverityCounts?.[band];
+            const total = status?.severityCounts?.[band];
             return (
-              <button
+              <SeverityChip
                 key={band}
-                type="button"
-                className="chip"
-                data-band={band.toLowerCase()}
-                aria-pressed={query.severities.includes(band)}
-                onClick={() => toggleSeverity(band)}
-              >
-                {SEVERITY_LABELS[band]}
-                {count !== undefined && <span className="chip__count">{count}</span>}
-              </button>
+                band={band}
+                filtered={filtered}
+                total={total}
+                selected={query.severities.includes(band)}
+                onToggle={() => toggleSeverity(band)}
+              />
             );
           })}
+        </div>
+
+        {/* A filter, so it belongs on the left of this row with the other filtering — but in
+            its own group and without a band colour, because a pill sitting among six coloured
+            severity chips is read as a seventh band. The group's own label is what a screen
+            reader gets instead of "Severity", for the same reason it is not in the scope
+            fieldset: a legend names everything inside it. */}
+        <div className="chips chips--aside" role="group" aria-label="Libraries">
+          <button
+            type="button"
+            className="chip chip--plain"
+            aria-pressed={query.duplicatesOnly}
+            onClick={() => update({ duplicatesOnly: !query.duplicatesOnly })}
+            title="Show only libraries present at more than one version in this document"
+          >
+            Duplicates
+          </button>
+          <button
+            type="button"
+            className="chip chip--plain"
+            aria-pressed={query.worstPerVersion}
+            onClick={() => update({ worstPerVersion: !query.worstPerVersion })}
+            title="Show one row per component version: its worst finding after the other filters"
+          >
+            Worst
+          </button>
         </div>
 
         {/* Display and export live together on the right; the left of this row is

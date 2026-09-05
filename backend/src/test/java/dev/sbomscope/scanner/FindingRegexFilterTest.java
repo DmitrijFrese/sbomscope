@@ -79,7 +79,7 @@ class FindingRegexFilterTest {
 
     private FindingQuery query(String filter, boolean regex, boolean negate) {
         return new FindingQuery(FindingQuery.SortField.COMPONENT, true, filter, regex, negate,
-                EnumSet.allOf(FindingQuery.SeverityBand.class), null, null, null);
+                EnumSet.allOf(FindingQuery.SeverityBand.class), null, false, false, null, null);
     }
 
     private List<String> namesExcluding(String filter, boolean regex) {

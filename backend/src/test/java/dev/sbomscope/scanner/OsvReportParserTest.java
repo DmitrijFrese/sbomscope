@@ -5,7 +5,6 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
@@ -38,10 +37,10 @@ class OsvReportParserTest {
     }
 
     /** Resolves the one package the report contains; anything else is unknown. */
-    private Optional<String> resolve(OsvReportParser.PackageKey key) {
+    private List<String> resolve(OsvReportParser.PackageKey key) {
         return key.name().equals("tools.jackson.core:jackson-databind")
-                ? Optional.of(JACKSON_PURL)
-                : Optional.empty();
+                ? List.of(JACKSON_PURL)
+                : List.of();
     }
 
     @Test
@@ -93,7 +92,7 @@ class OsvReportParserTest {
     void dropsFindingsThatCannotBeTiedToAComponent() throws Exception {
         // A finding we cannot map back to a stored component is skipped rather than
         // stored against a guessed identity.
-        List<VulnerabilityFinding> findings = parser.parse(realReport(), key -> Optional.empty());
+        List<VulnerabilityFinding> findings = parser.parse(realReport(), key -> List.of());
 
         assertThat(findings).isEmpty();
     }
@@ -119,8 +118,8 @@ class OsvReportParserTest {
     private List<VulnerabilityFinding> aliasedGroupFindings() throws Exception {
         return parser.parse(fixture("/sboms/osv-report-aliased-group.json"),
                 key -> key.name().equals("com.clickhouse:clickhouse-client")
-                        ? Optional.of(CLICKHOUSE_PURL)
-                        : Optional.empty());
+                        ? List.of(CLICKHOUSE_PURL)
+                        : List.of());
     }
 
     @Test
@@ -213,7 +212,7 @@ class OsvReportParserTest {
         // not missed, which means two report entries can resolve to a single purl.
         String report = reportWithASecondEntry("tools.jackson.core/jackson-databind");
 
-        List<VulnerabilityFinding> findings = parser.parse(report, key -> Optional.of(JACKSON_PURL));
+        List<VulnerabilityFinding> findings = parser.parse(report, key -> List.of(JACKSON_PURL));
 
         assertThat(findings).hasSize(1);
     }
@@ -227,9 +226,36 @@ class OsvReportParserTest {
         String report = reportWithASecondEntry("tools.jackson.core/jackson-databind");
 
         VulnerabilityFinding finding =
-                parser.parse(report, key -> Optional.of(JACKSON_PURL)).getFirst();
+                parser.parse(report, key -> List.of(JACKSON_PURL)).getFirst();
 
         assertThat(finding.fixedVersion()).isEqualTo("3.1.5");
+    }
+
+    @Test
+    void oneAdvisoryReachesEveryComponentSharingTheScannerKey() throws Exception {
+        // B25's defect, from the other end. A Maven classifier produces two components with the
+        // same ecosystem, name and version and *different* purls — `jackson-databind` and its
+        // `sources` artifact — which the scanner reports as one package because its key carries
+        // no qualifier. Until V12 the index kept the first purl and dropped the second's finding
+        // with a `debug` line; the advisory applies to both artifacts, so both must carry it.
+        //
+        // Asserted at this level because the collapsing rules above run here too: the finding
+        // must be duplicated across components without being collapsed as a repeat of itself,
+        // which is exactly the distinction uq_finding_per_component draws.
+        String sourcesPurl =
+                "pkg:maven/tools.jackson.core/jackson-databind@3.1.4?classifier=sources&type=jar";
+
+        List<VulnerabilityFinding> findings =
+                parser.parse(realReport(), key -> List.of(JACKSON_PURL, sourcesPurl));
+
+        assertThat(findings)
+                .as("one advisory, two components sharing the key")
+                .hasSize(2)
+                .extracting(VulnerabilityFinding::purl)
+                .containsExactlyInAnyOrder(JACKSON_PURL, sourcesPurl);
+        assertThat(findings)
+                .extracting(VulnerabilityFinding::osvId)
+                .containsOnly("GHSA-5gvw-p9qm-jgwh");
     }
 
     @Test

@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 /**
  * Every sort field, both directions, through the real SQL.
@@ -68,6 +69,15 @@ class FindingSortTest {
                         .andExpect(status().isOk());
             }
         }
+
+        mockMvc.perform(get("/api/sboms/" + id + "/findings")
+                        .param("worstPerVersion", "true")
+                        .param("severity", "CLEAN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.filteredSeverityCounts.CLEAN").isNumber());
+        mockMvc.perform(get("/api/sboms/" + id + "/export.xlsx")
+                        .param("worstPerVersion", "true"))
+                .andExpect(status().isOk());
 
         mockMvc.perform(delete("/api/sboms/" + id)).andExpect(status().isNoContent());
     }

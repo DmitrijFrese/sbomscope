@@ -45,13 +45,16 @@ the Excel About sheet. **The frontend has unit tests for the first time** (Vites
 Testing Library, 30), added on the maintainer's instruction after a formatter bug rendered a
 probability of 0.99945 as "100%".
 
-**Where the schema stands: V11 is the highest migration taken.** V1 baseline, V2 `osv_index`,
+**Where the schema stands: V13 is the highest migration taken.** V1 baseline, V2 `osv_index`,
 V3 `fixed_version_sort`, V4 `kev_entry`/`kev_source`, V5 `epss_score`/`epss_source`, V6–V8
 workspace reachability runs/stopped state/module mappings/coverage, V9 `folder` and
-`sbom.folder_id`, V10 `sort_order` on both, V11 `folder.rollup_mode`. Additive only, per
-constraint 8. **Phase 12's own migration must start at V12 or later** — an earlier V10 for
+`sbom.folder_id`, V10 `sort_order` on both, V11 `folder.rollup_mode`, V12 `component.maven_type`
+and `maven_classifier` (B25), V13 `component.version_sort` (B27b). Additive only, per
+constraint 8. **Phase 12's own migration must therefore start at V14** — an earlier V10 for
 container images was written, applied to one developer database, and deliberately backed out
-before commit; see the 2026-08-06 and 2026-08-07 decision log entries.
+before commit; see the 2026-08-06 and 2026-08-07 decision log entries. That number has now moved
+four times, which is the argument for listing
+`backend/src/main/resources/db/migration` rather than trusting this line.
 
 README, AGENTS.md and ARCHITECTURE were brought back in step with all of it on 2026-08-08.
 
@@ -78,7 +81,7 @@ date, either direction — and corrected `CURRENT` itself after the maintainer's
 exposed a real bug: a folder holding both a document and a subfolder was silently dropping
 whichever one did not happen to sit first, rather than summing every subfolder unconditionally
 and picking only among direct documents. All of it went through the real jar in a browser, not
-only the test suite. 332 backend tests and 62 frontend tests pass, `mvn clean package` is green
+only the test suite. 332 backend tests and 62 frontend tests passed at that point, `mvn clean package` was green
 end to end, and B11's directory-picker drop was not reintroduced — B20 uses the absolute-path
 field that
 drop settled on.
@@ -86,8 +89,24 @@ drop settled on.
 Phase 9 now provides evidence-graded direct and transitive Maven/JVM call analysis. B13, B14 and
 B12 were completed in that order on 2026-08-02. B10 and B11 were dropped on the same date.
 
-**Next: Phase 12 (container image scanning)**, design settled and measured, no implementation
-on disk — its migration is V12 or later, since V10 and V11 are both spent. Phase 11 (VEX) follows it, per the
+**Phase 14 arrived ahead of both of them on 2026-09-05**, from the maintainer raising a real
+project's dependencies with the tool and recording what was missing while doing it — a better
+source of requirements than a roadmap, and the reason it was placed ahead of work that was
+already designed. **B21–B25 and B27 are built and verified**: a draggable sidebar boundary,
+importing straight into a folder, a duplicated-libraries filter, SBOM Diff as a new view with
+its own export, Maven type and classifier as real columns (V12, fixing a finding that was being
+silently dropped), and then a polishing pass over all of it — a worst-per-version filter,
+filter-aware chip counts, version sorting (V13), and eight corrections to the diff view that
+came out of using it. 381 backend tests and 84 frontend tests pass, and every item went through
+the running jar in a browser rather than only the suite. README, AGENTS.md and ARCHITECTURE were
+brought back in step with all of it on 2026-09-06, and the released version is **0.5.1**.
+
+**Next: B26**, the last item of Phase 14 and larger than the other six together — bumping
+declared versions in a Maven workspace, and the first feature that writes to files outside
+`~/.sbomscope`. It is designed and portioned into five briefs; four questions block the first
+dispatch. See *[How B26 is portioned](#how-b26-is-portioned--decided-2026-09-05-not-yet-started)*.
+**Phase 12 (container image scanning)** follows, design settled and measured with no
+implementation on disk — its migration is now V14 or later. Phase 11 (VEX) follows that, per the
 2026-08-06 reordering decision above.
 
 ---
@@ -107,9 +126,10 @@ on disk — its migration is V12 or later, since V10 and V11 are both spent. Pha
 | 8 | Upgrade paths | **Maven/mvn done; npm Tier 1 done**; npm/Gradle Tier 2 and ranking/blocker follow-ups retained |
 | 9 | Workspace reachability analysis | **Maven/JVM component-boundary MVP done**; vulnerable-method data remains deferred |
 | 10 | Packaging and distribution | Baseline done; samples/quickstart remain |
-| 11 | VEX — read supplier exploitability and mitigation context | Planned after Phase 9 |
-| 12 | Container image scanning | **Design gate passed 2026-08-06** — measured, decided, in build |
+| 11 | VEX — read supplier exploitability and mitigation context | Planned, last of the three — behind Phase 14 and Phase 12 |
+| 12 | Container image scanning | **Design gate passed 2026-08-06** — measured and decided, **no implementation on disk**; deferred behind Phase 14 on 2026-09-05. Its migration starts at V14 |
 | 13 | Projects, and a document's own settings | **Built and verified 2026-08-08** — B19 (with drag-and-drop, manual ordering and rollup modes), B20 |
+| 14 | From elevating a real project | **B21–B25 and B27 built and verified 2026-09-05/06**; B26 (bump versions in a Maven workspace) designed, portioned and not started |
 
 Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
 Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
@@ -474,6 +494,8 @@ Goal: the main table, complete and usable.
       vulnerability whose advisory carries no CVSS score, "No vulnerabilities" is a
       component with nothing known against it. Merging them would let "we don't know how
       bad this is" read as "this is fine"
+      *(The band was renamed **Clean** on 2026-09-05, in B27; the distinction it draws is
+      unchanged. Left as written, because this line records what was built then.)*
 - [x] One integrated table rather than separate findings and inventory views. A row is a
       component plus one vulnerability, so a component with three advisories yields three
       self-contained rows and a clean component yields one with the advisory cells empty.
@@ -2881,9 +2903,561 @@ session, and the two items share the minimal-SBOM fixture rather than each carry
 
 ---
 
+## Phase 14 — From elevating a real project
+
+Raised 2026-09-05 by the maintainer after using SBOMscope to raise a real project's
+dependencies end to end. Everything here comes from that session rather than from the
+roadmap, which is why none of it was specified before. **It is deliberately placed ahead of
+Phase 11 (VEX) and Phase 12 (container images)**, both of which were next and are now
+deferred behind it — see the decision log for that call and its reasoning.
+
+The six items are independent of each other and are listed in build order, which is roughly
+increasing size. B26 is larger than the other five together.
+
+**B27 was added the same day, after B21–B25 were built and used.** It is a polishing pass over
+them plus two new filters, and it sits after B26 in this document only because B26 was
+specified first — in build order it came before, since the maintainer asked for it while B26
+was still being portioned.
+
+### B21 — The sidebar boundary is draggable — **built 2026-09-05**
+
+The sidebar was a fixed 280px (`--sidebar-width`), which is enough for a flat list of
+documents and not enough once folders nest three deep: a name indented twice has little room
+left, and B19 made three levels a normal arrangement rather than an exotic one.
+
+- [x] **Drag the boundary between the sidebar and the main panel**, from 280px to twice that.
+      The narrow end is exactly today's layout, so nothing measured against it moves unless
+      the user asks; the wide end is where the table the sidebar exists to serve starts losing
+      columns
+- [x] **Persisted, like collapsing**, through `usePersistentState` with a revive that clamps —
+      a width stored by a build with a different range must still land inside this one's
+- [x] **Keyboard-reachable**: the handle is a `separator` with a live value, arrows moving it
+      16px and 64px with shift, `Home`/`End` for the ends. The same reasoning that keeps
+      "Move to…" beside dragging a document — dragging has no keyboard equivalent
+- [x] **The handle overlays the seam rather than occupying a grid column.** A third column
+      would have to be added to and removed from all three shell templates, and a handle with
+      real width moves the layout it is measuring — the reflow trap the drop-refusal banner
+      hit on 2026-08-08
+- [x] Pointer events with capture, not mouse events: a fast drag leaves a 9px handle behind
+      long before the pointer stops, and without capture the element stops receiving moves at
+      exactly that moment
+
+**Done when**: the boundary can be dragged and the width survives a reload. **Met**; verified
+in the running application.
+
+### B22 — Import documents straight into a folder — **built 2026-09-05**
+
+Upload had one destination: the top level. Filing a document was a second, separate act
+afterwards, repeated per file, and with several SBOMs arriving at once that is most of the
+work of the import.
+
+- [x] **`folderId` on `POST /api/sboms`**, optional; absent means the top level, which is what
+      the header's own Upload button has always meant
+- [x] **The folder is validated before the document is stored.** Filing it afterwards would
+      leave a successfully imported SBOM at the top level behind a 400 saying the import
+      failed, and the user would have to find it to delete it
+- [x] **The response carries the filed document**, re-read rather than reconstructed — the row
+      differs from the record in hand by more than `folderId`, and rebuilding it is the mistake
+      recorded against `FolderService.rename`
+- [x] **"Import" in a folder row's `⋯` menu**, opening the existing upload form with that
+      folder preselected. Unqualified like "New" and "Move": the menu belongs to a folder row,
+      so where the documents are going is already established
+- [x] **A destination dropdown in the form**, the same flattened list "Move to…" offers, with
+      root preselected for a top-level import. A dropdown even when the folder is already
+      known, for the reason "Move to…" is a menu beside dragging: the form still has to show
+      what it is about to do and let it be changed without being closed and reopened
+- [x] The form is keyed by destination, so choosing Import on a second folder while it is
+      already open resets the dropdown rather than keeping the first one
+
+**Done when**: several documents can be imported into a chosen folder in one act. **Met** —
+two new `SbomControllerTest` cases: an import that lands in a folder and reports it in the
+creation response, and an import naming a folder that does not exist, refused with nothing
+stored.
+
+### B23 — A "duplicated libraries" filter — **built 2026-09-05**
+
+The question the vulnerability view could not answer while raising a real project: *which
+libraries do I have at more than one version?* `tomcat-core` at 9.0.118 and 10.1.55 is the
+motivating case, and the cross-module version diamond in `vuln-multi-module.cdx.json`
+(`keycloak-core` and `netty-all`, each at two versions) is the fixture that already exists
+for it.
+
+- [x] **A toggle on the findings view**, off by default, narrowing to components whose
+      `group`+`name` appears at more than one version in the same document. It lives in its own
+      **Libraries** group in View options, not as a fourth entry under "Dependency scope" — the
+      three scopes are one choice made three times, and a checkbox among them is read as a
+      fourth scope, by the accessibility tree literally so since the legend names everything
+      inside the fieldset
+- [x] **In `FindingQuery` → SQL, never in the table component.** `duplicatesClause` sits beside
+      `scopeClause` and is applied at all four sites that apply it — `rowsForSbom`, `countRows`,
+      `findingsForSbom`, `countFindings`. Missing one is the whole risk here: the build stays
+      green and the export silently stops matching the screen
+- [x] **Qualification is a property of the component, not of the finding.** An `EXISTS`
+      subquery over `component`, independent of the finding join, so a sibling version carrying
+      no advisory still qualifies its vulnerable twin. Pinned by a test asserting that
+      `keycloak-core 9.0.3` — clean — appears alongside the vulnerable `4.8.3.Final`
+- [x] **The workbook says the filter was on**, in `ExportDescription`, beside the existing
+      scope and severity lines
+- [x] **Kept by `unfiltered()` and `withoutPaging()`**: like severity and scope, this is a
+      selection rather than a text filter, so exporting "all" from a narrowed screen means all
+      rows in that selection
+
+**Boundary, accepted and stated in the code**: type and classifier are not part of the key
+(that is B25), and neither is the ecosystem — a Maven `g:n` and an identically named,
+identically scoped npm package would collide. **A known gap, not part of this item**: a
+library duplicated across versions *none* of which carry an advisory produces no findings at
+all and therefore cannot appear on this screen. The honest place for that is the Component
+Inspector's finder, and it is a follow-up rather than a widening of this one.
+
+**Done when**: the view can be narrowed to libraries present at several versions, and the
+export agrees. **Met** — verified against the running jar on the real
+`vuln-multi-module.cdx.json`: 300 findings become 176 with the filter on, the pager's own total
+changes with them (which is what proves `countFindings` got the clause and not only the row
+query), and the distinct identities returned are `keycloak-core`, `keycloak-common`,
+`netty-all` and the three `jackson-*` artifacts. The Jackson three were not predicted when the
+filter was specified — `module-a`'s `spring-boot-starter-web 2.1.0.RELEASE` drags an older
+Jackson than `module-b` resolves — which is a better demonstration than the two the test names.
+Five new tests in `FindingDuplicateFilterTest`.
+
+### B27 — Polishing pass over B21–B25 — **built 2026-09-05**
+
+Raised by the maintainer after using the six features from the elevation session. Small
+items, kept together because they are one afternoon's work over three screens.
+
+- [x] **The folder-name cap is on screen, not only on the server.** `folder.name` is
+      `VARCHAR(256)` and `FolderService.validName` has always refused anything longer, but
+      nothing in the sidebar said so: a long name could only be discovered to be too long
+      after it had been typed and submitted, while the sibling-name rule beside it was checked
+      live. `maxLength` plus a counter that appears in the last 32 characters, in
+      `folderName.tsx` — **shared, because the name field exists twice**: the tree's
+      rename/new-subfolder field and the sidebar's top-level project form, which is a
+      hand-rolled copy of it. Found while verifying: the first pass put the cap on one of them
+      and the live check caught the other
+- [x] **"No vulnerabilities" becomes "Clean"** everywhere — chip, sidebar cards, rollups, both
+      workbooks and the Glossary, which now defines Clean and says only a component actually
+      checked can be it. `FindingQuery.SeverityBand.label()` is the one Java statement of the
+      six names; `ExportDescription` and `DiffExcelExporter` each held their own copy before
+- [x] **"Duplicated libraries" becomes "Duplicates"**, explanation in the tooltip
+- [x] **Sorting by Version**, as a version rather than a string — see below
+- [x] The worst-per-version filter and filter-aware chip counts — see below
+
+#### B27a — worst per component version and filter-aware bands — **built 2026-09-05**
+
+- [x] **Worst keeps one row per exact purl**, never one per group/artifact, using the Severity
+      column's descending numeric order and deterministic publication/CVE/OSV tie-breakers
+- [x] **Collapse is after text, scope and duplicate selection and before severity selection.**
+      The representative therefore does not change identity when a severity chip is toggled;
+      a clean component's single row remains selectable
+- [x] **All four query sites share the clause**, including both totals, so paging and exports
+      describe the same rows as the screen
+- [x] **Severity chips show filter-aware row counts** while the existing whole-SBOM counts stay
+      unchanged, and a band's own count ignores the severity selection so it can answer *what
+      would ticking this add*. **The denominator is within the band** — 2 of 41 criticals,
+      never the band against the document's whole finding count. It was carried by a
+      proportional fill until 2026-09-06; see the next item for why that is now a number
+- [x] **The denominator is a number on the chip — `Critical 2 of 41` — shown only while the
+      filter hides something** (2026-09-06). It was a proportional fill first, and the fill was
+      abandoned after failing twice for one reason that is worth keeping: **a length cannot
+      carry a percentage this small at this size.** The real ratios are 2 of 41 and 2 of 146,
+      so the mark is four to six pixels wide, and the chip is a 999px pill whose corner radius
+      clips whatever sits in its bottom-left. The first attempt was also too low-contrast to
+      see (`--accent-subtle` over `--bg-raised`, `#1b2740` on `#1c222b`) and the second was a
+      full-strength severity-coloured bar — **both had exactly the right percentage in the
+      computed style and showed the reader nothing.** The number costs about 30px of chip width
+      while a filter is active and nothing when it is not, and the row still fits on one line
+
+Verified by repository integration coverage over the real multi-version fixture, including two
+versions, a clean component, earliest-publication tie-breaking, all four row/finding paths, a
+moving text-filter count and an unticked band's non-zero count; frontend rendering and URL tests
+pin the one-number fill presentation and export parameter.
+
+**And then verified in the running application, which is what caught the defect the whole
+suite could not see.** On `vuln-multi-module.cdx.json` the filter turns 300 rows into 30 — the
+pager's own total moving with it — and the chips read *Critical 10 of 41*, *High 13 of 146*,
+*Medium 6 of 97*, *Low 1 of 13*, *Unscored 0 of 3*, which sum to exactly the 30 on screen.
+**The proportional fill was not rendering at all.** `.chip[aria-pressed="true"]` sets the
+`background` *shorthand*, which resets `background-image`, and at (0,2,0) it outranks a bare
+`.chip--filtered` at (0,1,0) however late that rule is written — so an unselected chip showed
+its fill and a selected one did not, and the view opens with every vulnerable band selected.
+The selector is now `.chip.chip--filtered[aria-pressed]`. No unit test could have found this:
+jsdom does not apply the cascade, and the test that existed asserted the class and the CSS
+variable, both of which were correct. Third time the "green suite, inert feature" shape has
+appeared in this project, and the second in two days.
+
+#### B27b — sorting by Version — **built 2026-09-05**
+
+- [x] **`component.version_sort` (V13), written at import and backfilled after startup**, in
+      the shape `V3__fixed_version_sort.sql` established and `V12` repeated: the key comes from
+      `VersionOrder.sortKey`, from the comparator's own parse, because reimplementing the parse
+      in H2 SQL would be the second reading of what a version is that this column exists to
+      prevent. Absent keys sort last in **both** directions
+- [x] **`SortField.VERSION`**, with the `Version` column carrying a sort control like any other
+
+**Migration numbering: V13 is taken by this, so container image scanning starts at V14.** That
+is the fourth time a reserved number has moved. Check the directory, not the last note.
+
+Verified in the running application against the maintainer's own database: the backfill filled
+**269 components** on startup, ascending opens `1.2.3, 1.2.3, 1.23, 1.60, 1.60, 2.0.4` and
+descending opens `9.0.12, 9.0.12, 9.0.3, 9.0.3` — the case lexical ordering gets backwards.
+
+#### B27c — SBOM Diff, five corrections from use — **built 2026-09-05**
+
+- [x] **The comparison survives leaving the page.** It lived in `DiffPage`'s own state, so a
+      trip to another tab discarded it *and* the filter that produced it. It now sits in
+      `SbomProvider` beside the Inspector's open tabs — where somebody is in the session, above
+      the router, deliberately not surviving a restart. The pair it was computed from travels
+      with it and it is dropped the moment either side changes: a result whose sides no longer
+      match is not stale data to refresh quietly, it is an answer to a different question
+- [x] **The inline/split toggle is gone and split is the only layout.** A code diff puts two
+      versions of a *line* side by side; this table's two versions are short strings that fit
+      in two columns, so inline only stacked them into one cell and made every row taller.
+      Removed rather than kept as a preference nobody would revisit
+- [x] **Drag a document from the sidebar onto either card.** The sidebar's drag payload gains a
+      typed entry (`application/x-sbomscope-sbom`) because `getData` is blocked during
+      `dragover` while `types` is not — that is what lets a card refuse a dragged *folder*
+      with the cursor rather than after the drop. Additive, like every drag in this
+      application: the `⋯` menu's "Compare as left/right" stays, since HTML5 drag has no
+      keyboard equivalent
+- [x] **A document may sit on both sides.** The engine always allowed it and answered
+      all-unchanged; the UI made it unreachable by swapping the sides whenever the same
+      document was chosen twice. Swapping is now its own button, where it reads as the
+      deliberate act it is
+- [x] **The cards are the sidebar's own cards** — `SbomSummary`, shared rather than copied, so
+      two panels cannot drift into describing the same document differently — **and the
+      comparison carries a summary of both documents above the table**: components and
+      vulnerabilities as *left → right* with the delta, and **the vulnerability line broken
+      down by band**, every vulnerable band including the ones at zero, so the parts add up to
+      the headline beside them. A total alone hides the answer: two criticals traded for three
+      lows reads as "+1". Neither delta is offered where a side was never scanned — zero
+      findings and nobody looked are different statements, and subtracting them would launder
+      that into a confident number
+- [x] **The identifiers and the versions are links.** Each advisory id points where the
+      findings table points it — a CVE to NVD, an OSV-only advisory to osv.dev — and the
+      destinations come from the backend's `AdvisoryLinks`, carried on the row as
+      `advisoryUrls` keyed by identifier. A map rather than a second list, because two lists
+      that must stay the same length break on the first identifier with no link; and computed
+      on the server rather than templated in the browser, because the diff must not be free to
+      send a reader somewhere the table does not. Each version links into the Component
+      Inspector for its own side's purl **and selects that side's document on the way**, since
+      the Inspector reads the selected one and neither side of a diff usually is it
+- [x] **Change and Coordinates sort through the shared diff query**, both directions, as
+      `sort` and `direction` parameters on both the comparison and the export — so the workbook
+      reproduces the order on screen and records it in provenance. **Coordinates ascending
+      remains the default**, so nothing moves for a reader who never clicks a header. Change
+      follows the enum's declaration order, which is the order the summary already lists the
+      four kinds in, so the table and the summary agree about what "first" means; **descending
+      reverses the change groups only and leaves coordinates ascending inside each**, because
+      reversing the secondary key as well would make the list unreadable. Applied in
+      `DiffService`, never in the browser — the same rule the filter follows, and for the same
+      reason: the export has to be able to reproduce the screen
+- [x] **The filter re-runs the comparison itself, and sits directly above the table.** Reported
+      as *"the filter does not work"*, and it was not broken: rows are filtered in SQL, so
+      narrowing meant pressing **Compare** a second time, and nothing on screen said so. Every
+      other filter in the product applies as it is typed. It now re-runs on a 350ms debounce
+      once a comparison exists — **`Compare` still guards the expensive half**, so choosing two
+      documents runs nothing until it is pressed; what it no longer guards is narrowing an
+      answer already on screen. A guard compares the held run's filter against the current one,
+      so returning to the page uses the result in hand rather than firing the query again. The
+      control moved below the summary, because at the top of the page it read as part of
+      choosing the documents — and the summary above it deliberately does *not* move with it
+- [x] **The workbook carries the same summary block.** Asked for after the page had it, and
+      the honest answer was that it did not: the About sheet held the change counts and the
+      CVE totals but neither document total, so a reader who exported what they were looking at
+      got a file that could not reproduce it. Both counts and the five band lines are now in
+      the provenance sheet, labelled *(both documents)* rather than *(whole comparison)*
+      because they describe the two documents rather than the compared rows — and passed in
+      from `ScanService.severityFor` rather than summed from the rows, since a `visible` export
+      narrows the rows while these totals must not narrow with them. **A side nobody has
+      scanned prints the reason instead of a delta**, the same rule the page follows
+- [x] **The finding-delta column has a floor of 320px.** It was taking whatever the coordinates
+      column left over, which broke identifiers mid-token — `CVE-2023-637` on one line and `8`
+      on the next, which reads as two advisories rather than one. Ids now wrap between
+      themselves and never inside one
+- [x] **The summary is a column, one line per thing.** Components, then Vulnerabilities with
+      its five bands beneath it, then the change counts as they were. The first attempt put
+      the bands in one wrapping row, which the maintainer saw at a narrow width: the groups
+      broke wherever they ran out of space, and even at full width one band's numbers sat in
+      line with the next band's name, so nothing could be read down a column. The bands are a
+      three-column grid now, with `display: contents` handing each band's parts to it
+
+Verified in the running application: `sbomscope-before-fix` against `sbomscope-after-fix`
+reproduces the known `jackson-databind` 3.1.4 → 3.1.5 row with *Components 73 → 73 ±0* and
+*Vulnerabilities 1 → 0 −1*; navigating to Vulnerabilities and back restores the rows, the
+summary and the typed filter with no second request; the same document on both sides answers
+73 unchanged and 0 everywhere else; a dragged document highlights the card it is over and a
+dragged folder does not; and `vuln-multi-module` against `maven-sbomscope` reads
+*Critical 41 → 0 −41, High 146 → 0 −146, Medium 97 → 1 −96, Low 13 → 0 −13, Unscored 3 → 0 −3*,
+summing to the *300 → 1* on the line above.
+
+### B24 — SBOM Diff — **built 2026-09-05**
+
+A new top-level view. Link two documents from the sidebar as left and right, press the button,
+read what changed. **This is the backlog's "Diff two SBOMs" item**, now specified.
+
+Built in three portions, so each is separately verifiable: the engine, the page, the export.
+
+- [x] **Left is the baseline, right is the new state**; added and removed are stated relative
+      to left
+- [x] **Two documents, not folders**, in the first pass
+- [x] **Components and findings.** Rows are added / removed / version-changed / unchanged
+      coordinates, and each side carries what its CVEs are, so the delta answers *did the
+      upgrade actually help* — which is the question that produced this whole list
+- [x] **The pairing rule**, where a library appears at several versions on one side — exactly
+      B23's case. One version each side pairs into a change; anything else stays one row per
+      version, added or removed on its own terms, never a guessed pairing
+- [x] **Computed in Java over the existing findings query, not in new SQL.**
+      `rowsForSbom(id, FindingQuery.everything())` already returns every component including
+      the clean ones, through the one path the view and the export share. A cross-SBOM join
+      would have been a second reading of what a row is
+- [x] **`GET /api/diff`**, with the same `filter`/`regex`/`negate` contract the findings
+      endpoint carries. The same document on both sides is legal and answers all-unchanged;
+      an unknown id is 404; an invalid pattern is the existing `InvalidFilterPatternException`
+- [x] **The summary describes the whole comparison, not the filtered rows** — the same choice
+      the severity chips make, so it can be used to judge what a filter hid. Whatever presents
+      it has to say so, or it reads as a count of what is on screen
+- [x] **Sorted by group then artifact**, with inline and split views — the presentation every
+      code-diff tool already established, so nothing here is novel to a reader. The choice is
+      persisted with a revive, like every other stored preference
+- [x] **The existing `SearchField`**, regex and negation included. One search control, four
+      places, one meaning — this is the fifth. A rejected pattern leaves the last good result on
+      screen and reports on the field, exactly as the findings view does
+- [x] **`UNCHANGED` rows are hideable, defaulting to hidden, and the count of what is hidden
+      is stated.** Returned by the engine either way — never dropped
+- [x] **Exportable**, like every other table in the product
+
+**The engine is verified against the maintainer's own before/after pair**, which is the
+best available evidence because the answer was already known from another direction:
+`sbomscope-before-fix.json` against `sbomscope-after-fix.json` reports one
+`VERSION_CHANGED` row — `tools.jackson.core:jackson-databind` 3.1.4 → 3.1.5, carrying
+`CVE-2026-59889` on the left and nothing on the right — with 72 unchanged, nothing added or
+removed, one CVE lost and none gained. That reproduces the 2026-08-02 decision-log entry
+recording exactly that pin, from the SBOMs rather than from the log.
+
+**The page was verified against the same pair in the running jar**: the pair chosen from two
+`⋯` menus, one `Version changed` row shown with *Gained: None* and *Lost: CVE-2026-59889*,
+"72 unchanged rows hidden" stated beside the toggle, Show unchanged moving the table between 1
+and 73 rows, Split relabelling the columns to *Left version* / *Right version* and surviving a
+reload, and an invalid pattern leaving the previous result on screen while reporting
+*"Unclosed character class at position 7."* on the field. Choosing a document as the side it is
+not currently on swaps the two rather than putting it on both.
+
+**`/diff` shows the sidebar, unlike the plan's first draft of it.** It was specified as
+un-scoped, since it reads a pair from the row menus rather than the sidebar's selection — which
+is true and was the wrong conclusion: choosing the two sides is the first thing anyone does on
+that page, and a left panel you have to navigate away from to use is not the "link two objects
+from the left panel" this was asked for. Caught by opening the finished page, not by a test.
+
+**The workbook**, verified by downloading both scopes from the running jar and reading the
+files back. Two sheets, as the findings export has: the comparison, and provenance. `visible`
+produced the header plus one row and says *"visible — text filter applied; unchanged rows
+excluded"*; `all` produced 73. The artifact cell and **both** version cells carry working
+Maven Central links, from each side's own purl. **The CVE cells are deliberately not linked**:
+a diff cell holds several identifiers and a spreadsheet cell takes one hyperlink, so linking
+would have meant picking one silently. Provenance carries both documents with their ids and
+upload times, which side is which, the filter and its mode, and the summary with every count
+labelled *"(whole comparison)"* beside the line *"Summary covers the whole comparison, not only
+the exported rows"* — the distinction the engine's pre-filter summary exists for, made explicit
+where a reader would otherwise assume the numbers describe the sheet they are sitting on.
+
+`ExportMenu` was generalised into a URL-driven split button shared with the findings export
+rather than copied, and the findings export's own behaviour is unchanged — checked by exporting
+from both screens after the change.
+
+
+
+### B25 — Extended Maven coordinates — **built 2026-09-05**
+
+Today a component reads `group:artifact:version`. Maven's identity is
+`groupId:artifactId:type:version:classifier`, and the difference is not cosmetic: **a real
+defect is already recorded in the code.** `ScanService` maps components to scanner keys of
+(ecosystem, name, version) and its own comment says two purls differing only by a classifier
+collide there, the first winning and the second losing its finding to a `debug` log. That is
+the silent-loss failure mode this project guards against everywhere else.
+
+**Identity stays the purl** — the qualifiers are already in it and nothing about what a
+component *is* changes. What follows is about reading them out reliably.
+
+- [x] **`type` and `classifier` are parsed out of the purl at import into their own columns
+      (V12), with a backfill for documents already stored.** The same shape as
+      `dependency_scope`, which `ScopeClassifier` writes at import rather than deriving on
+      every read, and the same reason the `fixed_version_sort` key exists: display, sorting,
+      filtering and the collision fix all need these values, and extracting a qualifier from a
+      purl string inside four different SQL statements would be a fourth reading of the purl
+      grammar. Backfilled rather than left null, because a null here would mean "no classifier"
+      and that is a false statement about the artifact rather than a missing one
+- [x] **Name them `maven_type` and `maven_classifier`, never `type`.** `component.component_type`
+      already exists and holds the *CycloneDX* type — `library`, `application`, `framework`.
+      Maven's `type` is a purl qualifier and a different thing entirely (`jar`, `pom`,
+      `test-jar`, `war`). Two fields called "type" on one row, meaning different things, is a
+      confusion that would be permanent once written
+- [x] **Show only the non-default parts** — type and classifier appear when they are not
+      `jar`/empty, and nowhere else. The full five-part form and the raw purl stay in the
+      Inspector's identity panel and in the export
+- [x] **The backend owns the display string.** `FindingRow.coordinates` gains the non-default
+      parts, so the findings table, the Component Inspector, the diff and the export all read
+      one string and cannot drift. This is the same lesson the severity bands taught on
+      2026-09-05, applied before it costs anything rather than after
+- [x] **Matching must not change.** OSV publishes advisories per `group:artifact`; a classifier
+      variant is covered by the same advisory. Type and classifier are identity and
+      presentation, never inputs to vulnerability matching
+- [x] **Fix the collision**: a finding whose scanner key is claimed by two components attaches
+      to **both**, since the advisory genuinely applies to both. `ScanService.indexComponents`
+      builds one purl per `PackageKey` and logs the loser at `debug`; the resolver handed to
+      `OsvReportParser.parse` is a `Function<PackageKey, Optional<String>>` and has to become
+      one that answers with every matching purl, with the parser emitting a finding per purl
+- [x] **Sorting**: `COMPONENT` currently orders by `LOWER(c.purl)`, which puts the qualifiers
+      *after* the version because that is where they sit in the purl string. With real columns
+      it becomes group, artifact, type, classifier — the order a reader scanning the list
+      expects
+- [x] **Filtering has to be extended deliberately — it does not come for free**, which an
+      earlier draft of this item claimed and which was wrong. `textMatch` searches `c.purl`,
+      `f.osv_id` and `f.cve_id`; the purl contains `classifier=tests`, so that spelling already
+      matches while the displayed `:tests` does not. The new columns join the searched set, so
+      what is on screen is what is searchable
+- [x] **npm keeps two parts.** There is no analogue, and inventing one would be the fake
+      surface constraint 7 exists to prevent
+
+**Verified against a real classifier fixture.** `maven-classifiers.cdx.json` was produced by
+the CycloneDX Maven plugin against a throwaway project outside this repository, with only the
+document committed — the adversarial-fixture rule, followed. Uploaded to the running jar, the
+table reads `commons-lang3:test-jar:tests`, `jackson-databind:sources` and
+`spring-boot-dependencies:pom`, plain artifacts unchanged, with the full coordinate as each
+cell's accessible name. **Both `jackson-databind` and `jackson-databind:sources` carry
+CVE-2026-59889** — the defect this item exists to fix, seen end to end rather than asserted in
+a unit test.
+
+**A regression was introduced here and caught only by that live check, which is why the item
+needed one.** `ScanService.scannerNamesFor` registers a component under `coordinates()`, and
+the first implementation extended *that* method rather than adding a second one — so a
+classifier artifact claimed the scanner name `tools.jackson.core:jackson-databind:sources`,
+which osv-scanner never emits. Both classifier components came back **clean**: not a collision
+losing one finding, but no match at all for either, which is strictly worse than the bug being
+fixed. The whole backend suite was green throughout, because nothing tested scanner matching
+for a component carrying a classifier.
+
+`coordinates()` is now explicitly the **matching identity** and `displayCoordinates()` the
+reader's form, with the boundary written on both and pinned by
+`ScannerPackageNameTest.neverOffersTheMavenTypeOrClassifier` — which asserts the two artifacts
+claim the *same* scanner name, since that shared name is precisely what lets one advisory reach
+both. Worth knowing that the same method also reaches `MavenArtifact.fromCoordinates` through
+`GraphNode`: the extended form would have had the Maven probe resolve an artifact that does not
+exist, a second failure from the same cause that had not yet surfaced.
+
+**Migration numbering: B25 takes V12.** ~~So container image scanning starts at V13.~~
+**Superseded the same day: B27b's `component.version_sort` took V13, so Phase 12 starts at
+V14.** That is now the fourth time a number has been assumed free — V10 by manual ordering,
+V11 by the rollup modes, V12 by these columns, V13 by the version sort key. Check the
+directory rather than the last note before writing a migration; this line has been wrong four
+times and will be wrong again.
+
+### B26 — Bump versions in a Maven workspace
+
+The largest item here, and the first time SBOMscope would **write to a user's files**. Read
+the decision log entry of 2026-09-05 before starting: the safety boundary was chosen
+deliberately and is not a default to be re-derived.
+
+This does not re-propose what R1 rejected. R1 rejected *requiring a workspace for the
+Inspector's upgrade panel*, because that panel's most likely reader has no source tree at all;
+a separate screen that is explicitly about a workspace does not inherit that objection, and R1
+itself names manifests as "a sensible later addition".
+
+- [ ] **Rows are declaration sites, not components.** That is what answers contradicting
+      versions across modules and the root: a library declared in `module-a` and managed in the
+      root pom is two rows, each with its own current value, target and checkbox — never one
+      row that silently rewrites two places
+- [ ] **Two target versions per row, minimal preselected.** Minimal is what
+      `UpgradeAdviceService.adviseFor` already computes from local OSV data across all of that
+      component's advisories — reused, not reimplemented, and it works offline. Latest
+      available is offered where the configured Maven probe can enumerate it, and is absent
+      rather than guessed where it cannot
+- [ ] **Every vulnerable component is listed, including the ones not being bumped**, unchecked
+      and unchanged, so opting one in is a click rather than a search
+- [ ] **Five resolution cases**, in increasing difficulty: a direct `<dependency>` in a module;
+      a managed version in the root `<dependencyManagement>`; a `${property}` — bumped, with a
+      warning when it is shared by artifacts the user did not select; a version inherited from
+      an imported BOM, where the honest choices are *override the BOM's property* or *add an
+      explicit managed entry*, both offered; and a vulnerable transitive that is declared
+      nowhere, whose only remedy is a **new** `<dependencyManagement>` entry. The last is
+      marked as structural rather than mixed in with a version swap
+- [ ] **Exclusions are read and displayed, never authored** in the first pass
+- [ ] **Minimal edits mean surgical text patches, not a DOM round-trip.** Re-serializing a pom
+      reformats the whole file and produces a diff nobody will approve. StAX reports line and
+      column, is in the JDK, and adds no dependency
+- [ ] **Two viewports over one in-memory model**: the table of rows, and an editable file-level
+      preview with the changes highlighted. Both are observers; the text is parsed only on
+      Apply, and text that does not parse leaves the model untouched so revert is real. Undo
+      and redo run over the model's command stack and cover both views
+- [ ] **Nothing persists.** The overrides live in the session and go into the files or nowhere.
+      That is what keeps this from becoming the annotation store constraint 6 forbids
+- [ ] **The safety gate before Apply, all three parts** (maintainer's choice, 2026-09-05): a
+      clean git working tree required, overridable with explicit confirmation for a workspace
+      that is not a repository; a `.orig` backup written beside each file; and a final dialog
+      naming every file about to be written and how many edits each receives
+- [ ] **Apply writes via a temporary file and an atomic move**, and refuses any file whose
+      fingerprint changed on disk since the preview was built
+- [ ] **Never write outside the configured workspace.** The same path-containment rule Stage 3c
+      established for reachability — a parent pom living elsewhere is reported, not edited
+
+#### How B26 is portioned — decided 2026-09-05, not yet started
+
+The design above is settled; this is the delivery plan for it. Five portions, because each has
+a boundary the others do not need to see across, and because a brief that fits one bounded
+change is the only kind worth delegating.
+
+| # | Portion | Owns | Route |
+|---|---|---|---|
+| A | The pom model and its five resolution cases | `dev.sbomscope.bump`: the StAX scan, workspace discovery, the join to vulnerable components, `GET /api/sboms/{id}/bump`. Read-only | Sol, medium |
+| B | The surgical patch engine | Text mutation and `POST …/bump/preview`. Writes nothing to disk | Terra, high |
+| C | The session model and its command stack | `frontend/src/bump/model.ts` — pure TypeScript, undo/redo over both viewports | Terra, high |
+| D | The two synchronised viewports | The `/bump` page: row table and editable file preview | Sol, medium |
+| E | The apply path and its three-part gate | The git check, the `.orig` backups, the atomic writes, the confirmation dialog | **Me — not delegated** |
+
+**The patch engine is carved out of the apply path deliberately.** The design bullet above
+treats "surgical text patches" and "Apply" as one thing; splitting them means every byte-level
+rule — offsets in UTF-8, CRLF preserved, overlapping edits refused, a range whose content no
+longer matches refused — is provable by a test that writes nothing to any file. Only portion E
+touches a real file.
+
+**E is not delegated, and that is the point of the split.** It is the only portion that writes
+outside `~/.sbomscope`, the decision log calls that boundary the maintainer's own call, and a
+delegate's characteristic failure is drift into an adjacent problem. Drift in A–D costs a
+review; drift in E writes to somebody's source tree.
+
+**The model lives in the browser and the backend holds no session state.** Every endpoint is a
+pure function of its request plus the files on disk, so nothing about a plan, an override or an
+edit is stored anywhere — which is what keeps the "nothing persists" argument above available.
+
+**Sequencing is strictly serial, and not because of dependencies.** A depends on nothing, B and
+C depend only on A's records, D on all three. But a delegate writes directly into this working
+tree, and two of these briefs touch `frontend/src/api/client.ts`, so two at once would collide.
+A worktree per delegate is the obvious fix and has not been tried.
+
+**Four questions are open and block the first dispatch**, since two of them change what A, B and
+C are asked to build:
+
+1. **Is E delegated after all?** Recommendation: no, for the reason above.
+2. **How does the clean-working-tree gate decide?** Recommendation: invoke the user's own `git`
+   (`git status --porcelain`), the way the Maven probe invokes their `mvn`; git absent from the
+   PATH resolves to "not a repository", which is the override path and never a silent pass.
+   The alternatives are reimplementing index-versus-worktree comparison for one boolean, or
+   adding JGit against the lean-tree constraint.
+3. **Where does "Latest available" come from in the first pass?** Recommendation:
+   `DependencyResolver.knownVersions`, which reads metadata a previous probe already
+   downloaded — offline, no process started from this screen, and absent rather than guessed
+   where nothing is cached. The alternative launches `mvn` per component from an interactive
+   screen.
+4. **Confirm the model's home** — browser-side with a stateless backend, as stated above.
+
+The five briefs themselves are written and sit in this session's scratchpad. They are working
+artifacts rather than documentation: what matters for a later session is on this page.
+
+---
+
 ### Backlog
 
-- [ ] **Diff two SBOMs, or trend several.** This reopens a closed question: the decision log
+- [ ] **Diff two SBOMs, or trend several.** **Promoted to [B24](#b24--sbom-diff) on
+      2026-09-05**, kept here so the reasoning that led to it is not lost. This reopens a closed
+      question: the decision log
       dropped "group SBOMs into projects" and named trend analysis as what would bring it
       back. It has, and B19 (2026-08-06) now provides the missing half — *this project* is a
       real `folder` row with a real set of documents beneath it. What remains is the same
@@ -5679,6 +6253,12 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   V10 applied needs the same cleanup described above before it can take V10 for ordering.
   *(Superseded 2026-08-08: V11 was then taken by B19's rollup modes, so Phase 12 starts at V12.
   The reasoning above is unchanged — this is the second time the same number was assumed free.)*
+  *(Superseded again 2026-09-05: V12 is taken by B25's Maven type and classifier columns, so
+  Phase 12 starts at V13. Third time. Stop reading this line for the answer and list
+  `backend/src/main/resources/db/migration` instead — that is the only statement of which
+  numbers are gone that cannot go stale.)*
+  *(And again, hours later, which makes the point better than the sentence above did: V13 is
+  taken by B27b's `component.version_sort`, so Phase 12 starts at V14.)*
 
   Documentation was corrected to match rather than left describing unbuilt schema as real:
   ARCHITECTURE's data model no longer lists the V10 tables as existing, its ecosystem catalogue
@@ -5973,3 +6553,180 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   `test2` plus its own 1), 13 low — every scratch folder created to test the mixed and
   zero-direct-document cases was removed afterward, and the maintainer's own tree was read but
   never mutated.
+- 2026-09-05 — **Three of B24's own decisions were reversed the day they shipped, by using the
+  page rather than by rereading the design.** Worth recording together, because the pattern is
+  the point: each was defensible on paper and wrong in the hand.
+
+  **The inline/split toggle is gone.** It was built because code-diff tools offer one, which is
+  a reason to consider it and not a reason to ship it: a code diff puts two versions of a
+  *line* side by side, where these two versions are short strings that fit in two columns with
+  room to spare. Inline only stacked them into one cell and made every row taller. A preference
+  nobody would revisit is worse than no preference — and this one carried a persisted key and a
+  revive function to keep working.
+
+  **Choosing a document already on the other side no longer swaps the two.** The swap rule made
+  a legal comparison unreachable: the engine has always accepted the same document on both
+  sides and answers all-unchanged, which is the natural way to ask "what does this document say
+  about itself" and a useful sanity check on the diff itself. Swapping became its own button,
+  where it reads as the deliberate act it is instead of a side effect of choosing.
+
+  **The comparison moved out of the page and into `SbomProvider`.** It was page state, so
+  leaving the tab discarded both the result and the filter that produced it — a real query's
+  worth of work thrown away by clicking Monitoring. It now sits beside the Inspector's open
+  tabs, above the router: session state, deliberately not surviving a restart. The pair it was
+  computed from travels with it, and a result whose sides no longer match the selection is
+  dropped rather than refreshed quietly — it is an answer to a different question, not stale
+  data.
+
+  **And the cells became links**, which needed one small design decision: a diff row carries
+  several advisory identifiers, and the destination differs by kind — a CVE has an NVD page, an
+  OSV-only advisory does not. The row therefore carries `advisoryUrls`, a map from identifier to
+  URL built by the backend's `AdvisoryLinks`, rather than a template in the browser. A map and
+  not a second list, because two lists that must stay the same length break on the first
+  identifier with no link. **The workbook still prints these identifiers unlinked**, which is
+  unchanged and still right: a spreadsheet cell takes one hyperlink and a diff cell holds
+  several. The version cells link into the Component Inspector and select their own side's
+  document on the way, because the Inspector reads the *selected* document and neither side of
+  a diff usually is it.
+- 2026-09-06 — **The chips state both numbers, and the proportional fill is abandoned. A length
+  cannot carry a percentage this small at this size.** The fill was chosen over a second number
+  on 2026-09-05, on the argument that six chips reading `12345/54321` would wrap the toolbar.
+  The argument was sound and the data did not cooperate: real ratios here are 2 of 41 and 2 of
+  146, which is a mark four to six pixels wide on a 70-pixel chip — and the chip is a 999px
+  pill, so its corner radius clips exactly the bottom-left region such a mark occupies.
+
+  It failed twice before that was clear. First as a tinted background (`--accent-subtle` over
+  `--bg-raised` — `#1b2740` on `#1c222b`), invisible for contrast. Then as a full-strength bar
+  in the band's own severity colour, invisible for size and clipping. **Both times the computed
+  style was exactly right, and both times I verified the mechanism rather than the perception**
+  — read `getComputedStyle`, confirmed the percentage, and never looked at it rendered at a
+  size where a human eye could judge it. The maintainer reported it as a *wrong denominator*
+  both times, which is the useful part: a quantity nobody can see does not get the benefit of
+  being correct, it gets read as whatever the reader can reconstruct.
+
+  The number costs ~30px of chip width while a filter is active and nothing when it is not; the
+  measured row is 608px across six chips and does not wrap. The rule the failed attempts leave
+  behind: **before encoding a quantity as a length, check the smallest ratio the data actually
+  produces against the pixels available for it.** Percentages under about 10% need a number.
+- 2026-09-05 — **The severity chips now move with the filter, reversing a stated choice — and
+  they keep both numbers rather than swapping one for the other.** The chips carried
+  whole-SBOM counts with a comment saying so deliberately: *"it describes the SBOM, so the
+  chips stay comparable however the view is narrowed"*. Using the tool showed the cost of
+  that: with a filter on, six numbers on screen describe rows that are not on screen, and the
+  reader has no way to see how much of a band survived. The reversal is narrow, because the
+  original reasoning was not wrong — the chip shows what the current filter leaves, the
+  whole-SBOM total stays in the response and is carried by a proportional fill and the
+  accessible name, so comparability survives without a second number in the toolbar. **Two
+  large numbers per chip was the option rejected**: six chips reading `12345/54321` wrap the
+  row, and the wrap is worst exactly on the documents big enough to need the filter.
+  *(The fill half of this was reversed on 2026-09-06 — the counts here are two and three
+  digits, not five, and the fill could not be seen. The chips now name both numbers.)*
+- 2026-09-05 — **The diff's summary lists one line per band, and that shape was arrived at by
+  looking at it rather than by reasoning.** The vulnerability delta began as a single total,
+  which the maintainer immediately identified as insufficient — two criticals traded for three
+  lows reads as `+1` — so it gained a per-band breakdown; the breakdown began as one wrapping
+  row, which broke at arbitrary points below full width and misaligned the columns even above
+  it. It is now a three-column grid, one row per band, under a column-stacked summary. Worth a
+  log entry only because both corrections came from a person looking at the running page while
+  the tests were green, which is the third time in two days that the check that mattered was
+  not a check the suite could perform.
+- 2026-09-05 — **"Clean" replaces "No vulnerabilities" everywhere, and the band names become
+  one Java statement.** The long form spent an entire filter chip's width saying what one word
+  says, on a row where two more filters had to fit. The rename is product vocabulary, so it is
+  everywhere or nowhere: chip, sidebar cards, folder rollups, both workbooks, and a Glossary
+  entry that now defines Clean and states that only a component actually checked can be it —
+  the never-scanned distinction this project guards hardest. `FindingQuery.SeverityBand.label()`
+  is now where the six names live, because `ExportDescription` and `DiffExcelExporter` each
+  held a private copy of them, which is the same drift the severity *thresholds* were unified
+  to prevent earlier the same day.
+- 2026-09-05 — **Worst-per-version is selected before severity, and severity chips count every
+  other active filter.** A representative chosen inside the selected bands would change from
+  one advisory to another as chips are toggled and make the chip counts depend on their own
+  selection. The SQL therefore applies text, scope and duplicate selection first, chooses the
+  exact-purl representative with the Severity column's existing order, and applies severity
+  last. The response keeps the original whole-SBOM map and adds a second filter-aware map; the
+  chip renders only that second number and carries the ratio through a proportional fill and
+  accessible label, because two large numbers per chip wrap the toolbar.
+- 2026-09-05 — **VEX and container images are deferred behind six features that came out of
+  using the tool.** The maintainer spent a session raising a real project's dependencies with
+  SBOMscope and came back with what was missing while doing it, which is a different and better
+  source of requirements than a roadmap. Phase 11 Tier A was the named next step and Phase 12
+  had a passed design gate; both keep their plans unchanged and simply move behind
+  [Phase 14](#phase-14--from-elevating-a-real-project). Nothing was reversed and nothing was
+  reconsidered — this is a priority call, not a design one. Worth stating because the VEX
+  handoff section reads as immediately actionable and a later session must not treat that as
+  still current.
+- 2026-09-05 — **Bumping declared versions will write to the user's poms, and the safety
+  boundary was chosen rather than defaulted.** This is the first feature that modifies files
+  outside `~/.sbomscope`. Phase 9 makes a point of never building the workspace and reading it
+  only under a containment check; B26 edits source. That is the maintainer's call to make and
+  it was made explicitly, with all three gates rather than one: **a clean git working tree is
+  required** (overridable with explicit confirmation where the workspace is not a repository),
+  **a `.orig` backup is written beside each file**, and **a final dialog names every file about
+  to be written**. Belt and braces deliberately: git is the real undo, the backups cover the
+  workspace that is not in git, and the file list is what catches a preview that resolved to
+  somewhere unexpected before anything is touched.
+
+  **The target version is two columns, not one, with minimal preselected.** "Most recent" and
+  "minimal non-vulnerable" are different policies with different risk, and the tool already
+  computes the second: `UpgradeAdviceService.adviseFor` is pure, takes everything as
+  parameters, and derives it from local OSV data across every advisory against that component —
+  so it is reused rather than reimplemented, and the offline promise survives. The latest
+  available version can only come from the user's configured Maven probe, so it appears where
+  the probe can enumerate it and is **absent rather than guessed** where it cannot. The
+  maintainer named the Inspector's own recommendation as the minimal source, which is exactly
+  that service.
+
+  **Nothing the user overrides in the preview persists.** Constraint 6 forbids manual judgment
+  fields because they need an annotation store; a per-row override that lives in the session
+  and then goes into the files or nowhere creates no such store. The moment an override is
+  saved for later, that argument stops being available.
+- 2026-09-05 — **Extended Maven coordinates show only their non-default parts, and the item is
+  a defect fix rather than a presentation change.** `groupId:artifactId:type:version:classifier`
+  is Maven's real identity and SBOMscope shows three of the five. Printing all five on every row
+  would spend width on every screen to disambiguate a small minority — almost every row would
+  read `:jar:` — so type and classifier appear only when they are not `jar`/empty, with the full
+  form and the raw purl kept in the Inspector's identity panel and the export.
+
+  The reason it matters more than that: the qualifiers are **already stored**, since identity is
+  the purl throughout, and `ScanService.scannerNamesFor`'s own comment records that two purls
+  differing only by a classifier collide on the (ecosystem, name, version) scanner key — the
+  first wins and the second's finding is dropped with a `debug` line. That is the same silent
+  loss as the unmatched-scanner-findings item under *Optional enhancements*, and it is fixed by
+  attaching such a finding to every component sharing the key, because the advisory applies to
+  all of them. **Matching itself does not change**: OSV publishes per `group:artifact`, so type
+  and classifier are identity and presentation only, never inputs to a match. npm keeps two
+  parts — there is no analogue, and inventing one would be the fake surface constraint 7 exists
+  to prevent.
+- 2026-09-05 — **The SBOM diff compares two documents and carries the findings delta; folders
+  are deliberately not diffable yet.** Left is the baseline, right the new state. The findings
+  half is what makes it answer the question that produced the request — *did the upgrade
+  actually help* — and it is the half the backlog flagged as needing a rule, since findings are
+  keyed by purl and shared across documents. For a two-document diff that rule turns out to be
+  cheap: each side has its own component list and joins its own findings, so no cross-document
+  de-duplication arises. The case that genuinely needs a stated rule is a library appearing at
+  several versions on one side — B23's duplicates, arriving here as a pairing question — and the
+  answer is that one version each side pairs into a change, while anything else stays a group of
+  added and removed rows rather than a guessed pairing. Folder-to-folder diffing was offered and
+  not taken: a `CURRENT` folder resolves cleanly to one document, but a `SUM` folder holding
+  unrelated documents has no defensible left-hand side, and shipping the ambiguous half of a
+  feature is how a number nobody can explain gets onto a screen.
+- 2026-09-05 — **The severity band thresholds become one Java definition beside the SQL one,
+  because the diff created a second reading of them.** `BAND_EXPRESSION` in
+  `VulnerabilityRepository` was the only place 9.0/7.0/4.0 were written, which held for as long
+  as everything that needed a band was asking the database for one. B24's engine is the first
+  code to hold rows already fetched and need to band them itself, and the first implementation
+  wrote the thresholds out again next to that caller.
+
+  Nothing was wrong with the numbers; the problem is that nothing would have kept them equal.
+  A drift shows up as the diff calling a finding critical that the table calls high — two
+  screens disagreeing about one finding, which is the failure this project spends effort
+  avoiding everywhere else. `SeverityBand.of(hasFinding, score)` is now the single Java
+  statement of the rule, and `SeverityBandTest.theJavaClassifierAgreesWithTheSql` walks a real
+  fixture asserting it and the SQL classify every row identically. That fixture already places
+  scores either side of every threshold, so a comparison flipped from `>=` to `>` fails it.
+
+  **Same shape as `VersionOrder.sortKey` building its key from the comparator's own parse**, and
+  recorded here for the same reason: "one reading of what a version is" and "one reading of what
+  critical means" are the same requirement, and both are cheap to satisfy once and expensive to
+  discover later.

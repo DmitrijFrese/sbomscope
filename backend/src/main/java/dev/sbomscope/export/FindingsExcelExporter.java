@@ -256,6 +256,8 @@ public class FindingsExcelExporter {
             row = writePair(sheet, row, labelStyle, "Sorted by", description.sortedBy());
             row = writePair(sheet, row, labelStyle, "Severity filter", description.severityFilter());
             row = writePair(sheet, row, labelStyle, "Scope filter", description.scopeFilter());
+            row = writePair(sheet, row, labelStyle, "Duplicated libraries filter", description.duplicateFilter());
+            row = writePair(sheet, row, labelStyle, "Worst per version filter", description.worstPerVersionFilter());
             row = writePair(sheet, row, labelStyle, "Text filter", description.textFilter());
             row = writePair(sheet, row, labelStyle, "Columns", description.columns());
         }

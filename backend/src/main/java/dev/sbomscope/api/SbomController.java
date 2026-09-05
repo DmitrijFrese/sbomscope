@@ -173,7 +173,9 @@ class SbomController {
             RegistryLinks.Links links = RegistryLinks.forPurl(component.purl());
             return new ComponentResponse(
                     component.id(),
-                    component.coordinates(),
+                    // The display form: this feeds the Inspector's finder, which a reader
+                    // reads and types into. Matching uses coordinates(), which is not this.
+                    component.displayCoordinates(),
                     component.group(),
                     component.name(),
                     component.version(),
@@ -187,18 +189,39 @@ class SbomController {
         }
     }
 
+    /**
+     * @param folderId files the new document into a project or folder on arrival; absent
+     *                 leaves it outside every project, which is what a top-level import does
+     */
     @PostMapping
     ResponseEntity<SbomResponse> upload(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "workspacePath", required = false) String workspacePath) {
+            @RequestParam(value = "workspacePath", required = false) String workspacePath,
+            @RequestParam(value = "folderId", required = false) UUID folderId) {
 
         if (file.isEmpty()) {
             throw new InvalidSbomException("The uploaded file is empty.");
         }
 
+        // Checked before the document is stored, not after. Filing it afterwards would leave
+        // a successfully imported SBOM sitting at the top level behind a 400 saying the
+        // import failed — and the user would have to find it to delete it.
+        if (folderId != null && folders.findAll().stream().noneMatch(f -> f.id().equals(folderId))) {
+            throw new IllegalArgumentException("No such folder.");
+        }
+
         try (var content = file.getInputStream()) {
             StoredSbom stored = service.importSbom(
                     originalFilename(file), workspacePath, content);
+
+            if (folderId != null) {
+                folders.moveSbom(stored.id(), folderId);
+                // Re-read rather than rebuilt: the row now differs from the record in hand by
+                // more than folderId — moveSbom is also what settles its place in the folder's
+                // order — and reconstructing it here is the mistake AGENTS.md records against
+                // FolderService.rename.
+                stored = service.findById(stored.id()).orElse(stored);
+            }
 
             // Queued, never awaited: importing a document must not take as long as scanning
             // it. The response already carries `scanning`, so the card can say so on arrival

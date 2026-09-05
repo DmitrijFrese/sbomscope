@@ -36,12 +36,13 @@ public class OsvReportParser {
     }
 
     /**
-     * @param purlResolver maps the scanner's ecosystem/name/version identity back to the
-     *                     purl of the component we already hold. The report itself does
-     *                     not carry purls at the package level.
+     * @param purlResolver maps the scanner's ecosystem/name/version identity back to every
+     *                     purl of the components we already hold. The report itself does not
+     *                     carry purls at the package level, and qualifiers are not matching
+     *                     inputs, so more than one component can legitimately claim one key.
      * @return findings in report order, at most one per {@link VulnerabilityFinding.Key}
      */
-    public List<VulnerabilityFinding> parse(String json, Function<PackageKey, Optional<String>> purlResolver) {
+    public List<VulnerabilityFinding> parse(String json, Function<PackageKey, List<String>> purlResolver) {
         OsvReport report;
         try {
             report = objectMapper.readValue(json, OsvReport.class);
@@ -129,16 +130,21 @@ public class OsvReportParser {
 
     private List<VulnerabilityFinding> findingsFor(
             OsvReport.PackageResult packageResult,
-            Function<PackageKey, Optional<String>> purlResolver) {
+            Function<PackageKey, List<String>> purlResolver) {
 
         OsvReport.Package pkg = packageResult.pkg();
         if (pkg == null || packageResult.groups() == null) {
             return List.of();
         }
 
-        Optional<String> purl = purlResolver.apply(
-                new PackageKey(pkg.ecosystem(), pkg.name(), pkg.version()));
-        if (purl.isEmpty()) {
+        List<String> purls = Optional.ofNullable(purlResolver.apply(
+                        new PackageKey(pkg.ecosystem(), pkg.name(), pkg.version())))
+                .orElseGet(List::of)
+                .stream()
+                .filter(purl -> purl != null && !purl.isBlank())
+                .distinct()
+                .toList();
+        if (purls.isEmpty()) {
             // The scanner found something we cannot tie back to a stored component.
             // Dropping it silently would hide a finding, so record it loudly instead.
             log.warn("Scanner reported {} {}:{} which does not match any stored component",
@@ -161,17 +167,19 @@ public class OsvReportParser {
             // exception by design: see attributableSeverity.
             Optional<OsvReport.Severity> severity = attributableSeverity(group, byId);
 
-            findings.add(new VulnerabilityFinding(
-                    purl.get(),
-                    primaryId,
-                    cveFrom(group, advisory),
-                    advisory == null ? null : truncate(advisory.summary(), 2000),
-                    parseScore(group.maxSeverity()),
-                    ratingFrom(advisory),
-                    severity.map(OsvReport.Severity::score).orElse(null),
-                    severity.map(OsvReport.Severity::type).orElse(null),
-                    fixedVersionFor(advisory, pkg),
-                    advisory == null ? null : parseInstant(advisory.published())));
+            for (String purl : purls) {
+                findings.add(new VulnerabilityFinding(
+                        purl,
+                        primaryId,
+                        cveFrom(group, advisory),
+                        advisory == null ? null : truncate(advisory.summary(), 2000),
+                        parseScore(group.maxSeverity()),
+                        ratingFrom(advisory),
+                        severity.map(OsvReport.Severity::score).orElse(null),
+                        severity.map(OsvReport.Severity::type).orElse(null),
+                        fixedVersionFor(advisory, pkg),
+                        advisory == null ? null : parseInstant(advisory.published())));
+            }
         }
         return findings;
     }

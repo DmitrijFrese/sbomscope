@@ -46,7 +46,7 @@ export interface ColumnDef {
 
 export const COLUMNS: ColumnDef[] = [
   { id: 'component', label: 'Component', sort: 'COMPONENT', locked: true },
-  { id: 'version', label: 'Version', locked: true },
+  { id: 'version', label: 'Version', sort: 'VERSION', locked: true },
   { id: 'scope', label: 'Scope', sort: 'SCOPE' },
   { id: 'osvId', label: 'OSV ID', locked: true, note: 'The advisory record, usually a GHSA' },
   { id: 'ghsaRating', label: 'GHSA rating', sort: 'GHSA_RATING', note: "GitHub's own scale, not the CVSS band" },

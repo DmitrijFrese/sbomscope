@@ -93,6 +93,7 @@ process is written to a log you can read inside the application.
 | **Projects** | File your documents into projects and subfolders, up to three levels, or leave them loose — both live in the same sidebar. Drag to file and to reorder, with folders first and documents beneath at every level, or use the "Move to…" menu, which stays because dragging has no keyboard equivalent. Your arrangement is remembered; "Sort by" restores name or date order — either direction — for one level in one click. "Rename" renames a project or subfolder. Deleting a folder never deletes a document; its contents move up. A folder shows the severity counts of everything beneath it, and says what it is counting — see below. |
 | **Workspace reachability analysis — experimental Maven slice** | Reads existing `target/classes` and exact dependency JARs from a configured **read-only** Maven cache. Each mapped module is analyzed against its own SBOM dependency closure; WALA reports direct/transitive bytecode paths into a component, or an explicit incomplete/ambiguous result. It does not build the workspace or claim a vulnerable method was reached. Runs are isolated, cancellable, retryable, and capped by configurable defaults of 10 minutes and 1 GiB heap.                          |
 | **CVE overview** | Known vulnerabilities per library, blended from several data sources (see below).                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **SBOM diff** | Compare two documents: added, removed and version-changed libraries, and the CVEs each side gained or lost — the evidence that an upgrade did what it was meant to. Both documents' component and vulnerability counts sit above the table, the vulnerability line broken down by severity. Exportable, with the same filter the rest of the product uses. |
 | **Upgrade paths** | Maven and npm both get offline advisory-derived upgrade/pin guidance; npm also gets a ready-to-paste `overrides` snippet. For the transitive question Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — only the Maven path drives your configured `mvn`, ranking every major line as its own candidate rather than guessing at one winner. npm and Gradle have no Tier 2 probe.                                                                                  |
 | **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves. Parent routes are numbered cards: the first 100 are shown immediately, another 100 can be loaded on request, and each card identifies the module or intermediate component whose SBOM edge introduces the selected version.                                                                                                                                                                                        |
 | **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD, library cells to the artifact's registry page and version cells to that exact version. A second sheet records what was selected, so a filtered workbook can account for its own size.                                                                                                                                                                                                                                                           |
@@ -154,6 +155,34 @@ A browser-based UI served by the local backend.
   directly in a type-ahead finder, which lists worst-first and marks each library with the
   severity standing against it — including a distinct mark for one nothing has scanned, since
   "not checked" must never look like "nothing found".
+- **SBOM Diff** — two documents side by side: what was added, removed and moved between
+  versions, and **which CVEs each change gained or lost**, which is the question "did the
+  upgrade actually help" reduces to. Choose the two sides by dragging documents from the
+  sidebar onto the comparison, or from a row's `⋯` menu; the same document may sit on both
+  sides, and answers all-unchanged. Above the table, both documents' component and
+  vulnerability counts as *before → after*, the vulnerability line broken down by severity so
+  a trade of two criticals for three lows cannot hide inside a single total. Sort by coordinates
+  or by kind of change, and filter the rows with the same search control the rest of the product
+  uses. Exportable, like every other table — and the workbook carries the same summary, the same
+  order and the same filter, so a file you forward can account for itself. Where a library sits
+  at several versions on one side, no pairing is guessed: those stay separate added and removed
+  rows.
+
+### Narrowing the vulnerability view
+
+Beside the severity bands, two filters answer questions that a list of findings cannot:
+
+- **Duplicates** — only libraries present at more than one version in this document. The
+  motivating case is a `tomcat-core` at 9.0.118 and 10.1.55 in one build.
+- **Worst** — one row per component version, showing that version's worst finding. Duplicates
+  on its own can still return hundreds of rows; this collapses them so the versions actually
+  present are visible at a glance.
+
+**Each severity chip counts what the current filter leaves**, and says what it is out of while
+anything is hidden — `Critical 2 of 41`. Unfiltered it reads `Critical 41`, so the second number
+appears only when it means something. The count moves with every filter except the severity
+bands themselves: a band's own number answers *what would ticking this add*, which it could not
+do if it went to zero whenever the band was unticked.
 
 ### What a folder's numbers are counting
 
@@ -199,9 +228,14 @@ backtracking that costs nothing over a few thousand rows in memory.
 
 ### Vulnerability table columns
 
-Component · CVE ID (→ NVD) · Severity (CVSS score + rating) · EPSS score · Known
+Component · Version · CVE ID (→ NVD) · Severity (CVSS score + rating) · EPSS score · Known
 Exploited (KEV) · Fix available · Recommended upgrade · Direct/Transitive · Workspace
 usage status
+
+A Maven component shows `group:artifact`, with its **type and classifier appended only when they
+are not the defaults** — `commons-lang3:test-jar:tests` rather than `:jar:` on every row. The
+full five-part coordinate and the raw purl are in the Component Inspector and the export.
+**Version sorts as a version**, so `1.9.0` comes before `1.10.0` rather than after it.
 
 **An empty exploitation cell is never a clearance.** KEV is a positive list, so absence means
 CISA has not confirmed exploitation — not that a flaw cannot be exploited. The column says

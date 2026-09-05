@@ -14,6 +14,15 @@ interface ExportMenuProps {
   visibleColumns: string[];
 }
 
+interface ExportLinksMenuProps {
+  visibleUrl: string;
+  allUrl: string;
+  visibleCount: number;
+  totalCount: number;
+  visibleHint: string;
+  allHint: string;
+}
+
 /**
  * Split button: the primary action exports what is on screen, the caret offers both.
  *
@@ -31,6 +40,27 @@ export function ExportMenu({
   totalCount,
   visibleColumns,
 }: ExportMenuProps) {
+  return (
+    <ExportLinksMenu
+      visibleUrl={exportUrl(sbomId, query, 'visible', visibleColumns)}
+      allUrl={exportUrl(sbomId, query, 'all', visibleColumns)}
+      visibleCount={visibleCount}
+      totalCount={totalCount}
+      visibleHint="this page, filter and sort"
+      allHint="keeps the sort and row selections"
+    />
+  );
+}
+
+/** The shared split-button shell; callers remain responsible for defining both scopes. */
+export function ExportLinksMenu({
+  visibleUrl,
+  allUrl,
+  visibleCount,
+  totalCount,
+  visibleHint,
+  allHint,
+}: ExportLinksMenuProps) {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
 
@@ -58,7 +88,7 @@ export function ExportMenu({
     <div className="export-menu" ref={container}>
       <a
         className="button button--small export-menu__primary"
-        href={exportUrl(sbomId, query, 'visible', visibleColumns)}
+        href={visibleUrl}
         onClick={() => setOpen(false)}
       >
         Export view ({visibleCount})
@@ -80,23 +110,23 @@ export function ExportMenu({
           <a
             className="export-menu__item"
             role="menuitem"
-            href={exportUrl(sbomId, query, 'visible', visibleColumns)}
+            href={visibleUrl}
             onClick={() => setOpen(false)}
           >
             <span className="export-menu__item-label">Export view</span>
             <span className="export-menu__item-hint">
-              {visibleCount} rows — this page, filter and sort
+              {visibleCount} rows — {visibleHint}
             </span>
           </a>
           <a
             className="export-menu__item"
             role="menuitem"
-            href={exportUrl(sbomId, query, 'all', visibleColumns)}
+            href={allUrl}
             onClick={() => setOpen(false)}
           >
             <span className="export-menu__item-label">Export all</span>
             <span className="export-menu__item-hint">
-              {totalCount} rows — keeps the sort and severity selection
+              {totalCount} rows — {allHint}
             </span>
           </a>
         </div>

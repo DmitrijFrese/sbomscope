@@ -22,15 +22,19 @@ import type { FolderNode, MoveCheck } from '../sboms/folderTree';
 import { CARD_BANDS } from '../sboms/severityRollup';
 import { useSboms } from '../sboms/SbomProvider';
 import { usePersistentState } from '../state/persisted';
+import { MAX_FOLDER_NAME, NameLengthNote } from './folderName';
+import { formatUploadedAt, SbomRisk } from './SbomSummary';
 import { useSidebarDrag } from './useSidebarDrag';
 import type { DropTarget, SidebarDrag } from './useSidebarDrag';
 import {
   DisclosureIcon,
+  DiffIcon,
   DownloadIcon,
   FolderIcon,
   LinkIcon,
   MoveIcon,
   PencilIcon,
+  UploadIcon,
 } from './icons';
 
 /**
@@ -65,13 +69,6 @@ function edgeFor(event: DragEvent, element: HTMLElement, splitInHalf: boolean):
   return 'into';
 }
 
-function formatUploadedAt(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
 /**
  * Everything the rows need that is not their own: the live drag, the flat folder list the
  * move rules are computed from, and the expansion state spring-loading has to open.
@@ -90,6 +87,8 @@ interface TreeContextValue {
   moveSbom: (sbomId: string, folderId?: string) => Promise<unknown>;
   moveFolder: (folderId: string, parentId?: string) => Promise<unknown>;
   reportError: (message: string | null) => void;
+  /** Opens the upload form with this folder as the destination. */
+  importInto: (folderId: string) => void;
   /**
    * Applies a reorder within one sibling group.
    *
@@ -112,24 +111,6 @@ function useTree(): TreeContextValue {
   const context = useContext(TreeContext);
   if (!context) throw new Error('SidebarTree rows must render inside the tree provider');
   return context;
-}
-
-/** Renders a set of severity counts as the same small chips the SBOM card uses. */
-function SeverityChips({ counts }: { counts: Partial<Record<SeverityBand, number>> }) {
-  const total = CARD_BANDS.reduce((sum, band) => sum + (counts[band] ?? 0), 0);
-  if (total === 0) return null;
-  return (
-    <span className="sbom-card__risk">
-      {CARD_BANDS.map((band) => {
-        const count = counts[band] ?? 0;
-        return (
-          <span key={band} className="risk-count" data-band={band.toLowerCase()} data-empty={count === 0}>
-            <strong>{count}</strong> {SEVERITY_LABELS[band].toLowerCase()}
-          </span>
-        );
-      })}
-    </span>
-  );
 }
 
 /**
@@ -338,12 +319,6 @@ function RowMenu({
   );
 }
 
-function SbomRisk({ sbom }: { sbom: Sbom }) {
-  if (sbom.scanning) return <span className="sbom-card__meta">Scanning…</span>;
-  if (sbom.scannedComponents === 0) return <span className="sbom-card__meta">Not scanned</span>;
-  return <SeverityChips counts={sbom.severityCounts} />;
-}
-
 /**
  * A drag must not start from a control inside the row.
  *
@@ -409,7 +384,11 @@ function MoveToMenu({
  * <p>The sidebar already holds every folder, so the sibling-name rule can be checked as the
  * reader types rather than by a round trip that comes back red. The backend check stays the
  * authority — two tabs can still race — this only avoids offering a submit that cannot work.
+ *
+ * <p>The length rule is enforced the same way, and was not — see `folderName.tsx` for why the
+ * cap and its counter live there rather than here.
  */
+
 function NameField({
   value,
   onChange,
@@ -434,7 +413,10 @@ function NameField({
   const { folders } = useTree();
   const trimmed = value.trim();
   const taken = siblingNameTaken(folders, parentId, trimmed, excludingId);
-  const canSubmit = trimmed.length > 0 && !taken;
+  // The length is checked here as well as by `maxLength`, which constrains typing and pasting
+  // but not a value arriving any other way — autofill, a browser extension. Same principle as
+  // the sibling check: never offer a submit the server is going to refuse.
+  const canSubmit = trimmed.length > 0 && trimmed.length <= MAX_FOLDER_NAME && !taken;
   const form = useRef<HTMLFormElement>(null);
 
   return (
@@ -466,7 +448,9 @@ function NameField({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           autoFocus={autoFocus}
+          maxLength={MAX_FOLDER_NAME}
           aria-invalid={taken}
+
           onKeyDown={(event) => {
             if (event.key === 'Escape') onCancel();
           }}
@@ -482,6 +466,7 @@ function NameField({
             : `There is already a project called "${trimmed}".`}
         </p>
       )}
+      {!taken && <NameLengthNote value={value} />}
     </form>
   );
 }
@@ -503,13 +488,19 @@ function SbomListItem({
   depth: number;
   isCurrent?: boolean;
 }) {
-  const { selected, select, remove } = useSboms();
+  const { selected, select, remove, diffSelection, selectForDiff } = useSboms();
   const { drag, folderOptions, moveSbom, reportError, sboms, reorder } = useTree();
   const [moving, setMoving] = useState(false);
   const [editingWorkspace, setEditingWorkspace] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const isSelected = selected?.id === sbom.id;
+  const diffSide =
+    diffSelection.left?.id === sbom.id
+      ? 'left'
+      : diffSelection.right?.id === sbom.id
+        ? 'right'
+        : null;
   const isDragging = drag.dragging?.kind === 'sbom' && drag.dragging.id === sbom.id;
 
   async function onRemove() {
@@ -596,6 +587,11 @@ function SbomListItem({
             current
           </span>
         )}
+        {diffSide && (
+          <span className="sbom-card__current sbom-card__diff-side" data-side={diffSide}>
+            {diffSide}
+          </span>
+        )}
         <span className="sbom-card__name">{sbom.filename}</span>
         <span className="sbom-card__meta">
           {formatUploadedAt(sbom.uploadedAt)} · {sbom.componentCount} components
@@ -626,6 +622,28 @@ function SbomListItem({
           >
             <DownloadIcon className="row-menu__icon" /> Download
           </a>
+          <button
+            type="button"
+            role="menuitem"
+            className="row-menu__item"
+            onClick={() => {
+              setMenuOpen(false);
+              selectForDiff('left', sbom.id);
+            }}
+          >
+            <DiffIcon className="row-menu__icon" /> Compare as left
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="row-menu__item"
+            onClick={() => {
+              setMenuOpen(false);
+              selectForDiff('right', sbom.id);
+            }}
+          >
+            <DiffIcon className="row-menu__icon" /> Compare as right
+          </button>
           <button
             type="button"
             role="menuitem"
@@ -785,6 +803,7 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
     reportError,
     reorder,
     sortLevel,
+    importInto,
   } = useTree();
 
   const [renaming, setRenaming] = useState(false);
@@ -1069,6 +1088,19 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
           >
             <MoveIcon className="row-menu__icon" /> Move
           </button>
+          {/* "Import" unqualified for the same reason "New" and "Move" are: the menu belongs
+              to a folder row, so where the documents are going is already established. */}
+          <button
+            type="button"
+            role="menuitem"
+            className="row-menu__item"
+            onClick={() => {
+              setMenuOpen(false);
+              importInto(id);
+            }}
+          >
+            <UploadIcon className="row-menu__icon" /> Import
+          </button>
           {!isEmpty && (
             <div className="row-menu__group">
               <p className="row-menu__group-label">Sort by</p>
@@ -1199,7 +1231,12 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
  * <p>Assembly is pure and lives in `sboms/folderTree.ts`; this is the rendering, the
  * per-node interaction state, and the drag wiring from `useSidebarDrag`.
  */
-export function SidebarTree() {
+/**
+ * @param onImportInto opens the sidebar's upload form with a folder preselected. The form
+ *                     belongs to the sidebar rather than to a row, so the row can only ask
+ *                     for it — the same shape as reporting a drop error upward.
+ */
+export function SidebarTree({ onImportInto }: { onImportInto: (folderId: string) => void }) {
   const { sboms, folders, moveSbomToFolder, moveFolder, reorderLevel, sortLevel: sortLevelRequest } =
     useSboms();
   const drag = useSidebarDrag();
@@ -1225,6 +1262,7 @@ export function SidebarTree() {
     moveSbom: moveSbomToFolder,
     moveFolder,
     reportError: setDropError,
+    importInto: onImportInto,
     reorder: async (parentId, kind, movingId, relativeToId, edge) => {
       // The group's current membership comes from the same tree that is on screen, so the
       // list sent is exactly what the reader sees — which is also what the backend checks.

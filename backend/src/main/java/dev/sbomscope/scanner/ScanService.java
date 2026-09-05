@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -245,9 +246,9 @@ public class ScanService {
 
         // The report identifies packages by ecosystem/name/version and carries no purl,
         // so results are tied back to the components we already hold.
-        Map<OsvReportParser.PackageKey, String> byKey = indexComponents(components);
+        Map<OsvReportParser.PackageKey, List<String>> byKey = indexComponents(components);
         List<VulnerabilityFinding> findings =
-                parser.parse(report, key -> Optional.ofNullable(byKey.get(key)));
+                parser.parse(report, key -> byKey.getOrDefault(key, List.of()));
 
         List<String> scannedPurls = components.stream()
                 .map(StoredComponent::purl)
@@ -341,6 +342,12 @@ public class ScanService {
         return repository.countsByBand(sbomId);
     }
 
+    /** Filter-aware chip counts; severity selection is intentionally ignored by the repository. */
+    public Map<FindingQuery.SeverityBand, Integer> filteredCountsByBand(
+            UUID sbomId, FindingQuery query) {
+        return repository.filteredCountsByBand(sbomId, validated(query));
+    }
+
     /**
      * The risk summary for one SBOM, as the list shows it.
      *
@@ -378,11 +385,12 @@ public class ScanService {
      * nothing but a log line to show for it.
      *
      * <p>Registering both spellings is cheaper and more robust than trying to decide which
-     * generator produced the document. Collisions are harmless: the forms only coincide when
-     * they denote the same package.
+     * generator produced the document. A key retains every purl because Maven type and
+     * classifier qualifiers distinguish components without changing advisory matching.
      */
-    private Map<OsvReportParser.PackageKey, String> indexComponents(List<StoredComponent> components) {
-        Map<OsvReportParser.PackageKey, String> byKey = new LinkedHashMap<>();
+    private Map<OsvReportParser.PackageKey, List<String>> indexComponents(
+            List<StoredComponent> components) {
+        Map<OsvReportParser.PackageKey, List<String>> byKey = new LinkedHashMap<>();
 
         for (StoredComponent component : components) {
             if (component.purl() == null || component.purl().isBlank()) {
@@ -391,15 +399,18 @@ public class ScanService {
             String ecosystem = ecosystemOf(component);
             for (String name : scannerNamesFor(component, ecosystem)) {
                 var key = new OsvReportParser.PackageKey(ecosystem, name, component.version());
-                String alreadyClaimed = byKey.putIfAbsent(key, component.purl());
+                List<String> claimed = byKey.computeIfAbsent(key, ignored -> new ArrayList<>());
 
                 // Same ecosystem, name and version, but two different purls — Maven
-                // qualifiers such as a classifier can produce that. The first still wins,
-                // since reporting the advisory against one of the two beats dropping it,
-                // but nothing else would ever show that a choice was made here.
-                if (alreadyClaimed != null && !alreadyClaimed.equals(component.purl())) {
-                    log.debug("{} is claimed by both {} and {}; keeping the first",
-                            key, alreadyClaimed, component.purl());
+                // qualifiers such as a classifier can produce that. Both retain the finding;
+                // the log keeps the collision visible without reporting a loss that no longer
+                // happens.
+                if (!claimed.isEmpty() && !claimed.contains(component.purl())) {
+                    log.debug("{} is claimed by both {} and {}; retaining both",
+                            key, claimed, component.purl());
+                }
+                if (!claimed.contains(component.purl())) {
+                    claimed.add(component.purl());
                 }
             }
         }

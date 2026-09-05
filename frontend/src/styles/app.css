@@ -34,6 +34,49 @@ body {
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
   min-height: 0;
+  /* The resize handle is positioned against this box rather than occupying a grid column
+     of its own: a third column would have to be added to, and then removed from, all three
+     templates below, and a handle that takes real width moves the layout it is measuring. */
+  position: relative;
+}
+
+/* The boundary between sidebar and main panel, dragged to widen the tree (2026-09-05). It
+   overlays the seam instead of sitting in the flow, so nothing reflows while dragging —
+   the same trap the sidebar's drop-refusal banner hit, recorded in AGENTS.md. */
+.sidebar-resizer {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: var(--sidebar-width);
+  /* Wider than it looks: the visible line is 1px, but a 1px hit target is a mouse hunt. */
+  width: 9px;
+  transform: translateX(-4px);
+  cursor: col-resize;
+  /* Or a drag on a touch screen scrolls the page instead of moving the boundary. */
+  touch-action: none;
+}
+
+.sidebar-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 4px;
+  background: transparent;
+  transition: background var(--transition);
+}
+
+.sidebar-resizer:hover::before,
+.sidebar-resizer[data-dragging='true']::before {
+  background: var(--accent);
+}
+
+.sidebar-resizer:focus-visible {
+  outline: none;
+}
+
+.sidebar-resizer:focus-visible::before {
+  background: var(--accent);
+  inset: 0 3px;
 }
 
 .app-body[data-sidebar='collapsed'] {
@@ -468,6 +511,14 @@ body {
   color: var(--text-muted);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
+}
+
+/* The Diff side is session state in the same family as CURRENT: a short word above the
+   filename, not another selection border competing with the card's existing selected state. */
+.sbom-card__diff-side {
+  margin-left: var(--space-1);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .folder-row__action {
@@ -1540,8 +1591,8 @@ body {
 
 /* Unselected bands are visibly muted, so it is obvious at a glance that the table is
    showing a subset rather than everything. Lightened from 0.45 now that the chips carry
-   counts: those describe the SBOM whether or not the band is selected, so they have to stay
-   readable on a chip that is switched off. */
+   counts: those ignore severity selection whether or not the band is selected, so they have
+   to stay readable on a chip that is switched off. */
 .chip[aria-pressed='false'] {
   opacity: 0.62;
 }
@@ -1575,6 +1626,39 @@ body {
 .chip[aria-pressed='true'][data-band='none']     { border-color: var(--severity-none); }
 /* Clean components are not a severity, so they get the accent rather than a risk colour. */
 .chip[aria-pressed='true'][data-band='clean']    { border-color: var(--accent); }
+
+/* A chip that is not a severity band, and must not be read as a seventh one. Three devices,
+   none of them a new visual idiom: its own group behind a divider, no count (every band
+   carries one), and accent-coloured text when pressed — the bands all keep `--text-primary`
+   and say what they are through the border alone.
+
+   Declared after the band rules deliberately. `.chip--plain[aria-pressed='true']` and
+   `.chip[aria-pressed='true']` have identical specificity, so the later one wins and the
+   earlier placement silently lost the colour while keeping the border. */
+.chips--aside {
+  margin-left: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+}
+
+.chip--plain[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The whole-document denominator, beside the count the filter leaves.
+   It was a proportional fill on the chip twice over — a tinted background, then a coloured
+   bar — and both were invisible to a reader while being exactly correct in the computed
+   style. The reason is arithmetic, not styling: the ratios here are 2 of 41, 2 of 146, so the
+   mark is a handful of pixels, and a 999px pill radius clips whatever sits in its bottom
+   corner. **A length cannot carry a percentage this small at this size.** The number can, and
+   costs about 30px of chip width while a filter is active and nothing when it is not.
+   Smaller and muted, so the count that matters now still reads first. */
+.chip__total {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
 
 .pagesize,
 .page-size {
@@ -3359,4 +3443,324 @@ body {
 .folder-row__disclosure[data-empty='true'] {
   opacity: 0.3;
   cursor: default;
+}
+
+/* ---------------------------------------------------------- SBOM Diff ----- */
+
+.diff-selection {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr) auto;
+  align-items: stretch;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.diff-selection > .button {
+  align-self: center;
+}
+
+.diff-selection__card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.diff-selection__card[data-missing='true'] {
+  justify-content: center;
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.diff-selection__side {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.diff-selection__card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-selection__date,
+.diff-selection__missing {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* The card body is the sidebar's own (SbomSummary), and its name line reserves width for the
+   row-action button that only exists in the sidebar. Nothing overlays it here. */
+.diff-selection__card .sbom-card__name {
+  padding-right: 0;
+}
+
+/* Only while a document is actually over the card: a target that is always outlined reads as
+   an error state on a page where one side is legitimately empty. */
+.diff-selection__card[data-drop-target='true'] {
+  border-color: var(--accent);
+  border-style: solid;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.diff-selection__swap {
+  align-self: center;
+  padding-inline: var(--space-3);
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* Left → right for one measurement. Its own row above the change counts, because "did the
+   inventory grow and did the vulnerabilities fall" is read first and answered from the
+   documents themselves rather than from the rows below. */
+/* Components, then Vulnerabilities with its bands under it, then the change counts — each on
+   its own line rather than competing for one row. The row layout was legible only at full
+   width: below that the two stats and five bands broke wherever they happened to run out of
+   space, and the summary a reader looks at first was the ugliest thing on the page. */
+.diff-summary__stats {
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.diff-stat__pair {
+  font-variant-numeric: tabular-nums;
+}
+
+/* One line per band, in three aligned columns.
+   A single wrapping row was the first attempt and it read badly: at a narrow width the five
+   groups broke at arbitrary points, and even at full width the numbers of one band sat in
+   line with the *name* of the next, so nothing could be compared down a column. `display:
+   contents` on each band hands its three spans to this grid, which is what lets the counts
+   and the deltas line up without a wrapper per column. */
+.diff-stat__bands {
+  display: grid;
+  grid-template-columns: max-content max-content max-content;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+  margin-top: var(--space-2);
+  font-size: 12px;
+}
+
+.diff-stat__band {
+  display: contents;
+}
+
+/* The band's own colour on its name only. Putting it on the numbers would compete with the
+   delta's up/down colour sitting right beside them. */
+.diff-stat__band-name {
+  justify-self: start;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* The gap between the grid's columns is the whole spacing here; the standalone delta's own
+   margin would add to it and knock this column out of line with the totals above. */
+.diff-stat__bands .diff-stat__delta {
+  margin-left: 0;
+}
+
+.diff-stat__band[data-band='critical'] .diff-stat__band-name { color: var(--severity-critical); }
+.diff-stat__band[data-band='high']     .diff-stat__band-name { color: var(--severity-high); }
+.diff-stat__band[data-band='medium']   .diff-stat__band-name { color: var(--severity-medium); }
+.diff-stat__band[data-band='low']      .diff-stat__band-name { color: var(--severity-low); }
+.diff-stat__band[data-band='none']     .diff-stat__band-name { color: var(--severity-none); }
+
+.diff-stat__delta {
+  margin-left: var(--space-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* More vulnerabilities is bad news and fewer is good. More components is *neither* — a
+   project that grew is not a project that got worse — so only the risk stat is coloured, and
+   the count stat stays as quiet as any other number on the page. */
+.diff-stat__delta { color: var(--text-secondary); }
+.diff-stat__delta[data-tone='risk'][data-direction='up'] { color: var(--severity-high); }
+.diff-stat__delta[data-tone='risk'][data-direction='down'] { color: var(--severity-low); }
+.diff-stat__delta[data-direction='flat'],
+.diff-stat__delta[data-direction='unknown'] { color: var(--text-muted); }
+
+.diff-empty p {
+  margin: 0;
+}
+
+.diff-empty p + p {
+  margin-top: var(--space-2);
+}
+
+.diff-controls {
+  padding-top: var(--space-1);
+}
+
+.diff-controls__view {
+  flex-wrap: wrap;
+}
+
+.diff-controls .viewswitch {
+  margin-bottom: 0;
+}
+
+.diff-unchanged-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* A column since the stats block arrived. It was a row with the title on the left and the
+   counts pushed right, which only ever worked while the counts were one short line. */
+.diff-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  background: var(--bg-subtle);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.diff-summary h2,
+.diff-summary p {
+  margin: 0;
+}
+
+.diff-summary h2 {
+  font-size: 14px;
+}
+
+.diff-summary p {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.diff-summary__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.diff-summary__counts > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.diff-summary__counts dt {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.diff-summary__counts dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-change {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* Change state is not risk, so none of these uses a severity token. The words and marks
+   carry the distinction too; colour is never the only way to tell the four apart. */
+.diff-change[data-change='added'] {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.diff-change[data-change='removed'] {
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+  border-style: dashed;
+}
+
+.diff-change[data-change='version_changed'] {
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
+.diff-change[data-change='unchanged'] {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.diff-delta {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.diff-delta__line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.diff-delta strong {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* The delta is the widest thing in the row and was being squeezed to whatever the coordinates
+   column left over, which broke identifiers across lines mid-token — `CVE-2023-637` on one
+   line and `8` on the next, which is unreadable and looks like two advisories. A floor of
+   320px, and the table scrolls inside `.table-scroll` when the window cannot afford it. */
+.diff-table th:last-child,
+.diff-table td:last-child {
+  min-width: 320px;
+  max-width: 520px;
+  white-space: normal;
+}
+
+/* Wrap between identifiers, never inside one. */
+.diff-delta__ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+}
+
+.diff-delta__ids > * {
+  white-space: nowrap;
+}
+
+@media (max-width: 820px) {
+  .diff-selection {
+    grid-template-columns: 1fr;
+  }
+
+  /* The arrow between the cards became the swap button. Stacked, the rotation turns the
+     double-headed arrow onto the column's own axis, which is still the gesture it names. */
+  .diff-selection__swap {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
+
+  .diff-selection > .button {
+    justify-self: start;
+  }
 }

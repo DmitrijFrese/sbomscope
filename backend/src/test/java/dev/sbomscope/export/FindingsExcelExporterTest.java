@@ -312,7 +312,7 @@ class FindingsExcelExporterTest {
         FindingQuery narrowed = new FindingQuery(
                 FindingQuery.SortField.COMPONENT, true, "jackson", false, false,
                 EnumSet.of(FindingQuery.SeverityBand.CRITICAL, FindingQuery.SeverityBand.HIGH),
-                EnumSet.of(DependencyScope.DIRECT), 20, 0);
+                EnumSet.of(DependencyScope.DIRECT), true, true, 20, 0);
 
         try (Workbook workbook = open(exporter.export(sbom, List.of(withCve), Instant.now(),
                 ExportColumn.all(), ExportDescription.of(true, narrowed, ExportColumn.all()),
@@ -327,6 +327,10 @@ class FindingsExcelExporterTest {
             // otherwise look identical to a complete one.
             assertThat(about).contains("Scope filter");
             assertThat(about).contains("Direct");
+            assertThat(about).contains("Duplicated libraries filter");
+            assertThat(about).contains("only library identities present at more than one version");
+            assertThat(about).contains("Worst per version filter");
+            assertThat(about).contains("one worst finding per exact component version");
         }
     }
 

@@ -25,6 +25,16 @@ export interface DragItem {
 export type DropTarget = string | null;
 
 /**
+ * The `dataTransfer` type carrying a dragged item's id.
+ *
+ * <p>Lowercase because the DOM lowercases every type it stores, so a mixed-case constant would
+ * match on `setData` and never on `types.includes`.
+ */
+export function dragTypeFor(kind: DragItem['kind']): string {
+  return `application/x-sbomscope-${kind}`;
+}
+
+/**
  * How close to an edge the pointer must be before the list scrolls itself, and how fast.
  *
  * <p>Auto-scroll is not optional polish: a drop target scrolled out of view is unreachable
@@ -162,10 +172,16 @@ export function useSidebarDrag(): SidebarDrag {
       item.current = dragged;
       setDragging(dragged);
       event.dataTransfer.effectAllowed = 'move';
-      // Some payload is required or Firefox refuses to start the drag at all. The value is
-      // never read back: `dataTransfer.getData` is blocked during dragover for security, so
-      // the live item is held in the ref above instead.
+      // Some payload is required or Firefox refuses to start the drag at all. Inside the tree
+      // the value is never read back: `dataTransfer.getData` is blocked during dragover for
+      // security, so the live item is held in the ref above instead.
       event.dataTransfer.setData('text/plain', dragged.id);
+      // A second entry whose *type* names what is being dragged. `getData` is unavailable
+      // during dragover but `types` is not, so this is the only way a drop target outside
+      // this hook's state — the diff page's two cards — can tell a document from a folder
+      // while the pointer is still moving, rather than accepting everything and refusing
+      // after the drop. The id rides in the type's payload for the drop itself.
+      event.dataTransfer.setData(dragTypeFor(dragged.kind), dragged.id);
       if (frame.current === null) {
         frame.current = requestAnimationFrame(runAutoScroll);
       }

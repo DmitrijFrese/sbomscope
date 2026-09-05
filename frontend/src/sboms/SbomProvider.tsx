@@ -16,7 +16,7 @@ import {
   sortLevel as sortLevelRequest,
   uploadSbom,
 } from '../api/client';
-import type { Folder, FolderSortField, RollupMode, Sbom } from '../api/client';
+import type { DiffFilter, DiffResult, Folder, FolderSortField, RollupMode, Sbom } from '../api/client';
 import { usePersistentState } from '../state/persisted';
 
 /**
@@ -49,6 +49,33 @@ export interface UploadOutcome {
   sbomId?: string;
   /** Set when it did not, carrying the backend's own message. */
   error?: string;
+}
+
+export type DiffSide = 'left' | 'right';
+
+export interface DiffSelection {
+  left: Sbom | null;
+  right: Sbom | null;
+}
+
+/**
+ * A comparison that has actually been run, kept for as long as this session lasts.
+ *
+ * <p>The result used to live in `DiffPage`'s own state, so navigating to another tab and back
+ * discarded it and the reader had to press Compare again — with the filter they had typed
+ * gone too. It sits here for the same reason the Inspector's open tabs do: this is *where
+ * somebody is* in the session, above the router, and deliberately not something that survives
+ * a restart.
+ *
+ * <p>The pair it was computed from travels with it. A stored result whose sides no longer
+ * match the current selection is not stale data to be refreshed quietly — it is an answer to
+ * a different question, so it is dropped the moment either side changes.
+ */
+export interface DiffRun {
+  leftId: string;
+  rightId: string;
+  filter: DiffFilter;
+  result: DiffResult;
 }
 
 /** Shared so an SBOM with no tabs does not hand out a new object on every render. */
@@ -113,13 +140,34 @@ interface SbomContextValue {
    * rejects for a failed file: a partial failure is a result, not an error, and throwing
    * would discard the outcomes of the files that did import.
    */
-  upload: (files: File[], workspacePath?: string) => Promise<UploadOutcome[]>;
+  upload: (
+    files: File[],
+    workspacePath?: string,
+    folderId?: string,
+  ) => Promise<UploadOutcome[]>;
   remove: (id: string) => Promise<void>;
   /** Open Inspector tabs per SBOM id. Absent means none open this session. */
   inspectorTabs: Record<string, InspectorTabs>;
   /** Appends the purl if it is not already open, and makes it active either way. */
   openInspectorTab: (sbomId: string, purl: string) => void;
   closeInspectorTab: (sbomId: string, purl: string) => void;
+
+  /** The baseline and new state for SBOM Diff. Session state, not a saved preference. */
+  diffSelection: DiffSelection;
+  /**
+   * Puts a document on one side.
+   *
+   * <p>The same document on both sides is legal and answers all-unchanged, which the engine
+   * has always supported — so this no longer swaps the sides when the document is already on
+   * the other one. Swapping is its own button on the page, where it reads as the deliberate
+   * act it is rather than as a side effect of choosing.
+   */
+  selectForDiff: (side: DiffSide, sbomId: string) => void;
+  /** Exchanges the two sides, keeping whichever of them are chosen. */
+  swapDiffSides: () => void;
+  /** The last comparison run this session, or null when none has been. */
+  diffRun: DiffRun | null;
+  rememberDiffRun: (run: DiffRun) => void;
 
   // --- projects and folders (B19) --------------------------------------------------
 
@@ -171,6 +219,38 @@ export function SbomProvider({ children }: { children: ReactNode }) {
   // In-memory on purpose: see the note on SbomContextValue. Plain useState is enough
   // precisely because this must not survive a restart.
   const [inspectorTabs, setInspectorTabs] = useState<Record<string, InspectorTabs>>({});
+
+  // The comparison pair is where somebody is in this session, like the Inspector's tabs,
+  // rather than a preference. Keeping ids lets list reloads replace the SBOM objects without
+  // losing the pair or making it point at stale response objects.
+  const [diffIds, setDiffIds] = useState<Record<DiffSide, string | null>>({
+    left: null,
+    right: null,
+  });
+
+  // The result of the last comparison, dropped as soon as it stops describing the chosen
+  // pair. In memory on purpose, like the Inspector's tabs above.
+  const [diffRun, setDiffRun] = useState<DiffRun | null>(null);
+
+  const selectForDiff = useCallback((side: DiffSide, sbomId: string) => {
+    setDiffIds((current) => {
+      if (current[side] === sbomId) return current;
+      // No swap. Comparing a document with itself is a legitimate question — it answers
+      // all-unchanged — and a rule that quietly moved the other side made that unreachable.
+      setDiffRun(null);
+      return { ...current, [side]: sbomId };
+    });
+  }, []);
+
+  const swapDiffSides = useCallback(() => {
+    setDiffIds((current) => {
+      if (current.left === current.right) return current;
+      setDiffRun(null);
+      return { left: current.right, right: current.left };
+    });
+  }, []);
+
+  const rememberDiffRun = useCallback((run: DiffRun) => setDiffRun(run), []);
 
   const openInspectorTab = useCallback((sbomId: string, purl: string) => {
     setInspectorTabs((current) => {
@@ -267,7 +347,11 @@ export function SbomProvider({ children }: { children: ReactNode }) {
   }, [anyScanning, load]);
 
   const upload = useCallback(
-    async (files: File[], workspacePath?: string): Promise<UploadOutcome[]> => {
+    async (
+      files: File[],
+      workspacePath?: string,
+      folderId?: string,
+    ): Promise<UploadOutcome[]> => {
       const outcomes: UploadOutcome[] = [];
 
       // Sequential, not Promise.all. Each import is a transaction that writes a document to
@@ -275,7 +359,7 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       // the progress of another — which is the whole reason this reports per file.
       for (const file of files) {
         try {
-          const created = await uploadSbom(file, workspacePath);
+          const created = await uploadSbom(file, workspacePath, folderId);
           outcomes.push({ filename: file.name, sbomId: created.id });
         } catch (e) {
           outcomes.push({ filename: file.name, error: messageOf(e) });
@@ -307,6 +391,15 @@ export function SbomProvider({ children }: { children: ReactNode }) {
         delete next[id];
         return next;
       });
+      setDiffIds((current) => ({
+        left: current.left === id ? null : current.left,
+        right: current.right === id ? null : current.right,
+      }));
+      // A comparison naming a document that no longer exists cannot be re-run and cannot be
+      // exported, so it goes with the document rather than sitting there unexplained.
+      setDiffRun((current) =>
+        current && (current.leftId === id || current.rightId === id) ? null : current,
+      );
       await reload();
     },
     [reload],
@@ -315,6 +408,13 @@ export function SbomProvider({ children }: { children: ReactNode }) {
   const selected = useMemo(
     () => sboms.find((sbom) => sbom.id === selectedId) ?? null,
     [sboms, selectedId],
+  );
+  const diffSelection = useMemo<DiffSelection>(
+    () => ({
+      left: sboms.find((sbom) => sbom.id === diffIds.left) ?? null,
+      right: sboms.find((sbom) => sbom.id === diffIds.right) ?? null,
+    }),
+    [sboms, diffIds],
   );
 
   // --- projects and folders (B19) ---------------------------------------------------
@@ -431,6 +531,11 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       inspectorTabs,
       openInspectorTab,
       closeInspectorTab,
+      diffSelection,
+      selectForDiff,
+      swapDiffSides,
+      diffRun,
+      rememberDiffRun,
       folders,
       createFolder,
       renameFolder,
@@ -453,6 +558,11 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       inspectorTabs,
       openInspectorTab,
       closeInspectorTab,
+      diffSelection,
+      selectForDiff,
+      swapDiffSides,
+      diffRun,
+      rememberDiffRun,
       folders,
       createFolder,
       renameFolder,

@@ -3,6 +3,7 @@ package dev.sbomscope.scanner;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.Map;
 import java.util.UUID;
@@ -91,7 +92,7 @@ class SeverityBandTest {
     private int rowsIn(SeverityBand band) {
         return repository.countRows(sbomId,
                 new FindingQuery(FindingQuery.SortField.SEVERITY, false, null, false, false,
-                        EnumSet.of(band), null, null, null));
+                        EnumSet.of(band), null, false, false, null, null));
     }
 
     @Test
@@ -103,6 +104,32 @@ class SeverityBandTest {
         assertThat(counts.get(SeverityBand.MEDIUM)).as("6.9 and 4.0").isEqualTo(2);
         assertThat(counts.get(SeverityBand.LOW)).as("3.9 and 0.0").isEqualTo(2);
         assertThat(counts.get(SeverityBand.NONE)).as("the unscored advisory").isEqualTo(1);
+    }
+
+    @Test
+    void theJavaClassifierAgreesWithTheSql() {
+        // Two readings of one rule. BAND_EXPRESSION bands rows in SQL for the view, the counts
+        // and the export; SeverityBand.of bands rows already in hand, which the SBOM diff needs
+        // because it compares two documents' rows rather than querying a band. Nothing forces
+        // them to agree except this test, and a drift would show as the diff calling something
+        // critical that the table calls high — a disagreement between two screens about the
+        // same finding. The fixture places scores either side of every threshold, so a
+        // comparison flipped from >= to > fails here.
+        Map<SeverityBand, Integer> fromSql = repository.countsByBand(sbomId);
+
+        Map<SeverityBand, Integer> fromJava = new EnumMap<>(SeverityBand.class);
+        for (SeverityBand band : SeverityBand.values()) {
+            fromJava.put(band, 0);
+        }
+        for (FindingRow row : repository.rowsForSbom(sbomId, FindingQuery.everything())) {
+            fromJava.merge(SeverityBand.of(row.hasFinding(), row.severityScore()), 1, Integer::sum);
+        }
+
+        for (SeverityBand band : SeverityBand.values()) {
+            assertThat(fromJava.get(band))
+                    .as("SeverityBand.of and BAND_EXPRESSION must agree about %s", band)
+                    .isEqualTo(fromSql.getOrDefault(band, 0));
+        }
     }
 
     @Test
@@ -134,7 +161,7 @@ class SeverityBandTest {
 
     @Test
     void countsCleanComponentsToo() {
-        // The count appears on the "No vulnerabilities" filter chip, so it has to exist and
+        // The count appears on the "Clean" filter chip, so it has to exist and
         // has to mean what selecting that chip shows.
         assertThat(repository.countsByBand(sbomId).get(SeverityBand.CLEAN))
                 .isEqualTo(rowsIn(SeverityBand.CLEAN))

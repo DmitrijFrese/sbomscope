@@ -16,6 +16,7 @@ import org.springframework.stereotype.Repository;
 
 import dev.sbomscope.sbom.ParsedSbom.DependencyEdge;
 import dev.sbomscope.sbom.ParsedSbom.ParsedComponent;
+import dev.sbomscope.scanner.VersionOrder;
 
 /**
  * Storage for SBOMs, their components and the dependency graph.
@@ -53,6 +54,8 @@ public class SbomRepository {
                     rs.getString("version"),
                     rs.getString("purl"),
                     rs.getString("component_type"),
+                    rs.getString("maven_type"),
+                    rs.getString("maven_classifier"),
                     rs.getBoolean("is_root"),
                     DependencyScope.parse(rs.getString("dependency_scope")));
 
@@ -139,8 +142,8 @@ public class SbomRepository {
         jdbcTemplate.batchUpdate("""
                 INSERT INTO component
                     (id, sbom_id, bom_ref, group_name, name, version, purl, component_type,
-                     is_root, dependency_scope)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     version_sort, maven_type, maven_classifier, is_root, dependency_scope)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 components,
                 components.size(),
@@ -153,9 +156,76 @@ public class SbomRepository {
                     ps.setString(6, component.version());
                     ps.setString(7, component.purl());
                     ps.setString(8, component.type());
-                    ps.setBoolean(9, component.root());
-                    ps.setString(10, component.scope().name());
+                    ps.setString(9, VersionOrder.sortKey(component.version()));
+                    ps.setString(10, component.mavenType());
+                    ps.setString(11, component.mavenClassifier());
+                    ps.setBoolean(12, component.root());
+                    ps.setString(13, component.scope().name());
                 });
+    }
+
+    /**
+     * Fills version sort keys for rows written before V13 added their column.
+     *
+     * <p>Blank versions deliberately remain unfilled: {@link VersionOrder#sortKey} represents
+     * them as null, which is the final, honest value and must not make the row a candidate again
+     * at every application start.
+     */
+    int backfillVersionSortKeys() {
+        List<Object[]> updates = jdbc.sql("""
+                SELECT id, version FROM component
+                WHERE version_sort IS NULL
+                  AND version IS NOT NULL
+                  AND TRIM(version) <> ''
+                """)
+                .query((rs, row) -> new Object[] {
+                        VersionOrder.sortKey(rs.getString("version")),
+                        rs.getObject("id", UUID.class)})
+                .list();
+
+        if (updates.isEmpty()) {
+            return 0;
+        }
+        jdbcTemplate.batchUpdate(
+                "UPDATE component SET version_sort = ? WHERE id = ?", updates);
+        return updates.size();
+    }
+
+    /**
+     * Fills Maven qualifiers for rows written before V12 added their columns.
+     *
+     * <p>Only purls that actually name one of the two qualifiers are candidates. An absent
+     * qualifier is already represented honestly by NULL and must not be revisited on every
+     * application start merely because NULL is also its final value.
+     */
+    int backfillMavenCoordinates() {
+        List<Object[]> updates = jdbc.sql("""
+                SELECT id, purl FROM component
+                WHERE LOWER(purl) LIKE 'pkg:maven/%'
+                  AND (
+                    (maven_type IS NULL AND
+                      (LOWER(purl) LIKE '%?type=%' OR LOWER(purl) LIKE '%&type=%'))
+                    OR
+                    (maven_classifier IS NULL AND
+                      (LOWER(purl) LIKE '%?classifier=%' OR LOWER(purl) LIKE '%&classifier=%'))
+                  )
+                """)
+                .query((rs, row) -> {
+                    PurlQualifierParser.MavenQualifiers qualifiers =
+                            PurlQualifierParser.mavenQualifiers(rs.getString("purl"));
+                    return new Object[] {
+                            qualifiers.type(),
+                            qualifiers.classifier(),
+                            rs.getObject("id", UUID.class)};
+                })
+                .list();
+
+        if (updates.isEmpty()) {
+            return 0;
+        }
+        jdbcTemplate.batchUpdate(
+                "UPDATE component SET maven_type = ?, maven_classifier = ? WHERE id = ?", updates);
+        return updates.size();
     }
 
     public void insertEdges(UUID sbomId, List<DependencyEdge> edges) {

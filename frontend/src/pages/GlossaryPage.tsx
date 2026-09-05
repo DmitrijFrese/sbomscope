@@ -130,18 +130,19 @@ export function GlossaryPage() {
             own bands, derived from the number.
           </dd>
 
-          <dt>Unscored vs. No vulnerabilities</dt>
+          <dt>Unscored vs. Clean</dt>
           <dd>
             Deliberately separate filters. <strong>Unscored</strong> is a real vulnerability
-            whose advisory carries no CVSS score — unknown severity.{' '}
-            <strong>No vulnerabilities</strong> is a component with nothing known against it.
-            Merging them would let "we don't know how bad this is" read as "this is fine".
+            whose advisory carries no CVSS score — unknown severity. <strong>Clean</strong> is a
+            component with nothing known against it. Merging them would let "we don't know how
+            bad this is" read as "this is fine".
           </dd>
 
-          <dt>Never scanned vs. clean</dt>
+          <dt>Never scanned vs. Clean</dt>
           <dd>
             SBOMscope records that a component was checked even when nothing was found, so an
-            empty result can be told apart from one that was never looked at.
+            empty result can be told apart from one that was never looked at. Only a component
+            that was actually checked is <strong>Clean</strong>.
           </dd>
         </dl>
       </section>

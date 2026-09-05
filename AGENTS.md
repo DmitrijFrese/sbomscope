@@ -193,6 +193,17 @@ raising it with the maintainer first.
   future addition, and the call sites shouldn't care.
 - Cache entries carry a last-refreshed timestamp. Anything reading cached vulnerability
   data must be able to surface staleness to the UI.
+- **One reading of anything two screens can disagree about.** This is the convention that has
+  cost the most to learn and it now has four instances, each added after a copy appeared:
+  `VersionOrder.sortKey` builds its key from the comparator's own parse; `SeverityBand.of`
+  states the CVSS thresholds beside the SQL that must match it (pinned by a test that walks a
+  fixture asserting they classify every row identically); `SeverityBand.label()` states the six
+  band names for the whole backend; and `AdvisoryLinks` states where an advisory identifier
+  points, so the findings table, the diff and the workbook cannot send a reader to three
+  different pages. The frontend's `SEVERITY_LABELS` is the one unavoidable copy, because it is
+  on the other side of the wire. **When something needs a second reading of a rule, move the
+  rule rather than copying it** — and if it cannot be moved, write a test that fails when the
+  two drift.
 
 ## Repository layout
 
@@ -205,11 +216,21 @@ frontend/               React + Vite UI
     api/client.ts       fetch wrapper, response types, query/export URL building
     components/         shell pieces, settings panel, purl display helpers
       SearchField.tsx   the one search box: regex toggle, negation toggle, and how a rejected
-                        pattern is reported. Four fields use it, and the meaning of those
-                        controls is the same claim in all four — copies would be four places
-                        for it to drift
-    pages/              one component per route
-    sboms/              SbomProvider: uploaded SBOMs, the current selection, and the
+                        pattern is reported. Five fields use it now (the diff is the fifth),
+                        and the meaning of those controls is the same claim in all of them —
+                        copies would be five places for it to drift
+      SidebarResizer.tsx  the draggable sidebar boundary (B21). Pointer capture, not mouse
+                        events, and it overlays the seam rather than taking a grid column
+      SbomSummary.tsx   what a document says about itself — name, date, component count, spec
+                        version, severity chips — shared by the sidebar card and the diff's
+                        two selection cards. Presentational only; the sidebar's own card adds
+                        the button, the drag handles, the badges and the row menu
+      folderName.tsx    the 256-character cap and its counter. Shared because the name field
+                        exists twice: the tree's rename/new-subfolder field and the sidebar's
+                        top-level project form
+    pages/              one component per route, DiffPage included
+    sboms/              SbomProvider: uploaded SBOMs, the current selection, the diff's
+                        left/right pair *and the comparison it produced*, and the
                         Component Inspector's open tabs per SBOM — in-memory above the
                         router, so they survive navigation but deliberately not a restart
     findings/           severity-band, KEV and EPSS presentation shared by the table and the
@@ -232,6 +253,9 @@ backend/                Spring Boot application, produces the runnable jar
     exploit/            CISA KEV and FIRST EPSS (Phase 3): the two bulk feeds, their loaders
                         and ExploitSignals, joined onto a finding by CVE — see ARCHITECTURE.md
     probe/              the Maven probe (Phase 8 Tier 2) — see ARCHITECTURE.md
+    diff/               SBOM Diff (B24): pairs two documents' rows over the shared findings
+                        query, refusing to guess a pairing where either side holds a library
+                        at several versions
     reachability/       module-scoped WALA discovery, worker process, evidence and persistence
     settings/           user-editable settings
     logging/            the activity log (~/.sbomscope/logs/activity.jsonl) and the
@@ -297,6 +321,48 @@ Things that will bite otherwise:
   the comma as an argument-list separator before Maven sees it.
 - **Never rewrite source files with a PowerShell regex pass.** PowerShell 5.1 reads as ANSI, so
   a round-trip mangles every non-ASCII character and adds a BOM. Edit the file properly.
+- **Bumping the project version means editing three poms, and Maven does not complain when you
+  edit one.** The parent's `<version>` is the release number; both module poms repeat it in
+  their `<parent>` block. Change only the parent and the build still succeeds — Maven falls
+  back from the mismatched `relativePath` to whatever version is installed in the local
+  repository, so the modules quietly keep building as the *old* version. Nothing fails; the jar
+  simply reports the version you thought you had changed. The application's own version comes
+  from `BuildProperties` through `GET /api/status`, which is where a stale bump surfaces: the
+  top menu still shows the old number. `frontend/package.json` carries the same number for npm
+  and is worth keeping in step. The committed
+  `backend/src/test/resources/sboms/maven-sbomscope.cdx.json` fixture names the version it was
+  generated against — that is test data recording a real build, and it is **not** part of a
+  version bump.
+- **A running Vite dev server makes `mvn package` fail, and the error names neither.** The dev
+  server holds `frontend/node_modules/@rolldown/binding-win32-x64-msvc/rolldown-binding.node`
+  open, so the build's `npm ci` cannot unlink it and stops with `EPERM … unlink`. It reads like
+  a permissions problem and is not: stop the dev server, then build. This is the mirror image
+  of the jar lock above — **the two verification tools each hold a file the build wants.**
+
+### Which command to run
+
+`mvn clean package` is the full loop and the slowest. Three narrower ones are worth knowing,
+because the full loop is often unavailable — the maintainer's application may be holding the
+jar, and a dev server may be holding the rolldown binding:
+
+| Command | What it covers | When |
+|---|---|---|
+| `mvn -o -pl backend test` | the whole backend suite, offline, no npm, no `clean` | any backend change that does not touch `src/main/resources` |
+| `mvn -o -pl backend clean test` | the same, with resources rebuilt | after adding or editing a migration or anything else under `src/main/resources` |
+| `npm --prefix frontend test` and `npm --prefix frontend run typecheck` | the frontend suite and the typecheck the build runs | any frontend change |
+
+`-pl backend` resolves the frontend artifact from the local repository rather than rebuilding
+it, so it needs neither Node nor the network. **It is the safe check to hand a delegate**, since
+it cannot collide with a running application.
+
+**It stops working the moment the version changes**, and the error names the wrong culprit:
+`Cannot access central … in offline mode and the artifact dev.sbomscope:sbomscope-frontend:jar:<new
+version> has not been downloaded from it before`. Nothing is missing from Central — that jar is
+this repository's own frontend module, and the new version has simply never been installed
+locally. Add `-am` to build it from source in the same run (`mvn -o -pl backend -am test`), or
+run the full reactor once. Worth knowing before it is read as a network problem on a machine
+that is deliberately offline. Reach for the full `mvn clean package` when you
+need the jar itself — which you do before any check against the running product.
 
 ## Testing
 
@@ -310,6 +376,9 @@ so they exercise the quirks those tools actually emit. All live in
 | `npm-frontend.cdx.json` | `npm --prefix frontend sbom --sbom-format cyclonedx` — CycloneDX 1.5, 29 components |
 | `osv-report-maven.json` | osv-scanner v2.4.0 scanning the Maven fixture |
 | `vuln-multi-module.cdx.json` | An adversarial two-module Maven aggregate (see below) — CycloneDX 1.6, 62 components |
+| `maven-classifiers.cdx.json` | An adversarial project carrying Maven type and classifier qualifiers — `test-jar`/`tests`, `sources`, `pom` — built for B25, since SBOMscope's own tree has none |
+| `osv-report-aliased-group.json` | An osv-scanner report whose advisory names a different group alias than the component does |
+| `osv-report-npm-branches.json` | An osv-scanner report over npm packages with several fix branches |
 | `exploit/kev-excerpt.json` | Six entries lifted verbatim from CISA's catalogue of 2026-07-29, two of them ransomware-confirmed |
 | `exploit/epss-excerpt.csv.gz` | Eight real EPSS lines as FIRST published them on 2026-07-31, comment header included |
 
@@ -358,6 +427,27 @@ a cell claims* — the three empty states a KEV cell has to keep apart, the nume
 probability. Anything to do with layout, measurement, visibility or the rendering loop stays a
 browser check, because the traps recorded below (`requestAnimationFrame`, `ResizeObserver`,
 `prefers-color-scheme`) apply at least as strongly in jsdom, which has no layout at all.
+
+**jsdom does not apply the CSS cascade, and that is a whole class of defect no unit test in
+this repository can see.** A test can assert that an element carries the right class and the
+right custom property — and both can be correct while the rule never applies, because some
+other selector wins. It happened on 2026-09-05 with the severity chips: `.chip--filtered` set
+`background-image`, `.chip[aria-pressed="true"]` set the `background` *shorthand*, and at
+(0,2,0) against (0,1,0) the shorthand won regardless of source order, so the fill was invisible
+on exactly the chips that were selected. The passing test asserted the class. **Anything whose
+failure mode is "renders wrong" rather than "returns wrong" is verified by reading
+`getComputedStyle` in the running application**, and a shorthand property (`background`,
+`font`, `border`) declared anywhere near a longhand one is the first place to look.
+
+**And `getComputedStyle` is not the end of it — it verifies the mechanism, not the
+perception.** The same chip fill was then rebuilt twice more with a provably correct percentage
+in the computed style, and was invisible both times: once for contrast, once because the mark
+was four pixels wide inside a pill's clipped corner. The maintainer reported it as a wrong
+*number* on both occasions, because that is what an unreadable graphic gets read as. **Look at
+it rendered, at a size where a human eye could judge it** — `element.style.zoom` on the
+container is enough when the automation pane renders too small — and, before encoding a
+quantity as a length at all, check the smallest ratio the real data produces against the pixels
+available to draw it in.
 
 Two things that cost time when the suite was added. **Testing Library's automatic cleanup only
 registers when `globals: true` is set** — without it every render stacks into one
@@ -467,7 +557,39 @@ parent the test owns, never to the top level.
   is now an unchecked `RuntimeException` — so `readValue` declares no checked exception
   and catching `IOException` around it is a compile error. Annotations are the
   exception to the rename: `@JsonProperty` and friends stay at
-  `com.fasterxml.jackson.annotation`.
+  `com.fasterxml.jackson.annotation`. Methods were renamed too, not only packages:
+  `JsonNode.findValuesAsText` is now `findValuesAsString`, and `asText()` is `asString()`.
+  The old names simply do not exist, so this surfaces as "symbol not found" on a line that
+  looks like ordinary Jackson.
+
+- **A component's `coordinates()` is its matching identity, and `displayCoordinates()` is what
+  a reader sees. They are not interchangeable, and conflating them silently loses findings.**
+  `ScanService.scannerNamesFor` registers each component under `coordinates()`, and osv-scanner
+  reports Maven packages as `group:artifact` and nothing else. B25 briefly extended
+  `coordinates()` itself to carry the non-default Maven type and classifier, so a component
+  with a classifier claimed the name `tools.jackson.core:jackson-databind:sources` — which no
+  report ever contains. It matched nothing and came back **clean**, which is worse than the
+  collision B25 was fixing, and the entire backend suite stayed green because nothing tested
+  scanner matching for a classifier component.
+
+  The same method reaches `MavenArtifact.fromCoordinates` through `GraphNode`, so the extended
+  form would also have sent the Maven probe after an artifact that does not exist. Pinned by
+  `ScannerPackageNameTest.neverOffersTheMavenTypeOrClassifier`, which asserts the plain and
+  classifier artifacts claim the **same** scanner name — that shared name is exactly what lets
+  one advisory attach to both. Anything that matches, resolves or probes uses `coordinates()`;
+  anything a person reads uses `displayCoordinates()`.
+
+- **H2 rejects several `ADD COLUMN` clauses in one `ALTER TABLE`.** `ALTER TABLE t ADD COLUMN a
+  VARCHAR(8), ADD COLUMN b VARCHAR(8)` fails Flyway at startup with a syntax error quoting the
+  whole file, comments included, which reads like a corrupt migration rather than a dialect
+  limit. V3 and V8 already write one statement per column; follow them.
+
+- **`FindingRow`'s convenience constructor splits coordinates on colons, and there are now more
+  than two.** It derives `group` and `name` from the display string, so the group ends at the
+  first colon and the name at the second — `g:a:test-jar:tests` is group `g`, artifact `a`.
+  Reading from the last colon (as it did before B25) or taking everything after the first both
+  produce values that do not exist. The query path is unaffected: it reads `group_name` and
+  `name` from their own columns.
 
 - **`-parameters` is set explicitly in the parent POM — leave it there.** This project
   imports the Spring Boot BOM rather than inheriting `spring-boot-starter-parent`, so it

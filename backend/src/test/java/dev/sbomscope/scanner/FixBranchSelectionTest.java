@@ -3,7 +3,6 @@ package dev.sbomscope.scanner;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
@@ -34,8 +33,8 @@ class FixBranchSelectionTest {
     private VulnerabilityFinding findingFor(String version) throws Exception {
         List<VulnerabilityFinding> findings = parser.parse(report(version),
                 key -> key.name().equals("@angular/common")
-                        ? Optional.of("pkg:npm/%40angular/common@" + version)
-                        : Optional.empty());
+                        ? List.of("pkg:npm/%40angular/common@" + version)
+                        : List.of());
 
         assertThat(findings).as("the advisory must be reported for %s", version).hasSize(1);
         return findings.getFirst();

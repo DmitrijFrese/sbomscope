@@ -32,6 +32,12 @@ interface ViewOptionsMenuProps {
  * describes. It is also the narrower control of the two: severity decides whether a row is
  * worth reading at all, scope decides what you could do about it.
  *
+ * <p><b>The duplicated-libraries filter is deliberately not here</b>, on the maintainer's
+ * call (2026-09-05). It was built into this menu and moved out after use: unlike scope, it is
+ * a question someone asks and then answers — switched on, read, switched off — rather than a
+ * standing preference, and a control used that way should not cost two clicks and a menu to
+ * reach. It is one chip rather than a row of them, so the exception above still holds.
+ *
  * <p>Opens on click, closes on Escape or outside click, like the export menu beside it.
  */
 export function ViewOptionsMenu({

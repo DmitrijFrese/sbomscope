@@ -23,6 +23,8 @@ public record ExportDescription(
          * findings and looks identical to a complete one otherwise.
          */
         String scopeFilter,
+        String duplicateFilter,
+        String worstPerVersionFilter,
         String textFilter,
         String columns) {
 
@@ -37,6 +39,8 @@ public record ExportDescription(
                 sortDescription(query),
                 severityDescription(query),
                 scopeDescription(query),
+                duplicateDescription(query),
+                worstPerVersionDescription(query),
                 textFilterDescription(query),
                 columnDescription(columns));
     }
@@ -75,10 +79,25 @@ public record ExportDescription(
                 .toList());
     }
 
+    private static String duplicateDescription(FindingQuery query) {
+        return query.duplicatesOnly()
+                ? "only library identities present at more than one version"
+                : "all libraries";
+    }
+
+    private static String worstPerVersionDescription(FindingQuery query) {
+        return query.worstPerVersion()
+                ? "one worst finding per exact component version"
+                : "all findings per component version";
+    }
+
     private static String sortDescription(FindingQuery query) {
         String direction = query.ascending() ? "ascending" : "descending";
         return switch (query.sort()) {
             case COMPONENT -> "Component, " + direction;
+            // "as a version" is worth the four words: a reader who knows lexical ordering puts
+            // 1.10.0 before 1.9.0 would otherwise have to check whether this column did too.
+            case VERSION -> "Version, " + direction + " as a version (no version last)";
             case SEVERITY -> "Severity, " + direction;
             // Named as it is labelled on screen, and the null rule stated: a reader looking at
             // a descending export should not have to work out why the blanks are at the bottom.
@@ -102,14 +121,7 @@ public record ExportDescription(
             return "every band, including components with no vulnerabilities";
         }
         List<String> names = query.severities().stream()
-                .map(band -> switch (band) {
-                    case CRITICAL -> "Critical";
-                    case HIGH -> "High";
-                    case MEDIUM -> "Medium";
-                    case LOW -> "Low";
-                    case NONE -> "Unscored";
-                    case CLEAN -> "No vulnerabilities";
-                })
+                .map(FindingQuery.SeverityBand::label)
                 .toList();
         return String.join(", ", names);
     }

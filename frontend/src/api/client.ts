@@ -514,11 +514,22 @@ export function fetchUpgradeAdvice(sbomId: string, purl: string): Promise<Upgrad
   );
 }
 
-export function uploadSbom(file: File, workspacePath?: string): Promise<Sbom> {
+/**
+ * @param folderId files the document into a project or folder as it arrives; omitted leaves
+ *                 it at the top level, which is what an import started from the header does
+ */
+export function uploadSbom(
+  file: File,
+  workspacePath?: string,
+  folderId?: string,
+): Promise<Sbom> {
   const form = new FormData();
   form.append('file', file);
   if (workspacePath && workspacePath.trim()) {
     form.append('workspacePath', workspacePath.trim());
+  }
+  if (folderId) {
+    form.append('folderId', folderId);
   }
 
   // No Content-Type header: the browser must set the multipart boundary itself.
@@ -897,6 +908,7 @@ export interface FindingRow {
  */
 export type SortField =
   | 'COMPONENT'
+  | 'VERSION'
   | 'SEVERITY'
   | 'FIXED_VERSION'
   | 'SCOPE'
@@ -923,7 +935,10 @@ export const SEVERITY_LABELS: Record<SeverityBand, string> = {
   MEDIUM: 'Medium',
   LOW: 'Low',
   NONE: 'Unscored',
-  CLEAN: 'No vulnerabilities',
+  // "Clean" rather than "No vulnerabilities": the long form spent a whole filter chip's width
+  // saying what one word says, and the Glossary carries the distinction from Unscored. The
+  // backend's FindingQuery.SeverityBand.label() holds the same six strings for the workbooks.
+  CLEAN: 'Clean',
 };
 
 export interface FindingQuery {
@@ -954,6 +969,10 @@ export interface FindingQuery {
    * interested in, so this narrows rather than opening pre-narrowed.
    */
   scopes: DependencyScope[];
+  /** Show only library identities that occur at more than one version in this SBOM. */
+  duplicatesOnly: boolean;
+  /** Keep only the worst finding for each exact component version (purl). */
+  worstPerVersion: boolean;
   pageSize: number;
   page: number;
 }
@@ -1002,6 +1021,8 @@ export interface ScanStatus {
    * that sum.
    */
   severityCounts: Partial<Record<SeverityBand, number>>;
+  /** Rows per band after every current filter except severity selection itself. */
+  filteredSeverityCounts: Partial<Record<SeverityBand, number>>;
   /** Rows matching the current filter — the size an unpaged export would have. */
   filteredCount: number;
   /**
@@ -1015,6 +1036,90 @@ export interface ScanStatus {
   exploitFeedsLoaded: string[];
   /** The current page only. */
   rows: FindingRow[];
+}
+
+export type DiffChange = 'ADDED' | 'REMOVED' | 'VERSION_CHANGED' | 'UNCHANGED';
+
+export interface DiffSide {
+  /** Null when the source component did not carry a package URL. */
+  purl: string | null;
+  version: string | null;
+  counts: Partial<Record<SeverityBand, number>>;
+  /** CVE ids where the advisory has one, the OSV id where it does not. */
+  cveIds: string[];
+  /**
+   * Where each of those identifiers points, keyed by the identifier.
+   *
+   * A map rather than a parallel array, and built by the backend's `AdvisoryLinks` rather than
+   * from a template here: a CVE goes to NVD and an OSV-only advisory to osv.dev, and the diff
+   * must not be free to send a reader somewhere the findings table does not.
+   */
+  advisoryUrls: Record<string, string>;
+}
+
+export interface DiffRow {
+  coordinates: string;
+  group: string | null;
+  name: string;
+  left: DiffSide | null;
+  right: DiffSide | null;
+  change: DiffChange;
+}
+
+export interface DiffResult {
+  rows: DiffRow[];
+  summary: {
+    changes: Record<DiffChange, number>;
+    cveIdsGained: number;
+    cveIdsLost: number;
+  };
+}
+
+export type DiffSort = 'COORDINATES' | 'CHANGE';
+
+export interface DiffFilter {
+  sort: DiffSort;
+  ascending: boolean;
+  filter: string;
+  regex: boolean;
+  negate: boolean;
+}
+
+export function fetchDiff(
+  leftId: string,
+  rightId: string,
+  query: DiffFilter,
+): Promise<DiffResult> {
+  const params = new URLSearchParams({ left: leftId, right: rightId });
+  params.set('sort', query.sort);
+  params.set('direction', query.ascending ? 'asc' : 'desc');
+  // A regular expression keeps meaningful edge whitespace; literal typing artefacts do not.
+  const filter = query.regex ? query.filter : query.filter.trim();
+  if (filter) {
+    params.set('filter', filter);
+    if (query.regex) params.set('regex', 'true');
+    if (query.negate) params.set('negate', 'true');
+  }
+  return request<DiffResult>(`/diff?${params}`);
+}
+
+/** A plain download link; the browser owns the response filename and save flow. */
+export function diffExportUrl(
+  leftId: string,
+  rightId: string,
+  query: DiffFilter,
+  scope: 'visible' | 'all',
+): string {
+  const params = new URLSearchParams({ left: leftId, right: rightId, scope });
+  params.set('sort', query.sort);
+  params.set('direction', query.ascending ? 'asc' : 'desc');
+  const filter = query.regex ? query.filter : query.filter.trim();
+  if (filter) {
+    params.set('filter', filter);
+    if (query.regex) params.set('regex', 'true');
+    if (query.negate) params.set('negate', 'true');
+  }
+  return `/api/diff/export.xlsx?${params}`;
 }
 
 /**
@@ -1048,6 +1153,12 @@ function queryParams(query: FindingQuery, scopeParam = 'scope'): URLSearchParams
   // had deliberately selected every band.
   query.severities.forEach((band) => params.append('severity', band));
   query.scopes.forEach((scope) => params.append(scopeParam, scope));
+  if (query.duplicatesOnly) {
+    params.set('duplicatesOnly', 'true');
+  }
+  if (query.worstPerVersion) {
+    params.set('worstPerVersion', 'true');
+  }
   return params;
 }
 
@@ -1071,8 +1182,8 @@ export function fetchFindings(sbomId: string, query: FindingQuery): Promise<Scan
  *
  * @param sbomId         the document being exported
  * @param query          sort, filter and scope selection, shared with the view
- * @param scope          'visible' reproduces the current page, filter and sort; 'all' keeps
- *                        only the sort and exports every finding.
+ * @param scope          'visible' reproduces the current page, filter and sort; 'all' removes
+ *                        text and paging while keeping the explicit row selections.
  * @param visibleColumns absent exports every column; a list restricts the workbook to those
  */
 export function exportUrl(

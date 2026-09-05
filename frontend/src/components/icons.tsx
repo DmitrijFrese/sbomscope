@@ -59,6 +59,20 @@ export function ComponentIcon(props: IconProps) {
   );
 }
 
+/** Two documents with changes travelling in both directions: the SBOM Diff view. */
+export function DiffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 4.5h6v15h-6z" />
+      <path d="M14.5 4.5h6v15h-6z" />
+      <path d="M9.5 9h5" />
+      <path d="M12.5 6.8L14.7 9l-2.2 2.2" />
+      <path d="M14.5 15h-5" />
+      <path d="M11.5 12.8L9.3 15l2.2 2.2" />
+    </Icon>
+  );
+}
+
 export function FilesIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -129,6 +143,17 @@ export function DownloadIcon(props: IconProps) {
     <Icon {...props}>
       <path d="M12 3v11" />
       <path d="M8 10.5l4 4 4-4" />
+      <path d="M4.5 17v2.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V17" />
+    </Icon>
+  );
+}
+
+/** {@link DownloadIcon} reversed: documents going into the folder rather than coming out. */
+export function UploadIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 14V3" />
+      <path d="M8 6.5l4-4 4 4" />
       <path d="M4.5 17v2.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V17" />
     </Icon>
   );

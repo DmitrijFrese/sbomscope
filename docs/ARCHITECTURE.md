@@ -52,6 +52,8 @@ sbom                     an uploaded document
 component                one library within one SBOM
   id, sbom_id → sbom, bom_ref, group_name, name, version, purl,
   component_type, is_root, dependency_scope
+  maven_type, maven_classifier                                          (V12)
+  version_sort                                                          (V13)
   UNIQUE (sbom_id, bom_ref)
 
 component_dependency     the dependency graph
@@ -306,10 +308,12 @@ screens. `FindingRow.hasFinding()` distinguishes them.
 | Band | Meaning |
 |---|---|
 | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` | Standard CVSS bands, by numeric score |
-| `NONE` | A **real vulnerability** whose advisory carries no CVSS score |
-| `CLEAN` | A component with **no known vulnerability** |
+| `NONE` | A **real vulnerability** whose advisory carries no CVSS score. Shown as *Unscored* |
+| `CLEAN` | A component with **no known vulnerability**. Shown as *Clean* |
 
-`NONE` and `CLEAN` must never be merged. Doing so would let *"we don't know how bad this
+The six display names are stated once per side of the wire — `SeverityBand.label()` in Java,
+`SEVERITY_LABELS` in the frontend — because they had drifted into private copies in two
+exporters. `NONE` and `CLEAN` must never be merged. Doing so would let *"we don't know how bad this
 is"* render identically to *"this is fine"*. The default filter is every band except
 `CLEAN`, so the view opens on what needs attention.
 
@@ -317,17 +321,42 @@ Ordering has to cope with all three kinds of row. `VulnerabilityRepository.order
 ranks scored findings first, then unscored findings, then clean components, so findings
 are never buried regardless of sort direction.
 
+**Two count maps travel with a findings response, and they answer different questions.**
+`severityCounts` is the whole document, unfiltered — the headline, which must not move with a
+filter or it stops being able to describe the SBOM. `filteredSeverityCounts` is what the current
+selection leaves, and it respects every filter **except the severity bands themselves**: a
+band's own count answers *what would ticking this put on screen*, which it could not do if it
+collapsed to zero whenever that band was unticked. The chips show the second number and name the
+first beside it while the two differ (`Critical 2 of 41`). A proportional fill was tried for that
+denominator and abandoned — see the 2026-09-06 decision-log entry, which is really about
+encoding a small ratio as a length.
+
 ### One query object
 
 `FindingQuery` carries sort, direction, text filter, **whether that filter is a regular
 expression**, **whether it excludes rather than selects**, severity bands, **dependency
-scopes**, limit and offset. The view, the row counts and the export all pass through the same
-object into the same SQL, which is what guarantees an exported spreadsheet matches the screen it
-came from. Do not add a second code path that sorts or filters independently.
+scopes**, **duplicates-only** (B23), **worst-per-version** (B27a), limit and offset. The view,
+the row counts and the export all pass through the same object into the same SQL, which is what
+guarantees an exported spreadsheet matches the screen it came from. Do not add a second code
+path that sorts or filters independently.
 
-`SortField` has six values, and three of them needed something the schema did not have.
-`FIXED_VERSION` orders by `fixed_version_sort` (V3), a lexically-sortable encoding of the
-version — see below. `SCOPE` orders by an explicit `CASE` ranking APPLICATION, DIRECT,
+**A selection clause must be applied at all four sites** — `rowsForSbom`, `countRows`,
+`findingsForSbom`, `countFindings` — plus the filter-aware band counts. Missing one is the
+characteristic failure here: the build stays green, the screen looks right, and the pager or
+the export silently stops agreeing with it.
+
+**The two selection filters compose in a stated order.** Text, scope and duplicates select
+rows; *then* worst-per-version keeps one row per exact component purl, chosen by the Severity
+column's own ordering with publication date, CVE id and OSV id as tie-breakers; *then* the
+severity bands decide what is visible. The collapse deliberately precedes the band selection,
+so a component's representative row does not change identity as bands are toggled — and so the
+per-band counts on the chips cannot depend on their own selection.
+
+`SortField` now has nine values, and four of them needed something the schema did not have.
+`VERSION` orders by `component.version_sort` (V13) and `FIXED_VERSION` by
+`fixed_version_sort` (V3) — both lexically-sortable encodings of a version, produced by
+`VersionOrder.sortKey` from the comparator's own parse, and both putting absent values last in
+*either* direction. `SCOPE` orders by an explicit `CASE` ranking APPLICATION, DIRECT,
 TRANSITIVE, stated rather than left to alphabetical coincidence. `GHSA_RATING` orders by another
 `CASE` over GitHub's own words — note the middle band is `MODERATE`, not `MEDIUM` — and is not a
 duplicate of `SEVERITY`, which orders by the numeric CVSS score; the two genuinely disagree,
@@ -415,6 +444,54 @@ and must not answer "which fix is furthest away".
 `FixedVersionSortBackfill` fills the key in once after startup for findings written before V3.
 A null key would otherwise sort as though the advisory named no fix, which is a false statement
 about an advisory rather than a cosmetic mis-ordering.
+
+**The same machinery, applied to the component's own version by V13.** `component.version_sort`
+is written at import from the same `VersionOrder.sortKey`, backfilled after startup by
+`ComponentVersionSortBackfill`, and read by `SortField.VERSION`. Neither key is ever computed in
+SQL: reimplementing the parse in a migration would be exactly the second reading of a version
+this design exists to remove.
+
+### Comparing two documents
+
+`DiffService` pairs two SBOMs over the **existing findings query** —
+`rowsForSbom(id, FindingQuery.everything())`, the same path the view and the export share —
+rather than a cross-document SQL join, which would have been a second reading of what a row is.
+
+Three rules carry the design:
+
+- **The pairing rule.** One version each side pairs into a change; where either side holds a
+  library at several versions, nothing is guessed — those stay one row per version, added or
+  removed on their own terms.
+- **The summary describes the whole comparison, not the filtered rows**, so it can be used to
+  judge what a filter hid. Whatever presents it has to say so, or it reads as a count of what
+  is on screen.
+- **Bands are classified in Java here**, by `SeverityBand.of` — the diff holds rows it has
+  already fetched rather than asking the database for a band. That is why the thresholds needed
+  a single Java statement beside the SQL, and why a test walks a fixture asserting the two
+  classify every row identically.
+
+Each side also carries `advisoryUrls`, a map from advisory identifier to its destination, built
+by `AdvisoryLinks` so the diff cannot point a reader somewhere the findings table does not — a
+CVE to NVD, an OSV-only advisory to osv.dev. The workbook prints the same identifiers unlinked,
+because a spreadsheet cell takes one hyperlink and a diff cell holds several.
+
+**Ordering is part of the query, not of the page.** `DiffSort` is `COORDINATES` (group then
+artifact, the default and the original order) or `CHANGE`, and both endpoints take it as
+`sort`/`direction` exactly as the findings endpoints do. `CHANGE` ranks by the enum's own
+declaration order — `ADDED`, `REMOVED`, `VERSION_CHANGED`, `UNCHANGED`, which is the order the
+summary lists them in, so the table and the summary agree about what "first" means — and
+**descending reverses the change groups only, leaving coordinates ascending inside each**,
+because reversing the secondary key too makes the list unreadable. Every ordering ends with the
+two version keys, so equal coordinates cannot shuffle between renderings. Applied here rather
+than in the browser for the same reason the filter is: the workbook has to reproduce the screen,
+and it records the applied sort on its provenance sheet.
+
+The provenance sheet also carries **both documents' own totals** — components and
+vulnerabilities as before → after with the per-band breakdown — passed in from
+`ScanService.severityFor` rather than summed from the rows, because a `visible` export narrows
+the rows while those totals describe the documents. A side with no scan record prints why
+instead of a delta: zero findings and nobody looked are different statements, and subtracting
+them would turn that ambiguity into a confident number in a file somebody forwards.
 
 ---
 

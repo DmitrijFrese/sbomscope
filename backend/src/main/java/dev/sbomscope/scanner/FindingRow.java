@@ -75,17 +75,32 @@ public record FindingRow(
      * <p>Deliberately not used by the query path, which reads {@code group_name} and {@code name}
      * from their own columns — this exists so a caller holding only a display string (a test, or
      * anything building a row by hand) still produces a consistent record rather than two nulls.
-     * The last colon is the separator because a Maven artifact id cannot contain one, and an npm
-     * package with no scope has no colon at all.
+     * <p><b>The group ends at the first colon and the name at the second</b>, because since B25
+     * the display string can carry Maven's type and classifier after the artifact —
+     * {@code g:a:test-jar:tests}. Reading from the last colon, as this did until then, took
+     * {@code g:a:tests} to be group {@code g:a} and artifact {@code tests}; reading everything
+     * after the first takes the artifact to be {@code a:tests}. Neither is a value that exists.
+     * Both ends have to be bounded, and neither a Maven group nor an artifact id can contain a
+     * colon, so the boundaries are unambiguous. An npm package with no scope has no colon at
+     * all and is returned whole.
      */
     private static String groupOf(String coordinates) {
-        int separator = coordinates == null ? -1 : coordinates.lastIndexOf(':');
+        int separator = coordinates == null ? -1 : coordinates.indexOf(':');
         return separator < 0 ? null : coordinates.substring(0, separator);
     }
 
     private static String nameOf(String coordinates) {
-        int separator = coordinates == null ? -1 : coordinates.lastIndexOf(':');
-        return separator < 0 ? coordinates : coordinates.substring(separator + 1);
+        if (coordinates == null) {
+            return null;
+        }
+        int start = coordinates.indexOf(':');
+        if (start < 0) {
+            return coordinates;
+        }
+        int end = coordinates.indexOf(':', start + 1);
+        return end < 0
+                ? coordinates.substring(start + 1)
+                : coordinates.substring(start + 1, end);
     }
 
     public FindingRow {

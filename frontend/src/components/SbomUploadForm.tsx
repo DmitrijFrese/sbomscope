@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type { DragEvent, FormEvent } from 'react';
 
+import { buildFolderTree, flattenFolderOptions } from '../sboms/folderTree';
 import { useSboms } from '../sboms/SbomProvider';
 import type { UploadOutcome } from '../sboms/SbomProvider';
 
@@ -24,14 +25,29 @@ function formatSize(bytes: number): string {
  * browser decides and refuses to ellipsize, so inside a 280px sidebar it was simply cut off.
  * A dropzone also makes the obvious gesture work: several SBOMs have just been generated
  * into a folder the user is already looking at.
+ *
+ * <p>The destination is a dropdown rather than a fixed value even when the import was
+ * started from a folder's own menu, for the reason "Move to…" is a menu beside dragging:
+ * the row the action was opened from states the intent, and the form still has to show
+ * what it is about to do and let it be changed without being closed and reopened.
+ *
+ * @param initialFolderId the folder an import started from a folder row lands in; absent
+ *                        preselects the top level, which is what the header's button means
  */
-export function SbomUploadForm({ onDone }: { onDone: () => void }) {
-  const { upload } = useSboms();
+export function SbomUploadForm({
+  onDone,
+  initialFolderId,
+}: {
+  onDone: () => void;
+  initialFolderId?: string;
+}) {
+  const { upload, sboms, folders } = useSboms();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const [workspacePath, setWorkspacePath] = useState('');
+  const [folderId, setFolderId] = useState(initialFolderId ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcomes, setOutcomes] = useState<UploadOutcome[]>([]);
@@ -83,7 +99,7 @@ export function SbomUploadForm({ onDone }: { onDone: () => void }) {
     setError(null);
     setOutcomes([]);
     try {
-      const results = await upload(files, workspacePath);
+      const results = await upload(files, workspacePath, folderId || undefined);
       const failed = results.filter((result) => result.error);
 
       // The form closes only when there is nothing left to read. With a partial failure it
@@ -107,6 +123,10 @@ export function SbomUploadForm({ onDone }: { onDone: () => void }) {
   }
 
   const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  // The same flattened list the sidebar's "Move to…" offers, so a destination reads the same
+  // way in both places. No legality check is needed here: an SBOM may sit in any folder at
+  // any depth, which is what canMoveSbom already says.
+  const folderOptions = flattenFolderOptions(buildFolderTree(folders, sboms).roots);
 
   return (
     <form className="upload-form" onSubmit={submit}>
@@ -151,6 +171,23 @@ export function SbomUploadForm({ onDone }: { onDone: () => void }) {
             <span className="dropzone__hint">or click to browse — several at once is fine</span>
           </>
         )}
+      </label>
+
+      <label className="field">
+        <span className="field__label">Import into</span>
+        <select
+          value={folderId}
+          disabled={busy}
+          onChange={(event) => setFolderId(event.target.value)}
+        >
+          <option value="">Top level</option>
+          {folderOptions.map((option) => (
+            <option key={option.id} value={option.id}>
+              {'—'.repeat(option.depth)} {option.name}
+            </option>
+          ))}
+        </select>
+        <span className="field__hint">Applied to every file in this upload.</span>
       </label>
 
       <label className="field">

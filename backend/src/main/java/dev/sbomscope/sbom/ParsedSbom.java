@@ -31,6 +31,8 @@ public record ParsedSbom(
      * @param bomRef SBOM-internal identifier the dependency graph refers to
      * @param group  Maven groupId or npm scope; {@code null} for unscoped packages
      * @param purl   package URL, the identifier used later for vulnerability lookups
+     * @param mavenType Maven type qualifier exactly as declared; null when absent or not Maven
+     * @param mavenClassifier Maven classifier exactly as declared; null when absent or not Maven
      * @param root   true when this is the component the document describes
      * @param scope  your own code, something you declared, or something pulled in for you
      */
@@ -41,12 +43,15 @@ public record ParsedSbom(
             String version,
             String purl,
             String type,
+            String mavenType,
+            String mavenClassifier,
             boolean root,
             DependencyScope scope) {
 
         /** Before the graph has been walked; {@link ScopeClassifier} decides the real value. */
         ParsedComponent withScope(DependencyScope resolved) {
-            return new ParsedComponent(bomRef, group, name, version, purl, type, root, resolved);
+            return new ParsedComponent(bomRef, group, name, version, purl, type,
+                    mavenType, mavenClassifier, root, resolved);
         }
     }
 

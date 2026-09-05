@@ -206,6 +206,8 @@ public class CycloneDxParser {
     /** Scope is left at its weakest value here; {@link ScopeClassifier} sets the real one. */
     private ParsedComponent toParsed(CycloneDxDocument.Component component, boolean root) {
         String bomRef = component.bomRef() != null ? component.bomRef() : synthesiseRef(component);
+        PurlQualifierParser.MavenQualifiers qualifiers =
+                PurlQualifierParser.mavenQualifiers(component.purl());
         return new ParsedComponent(
                 bomRef,
                 component.group(),
@@ -213,6 +215,8 @@ public class CycloneDxParser {
                 component.version(),
                 component.purl(),
                 component.type(),
+                qualifiers.type(),
+                qualifiers.classifier(),
                 root,
                 DependencyScope.TRANSITIVE);
     }

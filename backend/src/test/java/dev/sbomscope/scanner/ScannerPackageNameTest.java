@@ -89,4 +89,33 @@ class ScannerPackageNameTest {
         assertThat(ScanService.scannerNamesFor(component("@angular", "common", "19.2.17"), "npm"))
                 .doesNotContain("common");
     }
+
+    @Test
+    void neverOffersTheMavenTypeOrClassifier() {
+        // B25 gave components a display form carrying the non-default Maven type and
+        // classifier, and briefly routed this method through it. osv-scanner reports Maven
+        // packages as group:artifact and nothing else, so "…:sources" matched no report at
+        // all and the classifier artifact came back clean — a worse outcome than the
+        // collision B25 exists to fix, and one a green build did not show.
+        //
+        // Both artifacts must claim the same scanner name: that is exactly what lets one
+        // advisory reach both, which is the fix.
+        StoredComponent plain = new StoredComponent(
+                UUID.randomUUID(), "ref", "tools.jackson.core", "jackson-databind", "3.1.4",
+                "pkg:maven/tools.jackson.core/jackson-databind@3.1.4?type=jar", "library",
+                "jar", null, false, DependencyScope.DIRECT);
+        StoredComponent sources = new StoredComponent(
+                UUID.randomUUID(), "ref", "tools.jackson.core", "jackson-databind", "3.1.4",
+                "pkg:maven/tools.jackson.core/jackson-databind@3.1.4?classifier=sources&type=jar",
+                "library", "jar", "sources", false, DependencyScope.DIRECT);
+
+        assertThat(ScanService.scannerNamesFor(sources, "Maven"))
+                .containsExactly("tools.jackson.core:jackson-databind");
+        assertThat(ScanService.scannerNamesFor(sources, "Maven"))
+                .isEqualTo(ScanService.scannerNamesFor(plain, "Maven"));
+
+        // The display form is where the classifier belongs, and it is a different string.
+        assertThat(sources.displayCoordinates())
+                .isEqualTo("tools.jackson.core:jackson-databind:sources");
+    }
 }

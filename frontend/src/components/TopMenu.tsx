@@ -3,11 +3,20 @@ import { NavLink } from 'react-router-dom';
 
 import { fetchServerStatus } from '../api/client';
 import type { ServerStatus } from '../api/client';
-import { BookIcon, BrandIcon, ComponentIcon, LogIcon, SettingsIcon, ShieldIcon } from './icons';
+import {
+  BookIcon,
+  BrandIcon,
+  ComponentIcon,
+  DiffIcon,
+  LogIcon,
+  SettingsIcon,
+  ShieldIcon,
+} from './icons';
 
 const NAV_ITEMS = [
   { to: '/vulnerabilities', label: 'Vulnerabilities', Icon: ShieldIcon },
   { to: '/component-inspector', label: 'Component Inspector', Icon: ComponentIcon },
+  { to: '/diff', label: 'SBOM Diff', Icon: DiffIcon },
   { to: '/monitoring', label: 'Monitoring', Icon: LogIcon },
   { to: '/glossary', label: 'Glossary', Icon: BookIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
