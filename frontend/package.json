@@ -1,6 +1,6 @@
 {
   "name": "sbomscope-frontend",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -28,5 +28,9 @@
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "react-router": "7.18.2"
   }
+
 }

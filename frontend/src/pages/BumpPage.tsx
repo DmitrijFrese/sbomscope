@@ -14,7 +14,7 @@ import {
   startSession,
   undo,
 } from '../bump/model';
-import type { BumpRow, Session, TextRange } from '../bump/model';
+import type { BumpPlan, BumpRow, Selection, Session, TextRange } from '../bump/model';
 import { SearchField } from '../components/SearchField';
 import { buildMatcher, rowMatches } from '../components/searchMatcher';
 import { useSboms } from '../sboms/SbomProvider';
@@ -26,6 +26,24 @@ function messageOf(error: unknown): string {
 function isMissingWorkspace(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409
     && /no workspace attached/i.test(error.message);
+}
+
+type ApplyVerdict = 'rebuild' | 'dirtyTree' | 'explicitOverride' | 'retry';
+
+// These mirror BumpApplyService's refusal messages. Keep the backend-facing wording together
+// so a new gate cannot accidentally look like a permanently failed one in the dialog.
+const applyRefusalMessages = {
+  rebuild: ['changed on disk', 'outside the workspace', 'Not writable', 'does not parse'],
+  dirtyTree: 'not clean',
+  explicitOverride: 'confirm explicitly',
+} as const;
+
+function applyVerdict(message: string): ApplyVerdict {
+  if (applyRefusalMessages.rebuild.some((refusal) => message.includes(refusal))) return 'rebuild';
+  if (message.includes(applyRefusalMessages.dirtyTree)) return 'dirtyTree';
+  if (message.includes(applyRefusalMessages.explicitOverride)) return 'explicitOverride';
+  // An unfamiliar refusal may be resolvable outside the application; do not take away retry.
+  return 'retry';
 }
 
 function HighlightedText({ text, ranges }: { text: string; ranges: TextRange[] }) {
@@ -69,6 +87,33 @@ function isSatisfied(row: BumpRow): boolean {
   }
   const compare = row.site.ecosystem === 'NPM' ? compareSemver : compareVersions;
   return compare(row.site.currentVersion, row.minimalTarget) >= 0;
+}
+
+function sessionForPlan(plan: BumpPlan): Session {
+  let next = startSession(plan);
+  const selections = plan.rows
+    .filter((row) => row.minimalTarget !== null && !isSatisfied(row)
+      && !row.site.rangeAdmitsFix
+      && !(row.site.versionRange === null && row.site.insertionPoint === null))
+    .map((row) => ({
+      row: rowKey(row.site),
+      version: row.minimalTarget!,
+      source: 'minimal' as const,
+    }));
+  if (selections.length > 0) next = apply(next, { kind: 'selectMany', selections });
+  return next;
+}
+
+function sameSelection(left: Selection, right: Selection): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) =>
+    left[key]?.version === right[key]?.version && left[key]?.source === right[key]?.source);
+}
+
+function wouldDiscardSessionWork(session: Session): boolean {
+  return Object.keys(session.state.files).length > 0
+    || !sameSelection(session.state.selection, sessionForPlan(session.state.plan).state.selection);
 }
 
 function npmLiteralFor(site: BumpRow['site'], version: string): string {
@@ -233,6 +278,7 @@ export function BumpPage() {
   const [applyError, setApplyError] = useState<string | null>(null);
   const [overrideGate, setOverrideGate] = useState(false);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
+  const [reloadGeneration, setReloadGeneration] = useState(0);
   // Session state, like the Component Inspector's finder: a filter is where you are in a task,
   // not a preference, and a stored one would silently hide rows on a later visit.
   const [filter, setFilter] = useState('');
@@ -281,18 +327,7 @@ export function BumpPage() {
     fetchBumpPlan(selected.id)
       .then((plan) => {
         if (cancelled) return;
-        let next = startSession(plan);
-        const selections = plan.rows
-          .filter((row) => row.minimalTarget !== null && !isSatisfied(row)
-            && !row.site.rangeAdmitsFix
-            && !(row.site.versionRange === null && row.site.insertionPoint === null))
-          .map((row) => ({
-            row: rowKey(row.site),
-            version: row.minimalTarget!,
-            source: 'minimal' as const,
-          }));
-        if (selections.length > 0) next = apply(next, { kind: 'selectMany', selections });
-        setSession(next);
+        setSession(sessionForPlan(plan));
         setOpenFile(plan.files[0]?.path ?? null);
       })
       .catch((reason: unknown) => {
@@ -307,7 +342,7 @@ export function BumpPage() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [selected?.id, selected?.workspacePath]);
+  }, [selected?.id, selected?.workspacePath, reloadGeneration]);
 
   useEffect(() => {
     if (!selected?.workspacePath || !session) return;
@@ -380,6 +415,24 @@ export function BumpPage() {
     ? session.state.files[shown.path] ?? shown.patched
     : '';
 
+  const reloadPlan = (afterApply = false) => {
+    if (!afterApply && session && wouldDiscardSessionWork(session)
+      && !window.confirm('Reload the plan and discard your selections and preview edits?')) return;
+    setConfirming(false);
+    setApplyError(null);
+    setOverrideGate(false);
+    setSession(null);
+    setPreview(null);
+    setOpenFile(null);
+    setError(null);
+    setLoading(true);
+    setReloadGeneration((generation) => generation + 1);
+  };
+  const refusalVerdict = applyError ? applyVerdict(applyError) : 'retry';
+  const cannotRetryApply = refusalVerdict === 'rebuild';
+  const applyButtonLabel = applying ? 'Writing…'
+    : refusalVerdict === 'dirtyTree' ? 'Try again' : 'Write files';
+
   if (!selected) {
     return <div className="empty-state">Select an SBOM from the sidebar to plan version bumps.</div>;
   }
@@ -393,7 +446,7 @@ export function BumpPage() {
 
   return (
     <>
-      <div className="page-header page-header--split">
+      <div className="page-header page-header--split bump-page__header">
         <div className="page-header__identity">
           <h1>Dependency updates</h1>
           <p>{selected.filename} · {selected.workspacePath}</p>
@@ -405,6 +458,8 @@ export function BumpPage() {
           <button type="button" className="button" disabled={!session?.canRedo}
             title={session?.redoLabel ?? undefined}
             onClick={() => setSession((current) => current ? redo(current) : current)}>Redo</button>
+          <button type="button" className="button" disabled={loading}
+            onClick={() => reloadPlan()}>Reload</button>
           <button
             type="button"
             className="button button--primary"
@@ -438,7 +493,12 @@ export function BumpPage() {
               ))}
             </ul>
             {applyError && <div className="notice notice--warn" role="alert">{applyError}</div>}
-            {applyError?.includes('confirm explicitly') && (
+            {cannotRetryApply && (
+              <p className="notice notice--warn">
+                Close this dialog, then Reload the plan before trying again.
+              </p>
+            )}
+            {refusalVerdict === 'explicitOverride' && (
               <label className="bump-confirm__override">
                 <input
                   type="checkbox"
@@ -450,11 +510,11 @@ export function BumpPage() {
             )}
             <div className="bump-confirm__actions">
               <button type="button" className="button" disabled={applying}
-                onClick={() => setConfirming(false)}>Cancel</button>
+                onClick={() => setConfirming(false)}>{cannotRetryApply ? 'Close' : 'Cancel'}</button>
               <button
                 type="button"
                 className="button button--primary"
-                disabled={applying}
+                disabled={applying || cannotRetryApply}
                 onClick={() => {
                   setApplying(true);
                   setApplyError(null);
@@ -466,6 +526,8 @@ export function BumpPage() {
                     .then((result) => {
                       setApplied(result);
                       setConfirming(false);
+                      // Apply changes every fingerprint in the plan, so this has no valid retry.
+                      reloadPlan(true);
                     })
                     .catch((cause: unknown) => {
                       setApplyError(cause instanceof ApiError
@@ -475,7 +537,7 @@ export function BumpPage() {
                     .finally(() => setApplying(false));
                 }}
               >
-                {applying ? 'Writing…' : 'Write files'}
+                {applyButtonLabel}
               </button>
             </div>
           </div>

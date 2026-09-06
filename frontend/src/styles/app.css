@@ -312,7 +312,11 @@ body {
 .app-main {
   min-width: 0;
   overflow: auto;
+  /* Published as a variable because a sticky page header has to cancel exactly this much to
+     cover the strip above it — see .bump-page__header. Two hard-coded copies would drift. */
+  --app-main-padding-top: var(--space-5);
   padding: var(--space-5);
+  padding-top: var(--app-main-padding-top);
 }
 
 /* ----------------------------------------------------------- top menu ---- */
@@ -983,6 +987,35 @@ body {
   gap: var(--space-3);
 }
 
+/* The plan can be longer than the viewport. Its actions remain available while its background
+   keeps rows from reading through the header; table headers use z-index 2, so this stays above. */
+.bump-page__header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: var(--space-3) 0;
+  background: var(--bg-canvas);
+}
+
+/* The scroll container carries top padding, and a sticky `top: 0` pins the header to the *padding*
+   box — so rows scrolled underneath stayed visible in the strip above it. Looking at the running
+   page is the only thing that showed this: the computed style says `position: sticky` and every
+   test passes either way.
+
+   Painted with a pseudo-element rather than a negative margin. The margin approach is the usual
+   advice and does not work here: the browser clamps the sticky offset against the border box, so
+   the header stayed put and only its padding grew. This adds no layout at all — it covers the
+   strip and nothing moves. The height comes from `.app-main`'s own variable, never a second copy. */
+.bump-page__header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(-1 * var(--app-main-padding-top));
+  height: var(--app-main-padding-top);
+  background: var(--bg-canvas);
+}
+
 .page-header__identity {
   flex: 1 1 260px;
   min-width: 0;
@@ -992,6 +1025,17 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+@media (max-width: 640px) {
+  /* A compact action row leaves the short viewport to the plan rather than its controls. */
+  .bump-page__header {
+    padding: var(--space-2) 0;
+  }
+
+  .bump-page__header .page-header__actions {
+    gap: var(--space-2);
+  }
 }
 
 /* Sits beside a disabled scan button and explains it. Constrained so a long path wraps

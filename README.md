@@ -180,8 +180,19 @@ A browser-based UI served by the local backend.
 
   It is equally willing to tell you **not** to change anything: a declaration already at the
   fixed version, an npm range that already permits the fix where only the lockfile is behind, or
-  a transitive whose parent pins it. Nothing you decide here is stored — it goes into your files
-  or nowhere.
+  a transitive whose parent pins it. Where an npm change does land, it says plainly that you must
+  run `npm install` afterwards — until you do, `package-lock.json` disagrees with the manifest and
+  `npm ci` refuses, which stops any build that uses it. Nothing you decide here is stored — it
+  goes into your files or nowhere.
+
+  A `.orig` backup is written beside every file it changes, and those are deliberately not
+  gitignored: in a git repository they show up as untracked files, so the backups announce
+  themselves rather than accumulating unseen. The side effect is that applying twice in a row
+  needs them cleared or committed in between, because the clean-tree gate sees them.
+
+  Undo, redo, reload and apply stay visible however long the plan is. Reload rebuilds the plan
+  from the files as they are now, which you need after editing them yourself — and it happens
+  automatically once an apply succeeds, since the files have just changed.
 
 ### Narrowing the vulnerability view
 

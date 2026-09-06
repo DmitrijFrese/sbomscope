@@ -6,7 +6,7 @@
 
   <groupId>dev.sbomscope</groupId>
   <artifactId>sbomscope-parent</artifactId>
-  <version>0.6.0</version>
+  <version>0.6.1</version>
   <packaging>pom</packaging>
 
   <name>SBOMscope</name>
@@ -84,6 +84,16 @@
         <groupId>tools.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
         <version>${jackson-databind.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-api</artifactId>
+        <version>2.25.5</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-core</artifactId>
+        <version>11.0.25</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

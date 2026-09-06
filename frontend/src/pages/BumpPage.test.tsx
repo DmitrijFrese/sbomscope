@@ -108,6 +108,7 @@ function preview(patched = '<project>preview 2.0.0</project>') {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   selected = sbom();
   fetchBumpPlanMock.mockReset();
   previewBumpMock.mockReset();
@@ -427,6 +428,7 @@ describe('BumpPage', () => {
   });
 
   it('sends the previewed text and reports what was written', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<BumpPage />);
     await screen.findByLabelText('Select org.example:alpha');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' }).hasAttribute('disabled'))
@@ -441,6 +443,8 @@ describe('BumpPage', () => {
     }], false));
     expect((await screen.findByRole('status')).textContent).toContain('module-a/pom.xml.orig');
     expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(fetchBumpPlanMock).toHaveBeenCalledTimes(2));
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it('offers the override only after git reports the workspace is not a repository', async () => {
@@ -458,6 +462,8 @@ describe('BumpPage', () => {
     expect(screen.queryByLabelText(/apply anyway/i)).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: 'Write files' }));
 
+    const write = await screen.findByRole('button', { name: 'Write files' });
+    expect(write.hasAttribute('disabled')).toBe(false);
     const override = await screen.findByLabelText(/apply anyway/i);
     fireEvent.click(override);
     fireEvent.click(screen.getByRole('button', { name: 'Write files' }));
@@ -477,8 +483,66 @@ describe('BumpPage', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('Commit or stash first');
     expect(screen.getByRole('dialog')).toBeTruthy();
+    const tryAgain = screen.getByRole('button', { name: 'Try again' });
+    expect(tryAgain.hasAttribute('disabled')).toBe(false);
     // A dirty tracked tree is never overridable from here.
     expect(screen.queryByLabelText(/apply anyway/i)).toBeNull();
+  });
+
+  it('requires a reload instead of offering an impossible fingerprint retry', async () => {
+    applyBumpMock.mockRejectedValue(new ApiError('module-a/pom.xml changed on disk since preview', 409));
+    render(<BumpPage />);
+    await screen.findByLabelText('Select org.example:alpha');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' }).hasAttribute('disabled'))
+      .toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Write files' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('changed on disk');
+    expect(screen.getByText(/Reload the plan/)).toBeTruthy();
+    const write = screen.getByRole('button', { name: 'Write files' });
+    expect(write.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
+  });
+
+  it('reloads a fresh plan without asking when the default session is unchanged', async () => {
+    const refreshed = row('module-a/pom.xml#1', 'beta');
+    fetchBumpPlanMock.mockResolvedValueOnce(plan()).mockResolvedValueOnce(plan([refreshed]));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<BumpPage />);
+    await screen.findByLabelText('Select org.example:alpha');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(await screen.findByLabelText('Select org.example:beta')).toBeTruthy();
+    expect(screen.queryByLabelText('Select org.example:alpha')).toBeNull();
+    expect(fetchBumpPlanMock).toHaveBeenCalledTimes(2);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('asks before reload discards a changed selection', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<BumpPage />);
+    const selection = await screen.findByLabelText('Select org.example:alpha');
+    fireEvent.click(selection);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(confirm).toHaveBeenCalledWith('Reload the plan and discard your selections and preview edits?');
+    expect(fetchBumpPlanMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks before reload discards a typed preview edit', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<BumpPage />);
+    const editor = await screen.findByLabelText('Edit module-a/pom.xml') as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.value).toBe('<project>preview 2.0.0</project>'));
+    fireEvent.change(editor, { target: { value: '<project>typed by user</project>' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(confirm).toHaveBeenCalledWith('Reload the plan and discard your selections and preview edits?');
+    expect(fetchBumpPlanMock).toHaveBeenCalledTimes(1);
   });
   it('filters the declaration table without deselecting what it hides', async () => {
     const alpha = row('pom.xml#0', 'alpha');

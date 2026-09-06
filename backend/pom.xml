@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.sbomscope</groupId>
     <artifactId>sbomscope-parent</artifactId>
-    <version>0.6.0</version>
+    <version>0.6.1</version>
   </parent>
 
   <artifactId>sbomscope-backend</artifactId>
@@ -141,8 +141,8 @@
            makeBom, not makeAggregateBom: the two modules are deliberately two documents. The
            Maven reactor cannot see npm packages at all — the frontend module is a jar wrapping
            built assets, so an aggregate BOM would silently describe the frontend as having
-           almost no dependencies rather than the ~29 it actually ships. The frontend's own SBOM
-           comes from npm, in that module's pom. -->
+           almost no dependencies rather than the hundred-odd npm packages it is actually built
+           from. The frontend's own SBOM comes from npm, in that module's pom. -->
       <plugin>
         <groupId>org.cyclonedx</groupId>
         <artifactId>cyclonedx-maven-plugin</artifactId>

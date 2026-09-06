@@ -976,7 +976,14 @@ each gate covers a case the other two cannot see.
    honoured *only* for a workspace git does not track. A dirty tracked tree is never overridable,
    because there the user already has a real undo and should use it.
 2. **A `.orig` backup beside each file**, written before the file it protects. An existing one is
-   numbered rather than overwritten — it is somebody's earlier undo. This is the gate that covers
+   numbered rather than overwritten — it is somebody's earlier undo. **They are not gitignored,
+   and that has a consequence worth knowing**: in a git repository an apply leaves untracked
+   `.orig` files, which makes the working tree dirty, which means **gate 1 refuses the next
+   apply** until they are dealt with. That loop is not a defect — the backups announcing
+   themselves is the point of writing them, and a tool that hid its own residue in a repository
+   would be worse — but it does mean applying twice in a row requires clearing or committing in
+   between. Left visible deliberately, and revisited if it turns out to annoy more than it
+   protects. This is the gate that covers
    the workspace which is not in git.
 3. **A confirmation dialog naming every file and its edit count.** This is the only gate that
    catches a preview which resolved somewhere unexpected, which neither git nor the backups can

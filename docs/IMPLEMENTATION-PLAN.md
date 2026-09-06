@@ -6900,3 +6900,49 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   drop an edit — or silently applied one the user could no longer see — would be the worst version
   of this feature. The matcher itself moved to `frontend/src/components/searchMatcher.ts` rather
   than being copied, and is now the fifth instance of the "one reading" convention.
+- 2026-09-06 — **Four fixes from the maintainer using Dependency updates on a real workspace**,
+  which is the only way any of them could have been found. The feature worked: a real fix was
+  applied to real poms and the copy button was used. What that exposed:
+
+  **The apply dialog now answers according to which gate refused.** Every refusal previously left
+  "Write files" enabled and unchanged, inviting a second press that could not possibly succeed.
+  Now a refusal no retry can fix — a changed fingerprint, a path outside the workspace, an
+  unwritable file, text that no longer parses — disables the button and points at Reload, and the
+  dialog offers only Close. A dirty git tree keeps the button, relabelled "Try again", because the
+  user can commit in another window and retry. **The not-a-repository override keeps it enabled
+  and that is the case that rules out disabling on every failure**: that path is designed around a
+  second press after ticking the override, and a blanket disable would make it unreachable.
+
+  **A Reload control, and an automatic reload after a successful apply.** The plan carries a
+  per-file fingerprint and the apply refuses any file that changed under it — but `fetchBumpPlan`
+  ran only when the document selection changed, so there was no way to rebuild. Two ordinary
+  actions hit that dead end: copying the preview into an editor and saving it, and **applying
+  successfully**, since the files then differ from the plan by definition. Reload asks before
+  discarding decisions or typed edits, and does not ask when there is nothing to lose.
+
+  **The lockfile note now names the consequence rather than the state.** It said the lock "will be
+  stale". What actually happens is that `npm ci` refuses when the manifest and the lock disagree,
+  so a project whose build uses it — as this one's does — **stops building** until `npm install`
+  has run. The maintainer hit exactly that: applying the npm fix broke `mvn clean package`, and the
+  error named neither the override nor the note that had predicted it.
+
+  **The page header is sticky, and its first implementation was subtly wrong.** Undo, Redo, Reload
+  and Apply now stay visible over a long plan. The defect worth recording: a sticky `top: 0` pins
+  to the scroll container's *padding* box, so rows scrolled underneath stayed visible in the 24px
+  strip above the header. The usual remedy — a negative margin — does not work here, because the
+  browser clamps the sticky offset against the border box, leaving the header where it was with
+  only its padding grown. A pseudo-element painting the strip fixes it and adds no layout at all.
+  **Nothing but looking at the running page could have found this**: the computed style reads
+  `position: sticky` either way and every test passes.
+- 2026-09-06 — **`.orig` backups stay visible to git, and the loop that creates is accepted.**
+  Noticed while clearing the backups from the maintainer's test apply: `.gitignore` has no `.orig`
+  rule, so in a git repository every apply leaves untracked files, the working tree is dirty, and
+  **the clean-tree gate then refuses the next apply** until they are cleared or committed.
+
+  Left as it is, deliberately. The backups exist precisely to be findable where git is not the
+  user's undo, and a tool that hid its own residue inside somebody's repository would be worse
+  than one that makes a little noise. The cost is real though — applying twice in a row takes an
+  extra step — so this is recorded as a choice rather than an oversight, to be revisited if it
+  annoys more than it protects. It sits beside the existing "`.orig` files accumulate, nothing
+  lists or cleans them" item, which the maintainer deferred on 2026-09-06 on the view that users
+  will check their own workspace.

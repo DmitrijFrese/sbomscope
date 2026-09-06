@@ -155,8 +155,13 @@ public class BumpPlanService {
 
         packages.stream().filter(ScannedPackage::hasLockfile)
                 .filter(manifest -> pending.stream().anyMatch(row -> npmEditIn(row, manifest)))
+                // "Stale" undersold this and the maintainer hit the consequence: `npm ci` refuses
+                // outright when the manifest and the lock disagree, so a project whose build uses
+                // it — as this one's does — stops building until `npm install` has run. Saying so
+                // here turns a confusing build failure ten minutes later into an expected step.
                 .map(manifest -> manifest.file().path()
-                        + " has a package-lock.json that will be stale; run npm install")
+                        + ": run npm install afterwards. Until you do, package-lock.json disagrees"
+                        + " with this manifest and npm ci refuses, so any build using it will fail.")
                 .forEach(lockfileNotes::add);
         return new BumpPlan(sbom.id(), root.toString(), List.copyOf(files),
                 assignIds(pending), List.copyOf(notes), List.copyOf(lockfileNotes));
