@@ -955,6 +955,58 @@ advisory's vulnerable function executes.
 
 ---
 
+## External tool contract: git, and writing to the user's files (B26/B28)
+
+Dependency updates is **the only feature that modifies files outside `~/.sbomscope`**. Everything
+else in this product reads. That asymmetry is why the write path is small, why every refusal
+happens before any byte is written, and why it has its own contract here.
+
+**The plan and the preview never touch disk.** `GET …/bump` reads manifests; `POST …/bump/preview`
+returns patched *text*. Both are pure functions of the request plus the files on disk, and the
+session model lives in the browser — nothing about a plan, an override or an edit is stored
+anywhere, which is what keeps this feature clear of the annotation store constraint 6 forbids.
+
+**Only `POST …/bump/apply` writes**, and it is gated three ways. Belt and braces deliberately:
+each gate covers a case the other two cannot see.
+
+1. **A clean git working tree**, checked by invoking the user's own `git status --porcelain` in
+   the workspace — the same posture as the Maven probe driving their `mvn`, never a library and
+   never a reimplementation. A non-empty result refuses. **Git absent from the PATH resolves to
+   "not a repository"**, which is the override path rather than a silent pass; that override is
+   honoured *only* for a workspace git does not track. A dirty tracked tree is never overridable,
+   because there the user already has a real undo and should use it.
+2. **A `.orig` backup beside each file**, written before the file it protects. An existing one is
+   numbered rather than overwritten — it is somebody's earlier undo. This is the gate that covers
+   the workspace which is not in git.
+3. **A confirmation dialog naming every file and its edit count.** This is the only gate that
+   catches a preview which resolved somewhere unexpected, which neither git nor the backups can
+   see.
+
+**The write itself**: a temporary file in the target's own directory, then an atomic move — never
+truncate-and-write, and never across file systems, where a move is not atomic and on Windows is
+not permitted. Every file's fingerprint (SHA-256) is compared immediately before writing and the
+**whole apply refuses** if any file changed since the preview was built: a half-applied workspace
+is worse than a refused one, because the reader cannot tell by looking which state they are in.
+Path containment is checked a second time here, independently of the plan's `editable` flag — a
+containment rule enforced only where convenient is one waiting to be bypassed.
+
+**Every file is parsed before it is written**, by the grammar its name implies: `PomScanner` for
+XML, a JSON parse for `package.json`. A file that no longer parses refuses the apply while the
+model still holds text the user can correct, which is what makes reverting real. Note that a pom
+containing `--` inside a comment is *not* valid XML and Maven itself rejects it with
+"Non-parseable POM", so refusing to read one is correct rather than strict — the message says so,
+because the parser's own wording is low-level and the JVM localises it.
+
+**Every apply is written to the activity log**, naming the workspace, the files and the edit
+counts. This is the first feature that writes to a user's files; it does not do so unrecorded.
+
+**What is deliberately not written.** `package-lock.json` is read but never written: it records
+integrity hashes and a resolved tree that cannot be recomputed offline, and a lockfile wrong in a
+way npm trusts is worse than one that is honestly stale. Where the lock shows a fix is already
+permitted, the honest remedy is `npm install` and the row offers no edit at all.
+
+---
+
 ## The OSV database
 
 Public OSV.dev data, downloaded per ecosystem on explicit request only:

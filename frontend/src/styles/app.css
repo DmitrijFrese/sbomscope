@@ -6,6 +6,228 @@
   box-sizing: border-box;
 }
 
+/* ----------------------------------------------------- bump planner ----- */
+
+.bump-workspace {
+  display: grid;
+  grid-template-rows: minmax(240px, auto) minmax(320px, 1fr);
+  gap: var(--space-4);
+}
+
+.bump-rows,
+.bump-preview { min-width: 0; }
+
+.bump-table th,
+.bump-table td { vertical-align: top; }
+
+.bump-rows__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.bump-filter__input {
+  width: min(32ch, 100%);
+  padding: var(--space-1) var(--space-2);
+}
+
+.bump-rows__count,
+.bump-rows__hidden-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.bump-rows__hidden-note {
+  margin: var(--space-2) 0 0;
+}
+
+.bump-location,
+.bump-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bump-location > span,
+.bump-custom small {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.bump-shared-warning {
+  max-width: 44ch;
+  padding: var(--space-1) var(--space-2);
+  color: var(--severity-high) !important;
+  background: var(--bg-subtle);
+  border-left: 2px solid var(--severity-high);
+}
+
+.bump-npm-diagnosis {
+  max-width: 52ch;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary) !important;
+  background: var(--bg-subtle);
+  border-left: 2px solid var(--accent);
+}
+
+.bump-note-group + .bump-note-group {
+  margin-top: var(--space-2);
+}
+
+.bump-note-group__title {
+  margin: 0 0 var(--space-1);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.bump-target {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.bump-custom input {
+  width: 11ch;
+  padding: var(--space-1) var(--space-2);
+}
+
+/* The last thing between a preview and somebody's source tree, so it is deliberately modal:
+   there is no reading the table behind it while deciding. */
+.bump-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgb(0 0 0 / 55%);
+}
+
+.bump-confirm__panel {
+  width: min(560px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+}
+
+.bump-confirm__files {
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bump-confirm__files li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.bump-confirm__files span:last-child {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.bump-confirm__override {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: var(--space-3) 0;
+}
+
+.bump-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.bump-preview__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.bump-file-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.bump-preview__controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.bump-file-tabs [aria-selected='true'] {
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
+.bump-file-tabs span {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.bump-editor {
+  position: relative;
+  height: min(52vh, 620px);
+  min-height: 280px;
+  overflow: hidden;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.bump-editor__highlights,
+.bump-editor textarea {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: var(--space-3);
+  margin: 0;
+  overflow: auto;
+  font: 12px/1.55 var(--font-mono);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.bump-editor__highlights {
+  color: transparent;
+  pointer-events: none;
+}
+
+.bump-editor__highlights mark {
+  color: transparent;
+  background: var(--accent-subtle);
+  outline: 1px solid var(--accent);
+}
+
+.bump-editor textarea {
+  resize: none;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+
 html,
 body,
 #root {

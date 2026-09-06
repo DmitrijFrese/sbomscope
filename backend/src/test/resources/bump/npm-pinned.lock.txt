@@ -1,0 +1,9 @@
+{
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/parent": {
+      "version": "7.18.1",
+      "dependencies": { "transitive": "7.18.1" }
+    }
+  }
+}

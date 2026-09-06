@@ -73,6 +73,24 @@ export function DiffIcon(props: IconProps) {
   );
 }
 
+/**
+ * Two declarations being raised: the workspace bump planner.
+ *
+ * <p>Arrows point **up**, not sideways. Sideways reads as "moving along" — a flow or a
+ * migration — where this screen raises a number in place. The two are staggered because the
+ * screen acts on several declarations at once and rarely moves them the same distance.
+ */
+export function BumpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 20V10" />
+      <path d="M5 13l3-3 3 3" />
+      <path d="M16 20V5" />
+      <path d="M13 8l3-3 3 3" />
+    </Icon>
+  );
+}
+
 export function FilesIcon(props: IconProps) {
   return (
     <Icon {...props}>

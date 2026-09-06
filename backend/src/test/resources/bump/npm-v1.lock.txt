@@ -1,0 +1,6 @@
+{
+  "lockfileVersion": 1,
+  "dependencies": {
+    "parent": { "version": "7.18.1" }
+  }
+}

@@ -1,3 +1,5 @@
+import type { BumpPlan, TextRange } from '../bump/model';
+
 /**
  * Thin fetch wrapper. Kept deliberately small — there is no client-side data
  * library, because the backend is the source of truth and every call is a plain
@@ -1101,6 +1103,69 @@ export function fetchDiff(
     if (query.negate) params.set('negate', 'true');
   }
   return request<DiffResult>(`/diff?${params}`);
+}
+
+export interface BumpEdit {
+  siteId: string;
+  newVersion: string;
+  structural: boolean;
+}
+
+export interface PreviewResult {
+  files: PreviewFile[];
+  warnings: string[];
+}
+
+export interface PreviewFile {
+  path: string;
+  fingerprint: string;
+  patched: string;
+  changed: TextRange[];
+  editCount: number;
+}
+
+export function fetchBumpPlan(sbomId: string): Promise<BumpPlan> {
+  return request<BumpPlan>(`/sboms/${sbomId}/bump`);
+}
+
+export function previewBump(sbomId: string, edits: BumpEdit[]): Promise<PreviewResult> {
+  return request<PreviewResult>(`/sboms/${sbomId}/bump/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ edits }),
+  });
+}
+
+export interface BumpFileWrite {
+  path: string;
+  fingerprint: string;
+  text: string;
+}
+
+/** What an apply did, so the page can report it without asking the server again. */
+export interface ApplyResult {
+  written: string[];
+  backups: string[];
+  skipped: string[];
+}
+
+/**
+ * The only call in this client that changes a file outside SBOMscope's own directory.
+ *
+ * Sends the text rather than the decisions: the user may have corrected the preview by hand, and
+ * a re-derived patch would mean the dialog they confirmed described something other than what
+ * was written. Every gate refusal comes back as a 409 whose message names which gate and why.
+ */
+export function applyBump(
+  sbomId: string,
+  files: BumpFileWrite[],
+  overrideGitGate: boolean,
+): Promise<ApplyResult> {
+  return request<ApplyResult>(`/sboms/${sbomId}/bump/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files, overrideGitGate }),
+  });
 }
 
 /** A plain download link; the browser owns the response filename and save flow. */

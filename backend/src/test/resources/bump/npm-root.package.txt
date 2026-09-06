@@ -1,0 +1,15 @@
+{
+  "name": "fixture-root",
+  "description": "café comes before every version",
+  "workspaces": ["packages/*"],
+  "dependencies": {
+    "lodash": "^4.17.20",
+    "@scope/name": "~1.2.3",
+    "unsupported": "workspace:*",
+    "exact": "1.0.0",
+    "parent": "^7.18.1"
+  },
+  "devDependencies": {
+    "dev-only": ">=2.0.0"
+  }
+}

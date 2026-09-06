@@ -5,6 +5,7 @@ import { SbomSidebar } from './components/SbomSidebar';
 import { SidebarResizer } from './components/SidebarResizer';
 import { TopMenu } from './components/TopMenu';
 import { ComponentInspectorPage } from './pages/ComponentInspectorPage';
+import { BumpPage } from './pages/BumpPage';
 import { DiffPage } from './pages/DiffPage';
 import { GlossaryPage } from './pages/GlossaryPage';
 import { MonitoringPage } from './pages/MonitoringPage';
@@ -21,7 +22,7 @@ import { usePersistentState, usePersistentToggle } from './state/persisted';
  * thing anyone does on that page and a panel you have to navigate away from to use is not
  * the "link two objects from the left panel" the feature was asked for.
  */
-const SBOM_SCOPED_ROUTES = ['/vulnerabilities', '/component-inspector', '/diff'];
+const SBOM_SCOPED_ROUTES = ['/vulnerabilities', '/component-inspector', '/diff', '/bump'];
 
 /**
  * The range the sidebar boundary can be dragged through.
@@ -84,6 +85,7 @@ export function App() {
             <Route path="/vulnerabilities" element={<VulnerabilitiesPage />} />
             <Route path="/component-inspector" element={<ComponentInspectorPage />} />
             <Route path="/diff" element={<DiffPage />} />
+            <Route path="/bump" element={<BumpPage />} />
             {/* The old name, kept so a bookmarked tab lands where it meant to rather
                 than bouncing to the vulnerability view via the catch-all. */}
             <Route path="/workspace" element={<Navigate to="/component-inspector" replace />} />

@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.sbomscope</groupId>
     <artifactId>sbomscope-parent</artifactId>
-    <version>0.5.1</version>
+    <version>0.6.0</version>
   </parent>
 
   <artifactId>sbomscope-frontend</artifactId>
@@ -114,6 +114,28 @@
                 <argument>run</argument>
                 <argument>build</argument>
               </arguments>
+            </configuration>
+          </execution>
+
+          <!-- The frontend's own bill of materials, and the half a Maven aggregate BOM cannot
+               see: these dependencies are npm packages, invisible to the reactor, and this
+               module's Maven coordinates describe a jar of built assets rather than a tree.
+               Two documents is therefore the honest shape, not a convenience.
+
+               `npm sbom` reads the installed tree, so it must run after `npm ci` — it fails
+               outright rather than guessing when node_modules is absent, which is the behaviour
+               we want. Output is captured from stdout because npm writes the document there. -->
+          <execution>
+            <id>npm-sbom</id>
+            <goals><goal>exec</goal></goals>
+            <phase>package</phase>
+            <configuration>
+              <arguments>
+                <argument>sbom</argument>
+                <argument>--sbom-format</argument>
+                <argument>cyclonedx</argument>
+              </arguments>
+              <outputFile>${project.build.directory}/sbomscope-frontend-sbom.json</outputFile>
             </configuration>
           </execution>
         </executions>

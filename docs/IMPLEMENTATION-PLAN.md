@@ -129,7 +129,7 @@ implementation on disk — its migration is now V14 or later. Phase 11 (VEX) fol
 | 11 | VEX — read supplier exploitability and mitigation context | Planned, last of the three — behind Phase 14 and Phase 12 |
 | 12 | Container image scanning | **Design gate passed 2026-08-06** — measured and decided, **no implementation on disk**; deferred behind Phase 14 on 2026-09-05. Its migration starts at V14 |
 | 13 | Projects, and a document's own settings | **Built and verified 2026-08-08** — B19 (with drag-and-drop, manual ordering and rollup modes), B20 |
-| 14 | From elevating a real project | **B21–B25 and B27 built and verified 2026-09-05/06**; B26 (bump versions in a Maven workspace) designed, portioned and not started |
+| 14 | From elevating a real project | **Complete 2026-09-06** — B21–B25 and B27, then B26 (bump versions in a Maven workspace, five portions) and B28 (the same for npm), all built and verified against the running application |
 
 Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
 Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
@@ -3375,8 +3375,9 @@ itself names manifests as "a sensible later addition".
 - [ ] **Five resolution cases**, in increasing difficulty: a direct `<dependency>` in a module;
       a managed version in the root `<dependencyManagement>`; a `${property}` — bumped, with a
       warning when it is shared by artifacts the user did not select; a version inherited from
-      an imported BOM, where the honest choices are *override the BOM's property* or *add an
-      explicit managed entry*, both offered; and a vulnerable transitive that is declared
+      an imported BOM, whose remedy in the first pass is *add an explicit managed entry* —
+      **amended 2026-09-06 from "both offered", see the decision log**, because the other
+      remedy needs a pom this machine may not have; and a vulnerable transitive that is declared
       nowhere, whose only remedy is a **new** `<dependencyManagement>` entry. The last is
       marked as structural rather than mixed in with a version swap
 - [ ] **Exclusions are read and displayed, never authored** in the first pass
@@ -3404,13 +3405,13 @@ The design above is settled; this is the delivery plan for it. Five portions, be
 a boundary the others do not need to see across, and because a brief that fits one bounded
 change is the only kind worth delegating.
 
-| # | Portion | Owns | Route |
-|---|---|---|---|
-| A | The pom model and its five resolution cases | `dev.sbomscope.bump`: the StAX scan, workspace discovery, the join to vulnerable components, `GET /api/sboms/{id}/bump`. Read-only | Sol, medium |
-| B | The surgical patch engine | Text mutation and `POST …/bump/preview`. Writes nothing to disk | Terra, high |
-| C | The session model and its command stack | `frontend/src/bump/model.ts` — pure TypeScript, undo/redo over both viewports | Terra, high |
-| D | The two synchronised viewports | The `/bump` page: row table and editable file preview | Sol, medium |
-| E | The apply path and its three-part gate | The git check, the `.orig` backups, the atomic writes, the confirmation dialog | **Me — not delegated** |
+| # | Portion | Owns | Route | Status |
+|---|---|---|---|---|
+| A | The pom model and its five resolution cases | `dev.sbomscope.bump`: the StAX scan, workspace discovery, the join to vulnerable components, `GET /api/sboms/{id}/bump`. Read-only | Sol, medium | **Built 2026-09-06**, 385 tests green |
+| B | The surgical patch engine | Text mutation and `POST …/bump/preview`. Writes nothing to disk | Terra, high | **Built 2026-09-06**, 393 tests green |
+| C | The session model and its command stack | `frontend/src/bump/model.ts` — pure TypeScript, undo/redo over both viewports | Terra, high | **Built 2026-09-06**, 94 frontend tests green |
+| D | The two synchronised viewports | The `/bump` page: row table and editable file preview | Sol, medium | **Built 2026-09-06**, 104 frontend tests green, verified in the running app |
+| E | The apply path and its three-part gate | The git check, the `.orig` backups, the atomic writes, the confirmation dialog | **Me — not delegated** | **Built 2026-09-06**, 403 backend + 109 frontend tests green, gate verified refusing in the running app |
 
 **The patch engine is carved out of the apply path deliberately.** The design bullet above
 treats "surgical text patches" and "Apply" as one thing; splitting them means every byte-level
@@ -3432,24 +3433,107 @@ C depend only on A's records, D on all three. But a delegate writes directly int
 tree, and two of these briefs touch `frontend/src/api/client.ts`, so two at once would collide.
 A worktree per delegate is the obvious fix and has not been tried.
 
-**Four questions are open and block the first dispatch**, since two of them change what A, B and
-C are asked to build:
+**Four questions blocked the first dispatch, and were answered on 2026-09-06** — each the
+recommendation that stood beside it, and each checked against the code rather than accepted on
+its own argument:
 
-1. **Is E delegated after all?** Recommendation: no, for the reason above.
-2. **How does the clean-working-tree gate decide?** Recommendation: invoke the user's own `git`
-   (`git status --porcelain`), the way the Maven probe invokes their `mvn`; git absent from the
-   PATH resolves to "not a repository", which is the override path and never a silent pass.
-   The alternatives are reimplementing index-versus-worktree comparison for one boolean, or
-   adding JGit against the lean-tree constraint.
-3. **Where does "Latest available" come from in the first pass?** Recommendation:
-   `DependencyResolver.knownVersions`, which reads metadata a previous probe already
-   downloaded — offline, no process started from this screen, and absent rather than guessed
-   where nothing is cached. The alternative launches `mvn` per component from an interactive
-   screen.
-4. **Confirm the model's home** — browser-side with a stateless backend, as stated above.
+1. **E is not delegated.** It is the only portion that writes outside `~/.sbomscope`, and a
+   delegate's characteristic failure is drift into an adjacent problem.
+2. **The clean-working-tree gate invokes the user's own `git`** — `git status --porcelain` in
+   the workspace, the way the Maven probe invokes their `mvn`. A non-empty result refuses; git
+   absent from the PATH resolves to *not a repository*, which is the override path and never a
+   silent pass. The alternatives were reimplementing index-versus-worktree comparison for one
+   boolean, or adding JGit against constraint 9.
+3. **"Latest available" comes from `DependencyResolver.knownVersions`.** Confirmed against the
+   implementation rather than the name: it lists `maven-metadata*.xml` under
+   `ProbeContext.isolatedRepository()` (`~/.sbomscope/probe-repo`), merges them, drops
+   pre-releases and sorts by `VersionOrder`. It starts no process and reads nothing that is not
+   already on disk. **The context it needs is free here**: `ProbeContext` causes an `mvn` run
+   only through the effective-pom lift, and only when a workspace path is passed to
+   `buildContext` — constructed with `liftedXml` null it is an inert parameter carrier, which is
+   what the bump plan builds. An empty answer means *this component has never been probed*, so
+   the column is absent rather than guessed, exactly as the design requires.
+4. **The model lives in the browser and the backend holds no session state**, as stated above.
+
+**What answer 3 is worth in practice, measured rather than assumed — 2026-09-06.** The
+maintainer's probe repository has been in use for weeks and holds **six** `maven-metadata*.xml`
+files. So "Latest available" is populated for six artifacts and absent everywhere else today.
+That was checked before the column was committed to, and the column was kept anyway: it costs
+no network surface, states nothing it cannot support, and the cache is keyed by the
+*declaring* artifact — which is what a B26 row is — so coverage grows as the probe is used
+rather than being permanently irrelevant. An explicit on-demand "enumerate versions" action
+that starts the user's own `mvn` remains available as a later item; it would be a category-3
+delegated call and `MavenDependencyResolver` already writes those to the activity log.
+
+**A row is not a declaration site, and its id is not unique — decided 2026-09-06.** One row is
+one vulnerable component at one site, so a single `${property}` feeding two vulnerable
+artifacts produces two rows sharing one `DeclarationSite.id`. The design's warning about "a
+property shared by artifacts the user did not select" presupposes that each artifact is
+separately selectable, which requires a row each; the one place the version is written is still
+written once. Rows are therefore keyed by id plus coordinate, an edit is per site rather than
+per row, and two selected rows sharing a site must produce one `BumpEdit` — two would be an
+overlapping edit and the patch engine refuses those. Stated here because it is invisible in the
+types and every later portion would otherwise assume ids are unique.
+
+**Which forces one more decision, taken the same day: selection is per row, the version is per
+site, and where selected rows disagree the highest wins.** A site is written once, so two rows
+sharing a property cannot hold two versions; the session model keeps the opt-in on the row and
+the value on the site, and changing it on either row visibly changes the other rather than
+hiding that. The tie-break is not arbitrary — `UpgradeAdviceService.pinTarget` already takes the
+highest fix named by a component's advisories "so one pin addresses all of them", and a shared
+property is that same problem one level up: one write has to clear every advisory it covers. The
+alternative, per-row versions with a conflict the user must resolve, creates an error state whose
+only cure is typing the same number twice.
 
 The five briefs themselves are written and sit in this session's scratchpad. They are working
 artifacts rather than documentation: what matters for a later session is on this page.
+
+**One build fact found while preparing the first dispatch, 2026-09-06.** `mvn -o -pl backend
+test` — the safe check handed to every delegate — fails at 0.5.1 with *"Cannot access central
+… in offline mode"*, naming first `sbomscope-frontend:jar` and then `sbomscope-parent:pom`.
+Neither is missing from Central; both are this repository's own modules, and `mvn package`
+builds them without ever *installing* them. `mvn -o -N install` (the parent, non-recursively)
+followed by `mvn -o -pl frontend install` puts both in the local repository once and the
+offline check works again for the whole 0.5.1 line. `-am` is the alternative and is worse to
+hand a delegate: it drags `npm ci` into every test run, which a running Vite dev server breaks
+with an `EPERM` naming nothing relevant. Expect this once per version bump.
+
+---
+
+### B28 — Bump npm dependencies — **built 2026-09-06**
+
+The maintainer's next item, once B26 landed. It needs no amendment to the hard constraints:
+**npm is one of the two ecosystems SBOMscope reasons about** (constraint 7), so a bump screen for
+it is the constraint working as intended rather than an extension of it.
+
+The apply path ports unchanged. `TextRange`, the stale-range guard, the containment rule, the
+atomic write and all three gates are ecosystem-neutral — nothing in `BumpApplyService` knows what
+a pom is. What changes is the scanner (a JSON reader reporting byte offsets, where B26 uses StAX)
+and three things that have no Maven analogue:
+
+- [x] **Version literals are ranges.** `"lodash": "^4.17.20"` can be bumped to `^4.17.21`, pinned
+      to `4.17.21`, or **left alone because the range already admits the fix**. The last is common
+      and is the honest answer surprisingly often: the manifest is fine and the lockfile is not.
+      Whatever is chosen, the operator is part of the declaration and dropping it silently changes
+      the project's update policy, not just its version.
+- [x] **The lockfile is the real subject, and the first pass does not write it.** Decided
+      2026-09-06: edit `package.json`, then **say plainly that `package-lock.json` now disagrees
+      and `npm install` is the user's next step**. No network, no process, nothing regenerated —
+      the same posture as "absent rather than guessed". Offering a user-initiated
+      `npm install --package-lock-only` through the user's own npm, activity-logged like the Maven
+      probe, remains available later; patching the lock as text does not, because it records
+      integrity hashes and a resolved tree that cannot be recomputed offline, and a lockfile wrong
+      in a way npm trusts is worse than one that is honestly stale.
+- [x] **`VersionOrder` is Maven ordering and must not be reused here.** npm is semver, and the two
+      disagree about prereleases. This is the quiet kind of wrong: it produces a plausible answer
+      in the common case and a wrong "highest fix" exactly where prereleases appear.
+- [x] **Declaration sites are `dependencies`, `devDependencies` and `optionalDependencies`**, per
+      `package.json`, across npm workspaces where the project has them. Same rule as B26: a row is
+      a place a version is written.
+
+**The real test the maintainer wants**, once it is built: SBOMscope's own workspace (which has
+both a pom and a `package.json`) and the youtube-downloader project built on the same
+architecture. Both need an SBOM uploaded and a workspace attached before that can happen.
 
 ---
 
@@ -6730,3 +6814,89 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   recorded here for the same reason: "one reading of what a version is" and "one reading of what
   critical means" are the same requirement, and both are cheap to satisfy once and expensive to
   discover later.
+- 2026-09-06 — **B26's imported-BOM case offers one remedy, not two, and the design bullet was
+  amended rather than left unmet.** The original wording named *override the BOM's property* and
+  *add an explicit managed entry* as the two honest choices, "both offered". Building the pom
+  model showed why the first is mostly unavailable: the property that governs a vulnerable
+  library inside an imported BOM is declared **in the BOM's own pom**, not in the user's
+  workspace — you override Spring Boot's `jackson.version` by redeclaring a name only Spring Boot
+  states. That file is not on a machine with no network unless a previous probe happened to
+  cache it, so the remedy would appear or vanish depending on probe history, which is not
+  something a table can explain to a reader.
+
+  The escape hatch already in the specification ("only when that property is visible in this
+  workspace") turns out to select the wrong thing rather than a smaller thing: a property visible
+  in the workspace is almost always the BOM's *own* version, and overriding that moves every
+  library the BOM manages instead of the vulnerable one. That is a legitimate remedy and a much
+  larger one; presenting it as this remedy would be the wrong answer, not a partial one.
+
+  So the first pass offers the explicit managed entry, which is always available and always
+  means what it says. This is the same posture as the "Latest available" column above: **absent
+  rather than guessed**, and stated rather than silently missing. Reading the BOM from the probe
+  repository where it is cached remains available as a later item if the case turns out to matter
+  in real workspaces.
+- 2026-09-06 — **A row already at or above its target is listed, not preselected, and produces no
+  edit.** Found by running B26 against a real workspace rather than by reading: SBOMscope's own
+  repository, whose SBOM records the jackson version from before a fix and whose pom now holds the
+  version after it. Both halves of the row were correct — `currentVersion` is read from the pom on
+  disk, `minimalTarget` from the stored document's advisories — and the row still offered to write
+  3.1.5 over 3.1.5.
+
+  **This is the ordinary case, not an edge one.** A document is uploaded once and a source tree
+  keeps moving, so any workspace ahead of its SBOM produces these rows. Applying one would take a
+  `.orig` backup and write an activity-log entry for a change that never happened, and both of
+  those records are worth less once they contain things that did not occur. The row is therefore
+  still listed — *every vulnerable component is listed* is unchanged — but reads "Already at
+  <version>", starts unselected, and contributes nothing to `editsFor`. The comparison uses the
+  frontend's own `compareVersions`, now exported rather than copied, for the reason the
+  conventions section gives: a second comparator is the one that disagrees.
+
+  The apply path refuses the same thing independently, by skipping any file whose bytes already
+  match what was asked for. Two checks for one rule is deliberate here: the screen's version is a
+  courtesy, and the write path's version is the one that has to hold when the request did not come
+  from the screen.
+- 2026-09-06 — **A vulnerable npm transitive is remedied with an `overrides` entry, but only where
+  a `package-lock.json` proves the project is npm.** Maven's answer to "declared nowhere" is the
+  fifth resolution case: insert a new `<dependencyManagement>` entry. npm's analogue is
+  `overrides`, and symmetry argues for using it — but unlike `<dependencyManagement>` it is
+  **package-manager-specific**: yarn spells it `resolutions`, pnpm `pnpm.overrides`, and a
+  `package.json` alone does not say which tool the project uses. Writing `overrides` into a yarn
+  project yields a fix that appears to work and silently does nothing, which is worse than
+  offering none.
+
+  The lockfile settles it, and discovery already detects one. With `package-lock.json` beside the
+  manifest the row is a structural remedy; with `yarn.lock`, `pnpm-lock.yaml` or no lockfile it is
+  **listed but not editable**, naming the declared dependency the vulnerable package arrives
+  through (from `UpgradeAdvice.declaredBy`, reused rather than re-derived). Absent rather than
+  guessed, the same rule the "Latest available" column follows.
+
+  `SiteKind.UNDECLARED` is reused rather than a constant added: its meaning is already exactly
+  this case, `ecosystem` distinguishes the rendering and the patching, and a new constant reaches
+  every exhaustive switch in two languages for no gain.
+
+  **Both npm defects behind this were found by running the real thing, not by review.** The first:
+  discovery looked only for a root `package.json`, so this repository — whose manifest is at
+  `frontend/package.json` — produced zero npm rows. The second: a transitive has no declaration
+  site, so `react-router@7.18.1` (arriving through the declared `react-router-dom`) was dropped
+  silently while the document held a HIGH finding. Both specifications were self-consistent and
+  implementable; both were simply wrong about the shape of real projects. A specification review
+  cannot find that, which is why the running check stays non-negotiable.
+- 2026-09-06 — **The bump screen is named "Dependency updates", and its icon points up.** Two
+  small changes with the same reasoning behind them. "Bump versions" was the only verb phrase in
+  a navigation bar of noun phrases, and it oversold what the screen does: a large share of its
+  rows deliberately recommend *no* edit — already at the fixed version, an npm range that already
+  permits the fix with only a stale lockfile behind it, or a transitive whose parent pins it.
+  "Already up to date" is a dependency-update outcome; it is not a bump. The name also had to
+  stay clear of the Component Inspector's **Upgrade paths**, which anything built on "upgrade"
+  would have collided with — the two sound like one feature and are not: that one advises about a
+  component, this one writes to your manifests. The route stays `/bump`; renaming a URL nothing
+  displays is churn. The icon's arrows were horizontal, which reads as flow or migration, where
+  this screen raises a number in place.
+
+  **A filter came with it**, reusing `SearchField` like the five fields before it. Two additions
+  the other tables do not need: a count, because "the pattern matches nothing" and "the plan found
+  nothing" are very different answers on this screen and looked identical; and a line stating that
+  filtered rows stay selected and are still written by Apply, because a filter that appeared to
+  drop an edit — or silently applied one the user could no longer see — would be the worst version
+  of this feature. The matcher itself moved to `frontend/src/components/searchMatcher.ts` rather
+  than being copied, and is now the fifth instance of the "one reading" convention.

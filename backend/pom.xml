@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.sbomscope</groupId>
     <artifactId>sbomscope-parent</artifactId>
-    <version>0.5.1</version>
+    <version>0.6.0</version>
   </parent>
 
   <artifactId>sbomscope-backend</artifactId>
@@ -131,6 +131,41 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+
+      <!-- SBOMscope's own Java bill of materials, produced by every build rather than by
+           somebody remembering to run a command. A tool that reports on other projects'
+           dependency metadata should not be missing its own, and a hand-generated SBOM is stale
+           the moment a dependency moves.
+
+           makeBom, not makeAggregateBom: the two modules are deliberately two documents. The
+           Maven reactor cannot see npm packages at all — the frontend module is a jar wrapping
+           built assets, so an aggregate BOM would silently describe the frontend as having
+           almost no dependencies rather than the ~29 it actually ships. The frontend's own SBOM
+           comes from npm, in that module's pom. -->
+      <plugin>
+        <groupId>org.cyclonedx</groupId>
+        <artifactId>cyclonedx-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>backend-sbom</id>
+            <phase>package</phase>
+            <goals>
+              <goal>makeBom</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <outputName>sbomscope-backend-sbom</outputName>
+          <outputFormat>json</outputFormat>
+          <!-- Everything the project depends on, test and provided scopes included (maintainer's
+               call 2026-09-06). The narrower reading — describe only what the jar ships — was
+               rejected deliberately: it is the provider's job to publish the complete picture and
+               the consumer's to filter it, and a consumer cannot recover a component we chose not
+               to mention. The frontend SBOM omits its own exclusion flag for the same reason. -->
+          <includeTestScope>true</includeTestScope>
+          <includeProvidedScope>true</includeProvidedScope>
+        </configuration>
       </plugin>
     </plugins>
   </build>

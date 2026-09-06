@@ -1,0 +1,6 @@
+{
+  "name": "@fixture/child",
+  "optionalDependencies": {
+    "child-only": "~3.0.0"
+  }
+}

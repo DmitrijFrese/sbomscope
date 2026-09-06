@@ -96,6 +96,7 @@ process is written to a log you can read inside the application.
 | **SBOM diff** | Compare two documents: added, removed and version-changed libraries, and the CVEs each side gained or lost — the evidence that an upgrade did what it was meant to. Both documents' component and vulnerability counts sit above the table, the vulnerability line broken down by severity. Exportable, with the same filter the rest of the product uses. |
 | **Upgrade paths** | Maven and npm both get offline advisory-derived upgrade/pin guidance; npm also gets a ready-to-paste `overrides` snippet. For the transitive question Tier 1 cannot answer — whether a newer version of what pulls it in already ships the fix — only the Maven path drives your configured `mvn`, ranking every major line as its own candidate rather than guessing at one winner. npm and Gradle have no Tier 2 probe.                                                                                  |
 | **Dependency graph** | For any selected library, walk parents up to the roots and children down to the leaves. Parent routes are numbered cards: the first 100 are shown immediately, another 100 can be loaded on request, and each card identifies the module or intermediate component whose SBOM edge introduces the selected version.                                                                                                                                                                                        |
+| **Dependency updates** | Find every place a vulnerable version is declared in your workspace — Maven poms and npm manifests — and change it, with the file preview shown before anything is written. Rows are declaration sites, not libraries, so a library declared in one module and managed in the root is two rows with their own targets. It says plainly where no edit is the right answer: already at the fixed version, a range that already permits it and only a stale lockfile behind, or a transitive nothing declares. Writing is gated three ways (a clean git tree, an `.orig` backup, and a dialog naming every file) and refuses any file that changed under it. |
 | **Excel export** | A real spreadsheet, with CVE cells hyperlinked to the NVD, library cells to the artifact's registry page and version cells to that exact version. A second sheet records what was selected, so a filtered workbook can account for its own size.                                                                                                                                                                                                                                                           |
 
 ## How it works
@@ -167,6 +168,20 @@ A browser-based UI served by the local backend.
   order and the same filter, so a file you forward can account for itself. Where a library sits
   at several versions on one side, no pairing is guessed: those stay separate added and removed
   rows.
+- **Dependency updates** — the only screen that writes to your own files, and the reason it asks
+  before it does. Attach a workspace to a document and it lists every place a vulnerable version
+  is declared: a direct dependency, a managed one, a `${property}` (warning you when other
+  libraries move with it), a version inherited from an imported BOM, and a transitive nothing
+  declares. Two target columns — the minimal fix, preselected, and the latest available where
+  your own Maven probe has already seen it. Everything is previewed as the actual file before
+  anything is written, and the preview is editable and copyable if you would rather paste it
+  yourself. Undo and redo cover both the table and the text. Filter the rows with the same
+  search control the rest of the product uses.
+
+  It is equally willing to tell you **not** to change anything: a declaration already at the
+  fixed version, an npm range that already permits the fix where only the lockfile is behind, or
+  a transitive whose parent pins it. Nothing you decide here is stored — it goes into your files
+  or nowhere.
 
 ### Narrowing the vulnerability view
 
@@ -273,6 +288,14 @@ Build everything into a single runnable jar:
 ```bash
 mvn clean package
 ```
+
+The same build writes SBOMscope's own bills of materials —
+`backend/target/sbomscope-backend-sbom.json` and
+`frontend/target/sbomscope-frontend-sbom.json`. Two documents rather than one, because a Maven
+aggregate BOM cannot see npm packages at all; both are complete, including test and development
+dependencies, on the view that a provider should publish the whole picture and let a consumer
+filter it. A tool that reports on other projects' dependency metadata should not be missing its
+own, and you can upload them into SBOMscope itself.
 
 Run it:
 

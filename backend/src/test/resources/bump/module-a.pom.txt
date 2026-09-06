@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>fixture</groupId>
+    <artifactId>fixture-root</artifactId>
+    <version>1</version>
+  </parent>
+  <artifactId>module-a</artifactId>
+  <dependencies>
+    <!-- Grüße pins byte offsets after non-ASCII text. -->
+    <dependency>
+      <groupId>fixture</groupId>
+      <artifactId>direct</artifactId>
+      <version>1.2.3</version>
+      <exclusions>
+        <exclusion><groupId>old</groupId><artifactId>unused</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>fixture</groupId>
+      <artifactId>managed</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>fixture</groupId>
+      <artifactId>property-one</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>fixture</groupId>
+      <artifactId>bom-provided</artifactId>
+    </dependency>
+  </dependencies>
+</project>

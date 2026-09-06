@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchComponents } from '../api/client';
 import type { SbomComponent } from '../api/client';
 import { SearchField } from './SearchField';
+import { buildMatcher, rowMatches } from './searchMatcher';
 
 /**
  * How many matches are offered at once.
@@ -158,47 +159,18 @@ export function ComponentFinder({ sbomId, selectedPurl, onSelect }: ComponentFin
     [components],
   );
 
-  /**
-   * The matcher, and the reason a bad pattern is not an error here either.
-   *
-   * <p>Returns a predicate, or the message explaining why it could not build one. A regex is
-   * compiled once per query rather than once per component — `new RegExp` in a filter callback
-   * would rebuild it for every row of a list this exists to search quickly.
-   */
-  const matcher = useMemo((): { test: (value: string) => boolean; error: string | null } => {
-    const raw = regex ? query : query.trim().toLowerCase();
-    if (!raw) {
-      return { test: () => true, error: null };
-    }
-    if (!regex) {
-      return { test: (value) => value.toLowerCase().includes(raw), error: null };
-    }
-    try {
-      // 'i' to match the literal mode's case-insensitivity, so the toggle changes one thing.
-      const compiled = new RegExp(raw, 'i');
-      return { test: (value) => compiled.test(value), error: null };
-    } catch (e) {
-      return { test: () => false, error: e instanceof Error ? e.message : 'Invalid pattern.' };
-    }
-  }, [query, regex]);
+  // Compiled once per query rather than once per component: `new RegExp` inside a filter
+  // callback would rebuild it for every row of a list this exists to search quickly. What the
+  // controls *mean* — including negation and an uncompilable pattern — lives in searchMatcher.
+  const matcher = useMemo(() => buildMatcher(query, regex), [query, regex]);
 
   const matches = useMemo(() => {
     if (!query) return identifiable;
-    // A pattern that will not compile matches nothing, and negating "nothing" would be
-    // everything — so a half-typed exclusion would briefly show the entire SBOM as though the
-    // filter had been cleared. An unusable pattern yields an unusable result in both polarities.
-    if (matcher.error) return [];
-    return identifiable.filter((component) => {
-      // Negation applies to the whole row, not to each field: the positive form shows a
-      // component when any of its three searchable strings matches, so the negative form has to
-      // hide it on the same condition. Per-field negation would show a row whose purl contains
-      // the term simply because its version does not.
-      const hit =
-        matcher.test(component.coordinates) ||
-        matcher.test(component.version ?? '') ||
-        matcher.test(component.purl ?? '');
-      return negate ? !hit : hit;
-    });
+    return identifiable.filter((component) => rowMatches(matcher, negate, [
+      component.coordinates,
+      component.version,
+      component.purl,
+    ]));
   }, [identifiable, matcher, negate, query]);
 
   const shown = matches.slice(0, MAX_SHOWN);

@@ -6,6 +6,7 @@ import type { ServerStatus } from '../api/client';
 import {
   BookIcon,
   BrandIcon,
+  BumpIcon,
   ComponentIcon,
   DiffIcon,
   LogIcon,
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { to: '/vulnerabilities', label: 'Vulnerabilities', Icon: ShieldIcon },
   { to: '/component-inspector', label: 'Component Inspector', Icon: ComponentIcon },
   { to: '/diff', label: 'SBOM Diff', Icon: DiffIcon },
+  { to: '/bump', label: 'Dependency updates', Icon: BumpIcon },
   { to: '/monitoring', label: 'Monitoring', Icon: LogIcon },
   { to: '/glossary', label: 'Glossary', Icon: BookIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },

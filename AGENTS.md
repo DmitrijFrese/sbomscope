@@ -14,7 +14,7 @@ Start here, in this order:
 |---|---|
 | [README.md](README.md) | What the product is, and how to build and run it |
 | **This file** | Constraints you must not break, conventions, and the working loop |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, key flows, and the osv-scanner and Maven-probe contracts |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, key flows, and the external tool contracts — osv-scanner, the Maven probe, the reachability worker, and git for the one feature that writes to your files |
 | [docs/IMPLEMENTATION-PLAN.md](docs/IMPLEMENTATION-PLAN.md) | What is built, what is next, and the decision log explaining why |
 | [docs/IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md](docs/IMPLEMENTATION_PLAN_WORKSPACE_BASED_EVIDENCE.md) | Detailed handoff and execution plan for reachability, VEX and assessment |
 
@@ -194,13 +194,16 @@ raising it with the maintainer first.
 - Cache entries carry a last-refreshed timestamp. Anything reading cached vulnerability
   data must be able to surface staleness to the UI.
 - **One reading of anything two screens can disagree about.** This is the convention that has
-  cost the most to learn and it now has four instances, each added after a copy appeared:
+  cost the most to learn and it now has five instances, each added after a copy appeared:
   `VersionOrder.sortKey` builds its key from the comparator's own parse; `SeverityBand.of`
   states the CVSS thresholds beside the SQL that must match it (pinned by a test that walks a
   fixture asserting they classify every row identically); `SeverityBand.label()` states the six
-  band names for the whole backend; and `AdvisoryLinks` states where an advisory identifier
-  points, so the findings table, the diff and the workbook cannot send a reader to three
-  different pages. The frontend's `SEVERITY_LABELS` is the one unavoidable copy, because it is
+  band names for the whole backend; `AdvisoryLinks` states where an advisory identifier
+  points, so the findings table, the diff, the workbook **and the dependency-updates table**
+  cannot send a reader to four different pages; and `searchMatcher` states what a browser-side
+  search box means — including that negation applies to a whole row and that an uncompilable
+  pattern matches nothing in *both* polarities, since negating "nothing" would silently reveal
+  the entire list. The frontend's `SEVERITY_LABELS` is the one unavoidable copy, because it is
   on the other side of the wire. **When something needs a second reading of a rule, move the
   rule rather than copying it** — and if it cannot be moved, write a test that fails when the
   two drift.
@@ -216,9 +219,12 @@ frontend/               React + Vite UI
     api/client.ts       fetch wrapper, response types, query/export URL building
     components/         shell pieces, settings panel, purl display helpers
       SearchField.tsx   the one search box: regex toggle, negation toggle, and how a rejected
-                        pattern is reported. Five fields use it now (the diff is the fifth),
-                        and the meaning of those controls is the same claim in all of them —
-                        copies would be five places for it to drift
+                        pattern is reported. Six fields use it now (dependency updates is the
+                        sixth), and the meaning of those controls is the same claim in all of
+                        them — copies would be six places for it to drift
+      searchMatcher.ts  what those controls *mean* for the two screens that filter in the
+                        browser: negation applies to the whole row, and a pattern that will not
+                        compile matches nothing in both polarities
       SidebarResizer.tsx  the draggable sidebar boundary (B21). Pointer capture, not mouse
                         events, and it overlays the seam rather than taking a grid column
       SbomSummary.tsx   what a document says about itself — name, date, component count, spec
@@ -256,6 +262,11 @@ backend/                Spring Boot application, produces the runnable jar
     diff/               SBOM Diff (B24): pairs two documents' rows over the shared findings
                         query, refusing to guess a pairing where either side holds a library
                         at several versions
+    bump/               Dependency updates (B26 Maven, B28 npm): reads a workspace's poms and
+                        package.json files, finds every declaration site of a vulnerable
+                        version, and produces surgical byte-range patches. BumpApplyService is
+                        the only code in the product that writes outside ~/.sbomscope — see the
+                        git working-tree contract in ARCHITECTURE.md
     reachability/       module-scoped WALA discovery, worker process, evidence and persistence
     settings/           user-editable settings
     logging/            the activity log (~/.sbomscope/logs/activity.jsonl) and the
