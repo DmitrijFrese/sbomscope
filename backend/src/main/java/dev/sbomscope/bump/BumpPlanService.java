@@ -361,7 +361,16 @@ public class BumpPlanService {
                                          Map<String, Set<String>> propertyUsers) {
         List<SiteCandidate> sites = new ArrayList<>();
         List<DependencyRef> declarations = dependenciesMatching(component, poms, false);
-        List<DependencyRef> allManaged = dependenciesMatching(component, poms, true);
+        // Only entries that actually write a version count as a place to edit. A
+        // <dependencyManagement> entry may legally carry no <version> at all — it is how a
+        // project adds an <exclusion>, pins a <scope> or sets a <type> to a dependency whose
+        // version an imported BOM already supplies. Such an entry has no version range, and
+        // treating it as a version site threw NullPointerException out of replacementSite.
+        // Dropping it here lets the branches below fall through to the structural remedy, which
+        // is the true answer: the version is not written in this project.
+        List<DependencyRef> allManaged = dependenciesMatching(component, poms, true).stream()
+                .filter(entry -> entry.raw().versionRange() != null)
+                .toList();
         List<DependencyRef> managed = declarations.isEmpty() ? allManaged : allManaged.stream()
                 .filter(entry -> declarations.stream()
                         .anyMatch(declaration -> visibleFrom(entry.pom(), declaration.pom(), poms)))

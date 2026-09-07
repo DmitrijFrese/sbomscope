@@ -7874,3 +7874,30 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   processes sharing one local repository is not something Maven promises is safe, so that is a
   measured change rather than a free one. Nothing primes in the background at plan-build time yet;
   the property-bound proactive fetch is designed above and not written.
+
+- 2026-09-07 — **A `<dependencyManagement>` entry with no `<version>` crashed the bump plan.**
+  Reported from live use as `NullPointerException: Cannot invoke
+  "dev.sbomscope.bump.TextRange.start()" because "range" is null`, at
+  `BumpPlanService.replacementSite` line 426, reached from `sitesFor` line 378.
+
+  **The assumption that failed** was that a management entry names a version. It need not: when an
+  imported BOM already supplies the version, a management entry is how a project adds an
+  `<exclusion>`, pins a `<scope>`, or sets a `<type>` without restating it. `PomScanner` records
+  `versionLiteral` and `versionRange` together and only when it sees a `<version>` element, so such
+  an entry carries neither — and `sitesFor` handed it to `replacementSite`, which asked where to
+  write the new version and got nothing. The direct-declaration path was already guarded
+  (`raw.versionLiteral() != null`); the three management paths were not.
+
+  **The fix drops those entries where `managed` is built**, so all three branches fall through to
+  the structural remedy they already have. That is also the correct answer rather than merely a safe
+  one: the version is not written anywhere in the project, so the fix is a managed entry that does
+  not exist yet, and the row must not point at the versionless entry as though a version could be
+  written over it. Verified: the row comes out `IMPORTED_BOM` with an insertion point.
+
+  **Reproduced before it was fixed**, in `VersionlessManagedEntryTest` — a BOM import plus a
+  versionless management entry carrying only an exclusion, which is the shape seen in the wild. The
+  test fails with the reported message on the frame reported, and passes after.
+
+  **The neighbouring null was checked and is not reachable.** `structuralSite` dereferences
+  `managementInsertionPoint()`, which starts as null — but its last branch matches `</project>`, so
+  every well-formed pom sets it.
