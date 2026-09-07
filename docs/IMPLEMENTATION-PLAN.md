@@ -4006,7 +4006,7 @@ two are recorded as design answers.
       "is this jump too far" is the linkage check**, which measures consequences instead of
       inferring them from digits.
 
-- [ ] **Fix versions that are not obtainable — the open one, and the most serious.** Observed:
+- [x] **Fix versions that are not obtainable — built 2026-09-07 as an availability check, not a support-tier column.** Observed:
       spring-security-crypto 6.1.9 → 6.1.14 offered for CVE-2024-22228. Once Spring's OSS support
       for a line ends, its patches are published to a **commercial repository rather than Maven
       Central**, so OSV names a fix version the user's build cannot resolve. That is worse than a
@@ -7709,3 +7709,168 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   and the lockfile holds 30.0.1, so a plain `npm install` — which applying an npm fix in this
   repository *forces*, per the 0.6.1 note — can drift within 30.x. The fix is robust either way;
   the explanation is not in hand.
+- 2026-09-07 — **A fix version that cannot be obtained is detected by asking the user's Maven, not
+  by encoding who sells support.** Reported from live use: the screen offered
+  spring-security-crypto 6.1.9 → **6.1.14** for CVE-2024-22228. The version is real and the advisory
+  is right about it — and it is not in Maven Central, because once an open-source line goes
+  end-of-life several vendors publish the remaining patches to a commercial repository instead.
+  Applying that edit does not merely fail to help: the build stops resolving.
+
+  **The request was a column distinguishing free from enterprise support tiers. That was declined,
+  and the reasoning matters more than the answer.** A tier is vendor policy: there is no feed for
+  it, it differs per vendor and per line, it changes without notice, and SBOMscope would be wrong
+  the first time it did. Constraint 6 exists to keep exactly that kind of field out of this product.
+
+  **Unobtainability is a fact and the tooling already asks it.**
+  `ArtifactAvailability.check(artifact, version, context)` runs the user's own `mvn` for that one
+  POM — `dependency:get` with `-Dtransitive=false`, in the isolated probe repository, written to
+  the activity log, constraint 1 category 3 like every other question about a specific artifact. It
+  is also broader than the request: it catches a version yanked, never mirrored, or simply mistyped,
+  none of which a support-tier column would have seen.
+
+  **Three values, and the third is the point.** Maven says *"was not found"* when a repository
+  answered and had nothing, and *"Could not transfer"* when it could not be asked at all. Reporting
+  the second as absent would condemn a good version because a mirror blipped, and send the reader
+  hunting for a replacement that does not need finding. So a start failure, a timeout, or a
+  transport error is `UNKNOWN`, never `UNAVAILABLE`, and an `UNKNOWN` is deliberately silent — the
+  reason it could not be checked is already in the note beside it.
+
+  **It runs only where it can pay for itself: on the failure path of the linkage check.** When the
+  proposed classpath resolves, every version in it plainly exists and asking again would spend a
+  Maven run per row to learn nothing. When it does not resolve, Maven says the classpath failed but
+  not which version caused it, and that is exactly where naming one is worth a few seconds.
+
+  **Measured 2026-09-07 against the real case**, through the production class and a real `mvn`:
+  `spring-security-crypto` 6.1.9 `AVAILABLE`, **6.1.14 `UNAVAILABLE`**, 6.5.5 `AVAILABLE`, and a
+  fabricated 9.9.9 `UNAVAILABLE` as a control.
+
+  **The per-row half followed the same day, and it is free.** `TargetAvailability.of(target,
+  knownVersions)` classifies the minimal fix against the `maven-metadata*.xml` the probe repository
+  already holds — no process, no network, so it is computed whenever a plan is built and needs no
+  action from the reader. Two guards keep it from crying wolf, both about what `knownVersions`
+  actually returns: a **pre-release** is never ABSENT, because that method filters out every version
+  containing a hyphen; and a target **above the highest version on disk** is never ABSENT either,
+  because that is what a stale snapshot looks like. Only a target sitting *below* the highest known
+  release and still missing is genuinely unaccounted for — which is the shape of a line whose later
+  patches went commercial. Measured against the real cached metadata for `keycloak-core` (215
+  versions): a real release KNOWN, a fabricated 9.0.99 ABSENT, 999.0.0 UNKNOWN, a pre-release
+  UNKNOWN.
+
+  **Coverage is the honest limit.** The probe repository holds metadata for six artifacts today, so
+  most rows answer UNKNOWN and show nothing. That grows as the probe is used, and it is the reason
+  the Maven-backed check above still exists: it can answer for any artifact, at the cost of a
+  process.
+
+  **What is built and what is not.** The Maven-backed finding arrives as a note on the compatibility result,
+  naming the artifact and the version. It is **not yet a per-row marker** on the Minimal or Latest
+  column, which is where a reader would most want it — that needs availability known before the
+  check runs, and doing it for every row would mean a Maven invocation per row on a screen that is
+  meant to open instantly. The honest cheap version of that is `knownVersions`, which reads cached
+  `maven-metadata*.xml` from the probe repository and can mark a row for free where the metadata is
+  already there — six artifacts today, growing as the probe is used. Left as the next step rather
+  than guessed at.
+
+- 2026-09-07 — **Release metadata is primed one coordinate at a time, by the `RELEASE` metaversion,
+  through a POM that carries repositories and no dependencies.** The per-row marker above is only as
+  good as its coverage, and coverage was six artifacts. This is how it grows on purpose rather than
+  by accident.
+
+  **First, a correction to the entry above.** The `dependency:get` that `ArtifactAvailability` runs
+  does *not* write `maven-metadata*.xml`. Measured on a fresh local repository, asking for
+  `spring-security-crypto:6.3.8:pom` leaves the POM, its checksum and `_remote.repositories` — and
+  no metadata anywhere. So the Maven-backed check never feeds the free one, and the only thing that
+  had been priming metadata was the feasibility range probe in `rankCandidates`. **The primer is the
+  `RELEASE` metaversion**: the same goal with `-Dartifact=g:a:RELEASE:pom` writes
+  `maven-metadata-central.xml` — 9.6 KB, 267 versions — which is exactly the file `knownVersions`
+  reads.
+
+  **The same measurement settled the branch question independently.** `GHSA-mg83-c7gq-rv5c`
+  (**CVE-2025-22228** — the entry above cites CVE-2024-22228, which is the wrong number) names a fix
+  on each of seven maintained branches: 5.7.16, 5.8.18, 6.0.16, 6.1.14, 6.2.10, 6.3.8, 6.4.4.
+  `pinTarget` picking 6.1.14 from 6.1.9 is **correct** — it is the fix on the reader's own branch and
+  the smallest possible move. Central's metadata lists **only 6.3.8 and 6.4.4**; its 6.1 line stops
+  at 6.1.9. **Five of seven named fixes are unobtainable.** Every layer is right and the
+  recommendation still cannot be applied, which makes this the ordinary shape of an end-of-life
+  branch rather than an exotic case, and is why priming is worth building.
+
+  **One invocation per coordinate, and that is the design rather than a concession.** A synthetic
+  POM listing many coordinates resolves atomically, so a single unreachable supplier artifact takes
+  down every row with it — the failure the maintainer has actually been living with. Measured back
+  to back in one repository: a fabricated `com.acme.internal:billing-core` fails, and
+  `com.squareup.okio:okio` immediately after it succeeds and writes its metadata. A coordinate that
+  fails, fails alone; there is no partial POM to rebuild and no "middle" to fail in.
+
+  **The POM exists only to carry `<repositories>`.** `EffectivePomFragments.repositoriesXml` is
+  already lifted for exactly this reason, and `dependency:get` honours it — measured, Maven tries
+  `central` and then the lifted `acme-nexus` for the metadata. It declares **no dependencies**, so
+  nothing in it can fail to resolve.
+
+  **A supplier artifact never produces a false claim.** When its repository cannot be reached Maven
+  says *"Could not transfer"* / *"Could not find metadata … in local"*, none of which are
+  `ArtifactAvailability`'s absence markers. For the primer the distinction does not even arise: its
+  job is to put metadata on disk, and `TargetAvailability` reads whatever landed. No metadata means
+  UNKNOWN means nothing rendered.
+
+  **Cost, measured warm with the plugin already resolved**: 5120, 5411, 4976, 5264, 5029 ms for five
+  real coordinates — **~5 s each, dominated by JVM and Maven startup, not by the 9.6 KB payload.**
+  That number sets the scope: affordable per row on demand, affordable for the rows of a plan in a
+  bounded pool, **not** affordable for every component at BOM load, where a 300-component document
+  would be twenty-five minutes. So priming is scoped to bump-plan rows that have a target and starts
+  when the plan is built, never on the parse path.
+
+  **The indicator is free.** `knownVersions` is a directory listing, so the screen can say how many
+  rows lack release data before anything is pressed, and the action disappears when the answer is
+  zero.
+
+  **Noted, not adopted: constraint 1 costs a hundredfold here.** A direct HTTPS GET of
+  `maven-metadata.xml` would be ~50 ms rather than ~5 s. It stays delegated to the user's `mvn`
+  because their mirrors, credentials and supplier repositories are what make the answer right, but
+  the price is recorded rather than left to be rediscovered.
+
+- 2026-09-07 — **An unobtainable minimal target is marked absent and nothing else is offered.**
+  Maintainer's call, asked directly because it would have changed `UpgradeAdviceService` rather than
+  only the display. The tempting alternative was to fall back to the lowest obtainable fix — 6.3.8
+  in the case above — and present it as a second target. Declined: that silently converts a patch
+  bump into a two-branch minor jump under the same word "minimal", which is the opposite of what the
+  distance badge was built to expose. The row says the named fix cannot be obtained; choosing what
+  to do instead is the reader's, with the distance badge and the compatibility check there to inform
+  it.
+
+- 2026-09-07 — **Built and verified in the running application.** `MetadataPrimer` (probe),
+  `ReleaseDataService` (bump), `GET`/`POST /api/sboms/{id}/bump/release-data`, and a
+  *Fetch release data (N)* action on Dependency updates that appears only when N is greater than
+  zero and a Maven executable is configured.
+
+  **Through the production classes against a real `mvn`**, on the case that started this: cold
+  probe repository, `spring-security-crypto` primed in 25 s (plugin download included), 256
+  released versions read back, and `TargetAvailability` then answering 6.1.9 KNOWN, **6.1.14
+  ABSENT**, 6.3.8 KNOWN, 6.4.4 KNOWN, 5.8.18 ABSENT, 999.0.0 UNKNOWN, 6.2.0-RC1 UNKNOWN. The
+  second call short-circuits in **1 ms**.
+
+  **Live through the screen**, on SBOMscope's own backend document: coverage reported 2, the action
+  offered *Fetch release data (2)*, two artifacts primed in 11 s, the action then disappeared.
+
+  **An unplanned second effect, and the more visible one.** "Latest available" is derived from the
+  same metadata, so both rows had been reading **"Not available"** — not because no newer release
+  existed, but because nothing had ever fetched the list. After priming they read 2.26.1 (badged
+  MINOR) and 11.0.25. The empty Latest column was the same missing file all along.
+
+  **The plan is rebuilt after a successful fetch only when nothing would be lost.** Availability is
+  patched into the row directly, but "Latest available" lives in the plan, and the plan lives inside
+  the session with its undo history. So the rebuild runs when the session holds no selections or
+  edits of the reader's own, and otherwise a note says to press Reload and why it was not done for
+  them. It is also skipped when any artifact failed, so a rebuild cannot clear the notes explaining
+  the failure.
+
+  **The failure path was verified by accident and is worth recording.** The first live attempt
+  returned `primed: 0, failed: 2` — SBOMscope had been launched without `MAVEN_OPTS` in its
+  environment, so the child `mvn` did not inherit the Windows-ROOT truststore and could not reach
+  Central. The PKIX translation added earlier the same day named the cause exactly, in the note on
+  the screen. The rule it demonstrates: **the truststore must be in the environment that launches
+  SBOMscope, not only on its own JVM command line**, because every probe is a child `mvn` that
+  inherits it.
+
+  **Still open.** Priming is sequential — a pool would divide the wall time, but concurrent Maven
+  processes sharing one local repository is not something Maven promises is safe, so that is a
+  measured change rather than a free one. Nothing primes in the background at plan-build time yet;
+  the property-bound proactive fetch is designed above and not written.

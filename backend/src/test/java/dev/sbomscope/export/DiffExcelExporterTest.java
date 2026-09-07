@@ -188,7 +188,7 @@ class DiffExcelExporterTest {
                     .containsEntry("Summary covers", "the whole comparison, not only the exported rows")
                     .containsEntry("Added (whole comparison)", "1")
                     .containsEntry("Removed (whole comparison)", "2")
-                    .containsEntry("Version changed (whole comparison)", "3")
+                    .containsEntry("Changed (whole comparison)", "3")
                     .containsEntry("Unchanged (whole comparison)", "4")
                     .containsEntry("CVEs gained (whole comparison)", "5")
                     .containsEntry("CVEs lost (whole comparison)", "6");

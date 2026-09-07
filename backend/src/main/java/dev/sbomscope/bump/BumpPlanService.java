@@ -132,7 +132,14 @@ public class BumpPlanService {
                     graphs.graphFor(sbom.id(), component.purl(), vulnerablePurls),
                     scans.evaluatorFor(component));
             String minimal = upgradeAdvice.pinTarget();
-            String latest = mavenComponent ? latest(component, probe) : null;
+            // Read once and used twice: "the highest release we know of" and "is the fix version
+            // among them" are the same file on disk, and reading it a second time would be a
+            // second reading of what this artifact has published.
+            List<String> knownVersions = mavenComponent && probe != null
+                    ? resolver.knownVersions(new MavenArtifact(component.group(), component.name()), probe)
+                    : List.of();
+            String latest = knownVersions.stream().max(VersionOrder.INSTANCE).orElse(null);
+            TargetAvailability minimalAvailability = TargetAvailability.of(minimal, knownVersions);
             List<BumpAdvisory> advisories = findings.stream().filter(FindingRow::hasFinding)
                     .filter(row -> row.osvId() != null)
                     .map(row -> new BumpAdvisory(row.osvId(), row.cveId(),
@@ -148,7 +155,7 @@ public class BumpPlanService {
                     : npmSitesFor(component, packages, minimal, upgradeAdvice.declaredBy(), notes,
                             lockfileNotes);
             for (SiteCandidate site : sites) {
-                pending.add(new PendingRow(site, minimal, latest, advisories, severity,
+                pending.add(new PendingRow(site, minimal, latest, minimalAvailability, advisories, severity,
                         currentLinks.artifactUrl(), currentLinks.versionUrl(), minimalUrl, latestUrl));
             }
         }
@@ -602,7 +609,8 @@ public class BumpPlanService {
                     site.classifier(), site.currentVersion(), site.propertyName(), site.sharedWith(),
                     site.exclusions(), site.versionRange(), site.insertionPoint(), site.ecosystem(),
                     site.versionLiteral(), site.rangeAdmitsFix());
-            return new BumpRow(identified, row.minimal(), row.latest(), row.advisories(),
+            return new BumpRow(identified, row.minimal(), row.latest(), row.minimalAvailability(),
+                    row.advisories(),
                     row.severity(), row.artifactUrl(), row.currentVersionUrl(),
                     row.minimalTargetUrl(), row.latestTargetUrl());
         }).toList();
@@ -635,6 +643,7 @@ public class BumpPlanService {
     private record PropertyRef(ScannedPom pom, PropertyDefinition definition) {}
     private record SiteCandidate(DeclarationSite site, int position, String key) {}
     private record PendingRow(SiteCandidate site, String minimal, String latest,
+                              TargetAvailability minimalAvailability,
                               List<BumpAdvisory> advisories, String severity,
                               String artifactUrl, String currentVersionUrl,
                               String minimalTargetUrl, String latestTargetUrl) {}

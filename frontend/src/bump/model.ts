@@ -31,10 +31,20 @@ export interface DeclarationSite {
   rangeAdmitsFix: boolean;
 }
 
+/**
+ * Whether the minimal fix version appears in the release metadata SBOMscope already holds.
+ *
+ * ABSENT means the metadata lists this artifact and both older and newer releases, but not this
+ * one — as close to "you cannot get it" as local files can say. UNKNOWN is never rendered as a
+ * claim: nothing on disk could answer.
+ */
+export type TargetAvailability = 'KNOWN' | 'ABSENT' | 'UNKNOWN';
+
 export interface BumpRow {
   site: DeclarationSite;
   minimalTarget: string | null;
   latestTarget: string | null;
+  minimalTargetAvailability: TargetAvailability;
   advisories: BumpAdvisory[];
   highestSeverity: string | null;
   artifactUrl: string | null;

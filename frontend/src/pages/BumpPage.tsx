@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { ApiError, applyBump, checkLinkage, fetchBumpPlan, previewBump } from '../api/client';
-import type { ApplyResult, LinkageCheck, PreviewFile, PreviewResult } from '../api/client';
+import { ApiError, applyBump, checkLinkage, fetchBumpPlan, fetchReleaseData, fetchReleaseDataCoverage, previewBump } from '../api/client';
+import type { ApplyResult, LinkageCheck, PreviewFile, PreviewResult, ReleaseDataCoverage } from '../api/client';
 import {
   apply,
   compareSemver,
@@ -15,7 +15,7 @@ import {
   undo,
   versionDistance,
 } from '../bump/model';
-import type { BumpPlan, BumpRow, Selection, Session, TextRange } from '../bump/model';
+import type { BumpPlan, BumpRow, Selection, Session, TargetAvailability, TextRange } from '../bump/model';
 import { SearchField } from '../components/SearchField';
 import { buildMatcher, rowMatches } from '../components/searchMatcher';
 import { useSboms } from '../sboms/SbomProvider';
@@ -143,10 +143,12 @@ function DistanceBadge({ from, to, ecosystem }: {
   return <span className={`bump-distance bump-distance--${distance}`}>{distance}</span>;
 }
 
-function RowControls({ row, session, notes, onChange }: {
+function RowControls({ row, session, notes, releaseData, onChange }: {
   row: BumpRow;
   session: Session;
   notes: string[];
+  /** Fresh availability by `groupId:artifactId`, from a release-data fetch this session. */
+  releaseData: Record<string, TargetAvailability>;
   onChange: (next: Session) => void;
 }) {
   const key = rowKey(row.site);
@@ -163,6 +165,9 @@ function RowControls({ row, session, notes, onChange }: {
   const unsupportedNote = unsupportedLiteral || unsupportedUndeclared
     ? unsupportedLiteralNote(row, notes) : null;
   const coordinate = `${row.site.groupId}:${row.site.artifactId}`;
+  // A fetch this session wins over the answer the plan was built with: the plan read whatever
+  // metadata happened to be on disk, and the fetch is why there is now more of it.
+  const availability = releaseData[coordinate] ?? row.minimalTargetAvailability;
   const impact = row.site.kind === 'PROPERTY' && row.site.sharedWith.length > 0
     ? sharedImpact(session.state, row.site.id)
     : [];
@@ -232,6 +237,8 @@ function RowControls({ row, session, notes, onChange }: {
             />
             <LinkedValue value={row.minimalTarget} url={row.minimalTargetUrl} />
             <DistanceBadge from={row.site.currentVersion} to={row.minimalTarget} ecosystem={row.site.ecosystem} />
+            {availability === 'ABSENT'
+              && <span className="bump-absent">unavailable</span>}
           </label>
         ) : <span className="text-muted">No fix named</span>}
       </td>
@@ -296,6 +303,14 @@ export function BumpPage() {
   const [overrideGate, setOverrideGate] = useState(false);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
   const [reloadGeneration, setReloadGeneration] = useState(0);
+  // Availability is held beside the session rather than inside it. The session owns the plan and
+  // its undo history, so writing a fetched answer into a row would mean rewriting every past
+  // state — or throwing the history away to carry one changed field.
+  const [releaseData, setReleaseData] = useState<Record<string, TargetAvailability>>({});
+  const [releaseCoverage, setReleaseCoverage] = useState<ReleaseDataCoverage | null>(null);
+  const [fetchingReleaseData, setFetchingReleaseData] = useState(false);
+  const [releaseDataError, setReleaseDataError] = useState<string | null>(null);
+  const [releaseDataNotes, setReleaseDataNotes] = useState<string[]>([]);
   // Read through a ref, never as a dependency: this store is written on every selection change,
   // so depending on it here would reload the plan in a loop. Same reason the drag handlers keep
   // the dragged row in a ref — an effect needs the current value, not a re-run when it changes.
@@ -352,6 +367,10 @@ export function BumpPage() {
     setLinkageError(null);
     setError(null);
     setWorkspaceMissing(false);
+    setReleaseData({});
+    setReleaseCoverage(null);
+    setReleaseDataError(null);
+    setReleaseDataNotes([]);
     if (!selected?.workspacePath) {
       setLoading(false);
       return () => { cancelled = true; };
@@ -399,6 +418,19 @@ export function BumpPage() {
     if (!selected?.id || !session) return;
     rememberBumpSession(selected.id, { session, preview, linkageCheck });
   }, [selected?.id, session, preview, linkageCheck, rememberBumpSession]);
+
+  // How much release data is missing, asked once the plan exists. This is a directory listing on
+  // the backend, so it costs nothing and lets the action say what it would do before it is
+  // pressed — rather than the reader starting a minutes-long fetch to find out it was a no-op.
+  // A failure here is deliberately silent: it withholds an action, it does not break the screen.
+  useEffect(() => {
+    if (!selected?.id || !session) return;
+    let cancelled = false;
+    fetchReleaseDataCoverage(selected.id)
+      .then((coverage) => { if (!cancelled) setReleaseCoverage(coverage); })
+      .catch(() => { if (!cancelled) setReleaseCoverage(null); });
+    return () => { cancelled = true; };
+  }, [selected?.id, session?.state.plan]);
 
   useEffect(() => {
     if (!selected?.workspacePath || !session) return;
@@ -535,6 +567,53 @@ export function BumpPage() {
           >
             {checkingLinkage ? 'Checking…' : 'Check compatibility'}
           </button>
+          {/* Offered only when there is something to fetch. The count is the whole point: it is
+              roughly five seconds of Maven per artifact, and the reader should know that before
+              starting rather than after. */}
+          {releaseCoverage?.canFetch && releaseCoverage.missing > 0 && (
+            <button
+              type="button"
+              className="button"
+              disabled={fetchingReleaseData || loading}
+              onClick={() => {
+                setFetchingReleaseData(true);
+                setReleaseDataError(null);
+                setReleaseDataNotes([]);
+                fetchReleaseData(selected.id)
+                  .then((result) => {
+                    setReleaseData((current) => ({ ...current, ...result.availability }));
+                    setReleaseDataNotes(result.notes);
+                    setReleaseCoverage((current) => current
+                      ? { ...current, missing: Math.max(0, current.missing - result.primed) }
+                      : current);
+                    // Availability is patched in above, but "Latest available" is derived from
+                    // the same metadata and lives in the plan, so it stays stale until the plan
+                    // is built again. Rebuilt only when nothing would be lost — a reader with
+                    // selections or edits in flight gets told to press Reload instead of having
+                    // their work discarded for a column.
+                    // Only when nothing failed: a rebuild clears this panel, and it must not
+                    // take the notes explaining a failure down with it.
+                    if (result.primed > 0 && result.failed === 0) {
+                      if (session && !wouldDiscardSessionWork(session)) {
+                        reloadPlan(true);
+                      } else if (session) {
+                        setReleaseDataNotes((current) => [...current,
+                          'Latest available still shows what was known before this fetch. '
+                          + 'Press Reload to rebuild the plan — your selections would be lost, '
+                          + 'so it is not done for you.']);
+                      }
+                    }
+                  })
+                  .catch((reason: unknown) =>
+                    setReleaseDataError(`Could not fetch release data: ${messageOf(reason)}`))
+                  .finally(() => setFetchingReleaseData(false));
+              }}
+            >
+              {fetchingReleaseData
+                ? 'Fetching release data…'
+                : `Fetch release data (${releaseCoverage.missing})`}
+            </button>
+          )}
           <button
             type="button"
             className="button button--primary"
@@ -671,7 +750,17 @@ export function BumpPage() {
             </div>
             <p className="bump-rows__hidden-note">
               Distance badges show how far a version moves, not how risky the change is.
+              A version marked unavailable is missing from the release metadata already on this
+              machine — a fix an advisory names can be published only to a commercial repository.
             </p>
+            {(releaseDataError || releaseDataNotes.length > 0) && (
+              <section className="bump-linkage bump-linkage--unchecked" role="status">
+                {releaseDataError && <p className="bump-linkage__error">{releaseDataError}</p>}
+                {/* One line per artifact whose version list could not be fetched. Their rows stay
+                    silent rather than claiming a version is missing on the strength of a failure. */}
+                {releaseDataNotes.map((note) => <p key={note}>{note}</p>)}
+              </section>
+            )}
             {(linkageCheck || linkageError) && (
               <section
                 className={`bump-linkage ${linkageCheck
@@ -732,7 +821,7 @@ export function BumpPage() {
                 <tbody>
                   {visibleRows.map((row) => (
                     <RowControls key={rowKey(row.site)} row={row} session={session}
-                      notes={session.state.plan.notes} onChange={setSession} />
+                      notes={session.state.plan.notes} releaseData={releaseData} onChange={setSession} />
                   ))}
                 </tbody>
               </table>

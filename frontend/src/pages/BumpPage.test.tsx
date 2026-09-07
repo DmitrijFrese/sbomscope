@@ -79,6 +79,7 @@ function row(id = 'module-a/pom.xml#0', artifactId = 'alpha', kind: SiteKind = '
     site: site(id, artifactId, kind),
     minimalTarget: '2.0.0',
     latestTarget: '3.0.0',
+    minimalTargetAvailability: 'KNOWN',
     advisories: [{
       osvId: 'OSV-2026-1', cveId: null,
       osvUrl: 'https://osv.dev/vulnerability/OSV-2026-1', cveUrl: null,
@@ -143,6 +144,29 @@ beforeEach(() => {
 });
 
 describe('BumpPage', () => {
+  it('marks a fix version the local release metadata does not list', async () => {
+    // A fix an advisory names can be published only to a commercial repository once its line
+    // goes end-of-life, and writing it stops the build resolving. Reported from live use.
+    const absent = row();
+    absent.minimalTargetAvailability = 'ABSENT';
+    fetchBumpPlanMock.mockResolvedValue(plan([absent]));
+    selected = sbom();
+    render(<BumpPage />);
+
+    expect(await screen.findByText('unavailable')).toBeTruthy();
+  });
+
+  it('says nothing when the metadata cannot answer', async () => {
+    const unknown = row();
+    unknown.minimalTargetAvailability = 'UNKNOWN';
+    fetchBumpPlanMock.mockResolvedValue(plan([unknown]));
+    selected = sbom();
+    render(<BumpPage />);
+
+    await screen.findByText('org.example:alpha');
+    expect(screen.queryByText('unavailable')).toBeNull();
+  });
+
   it('keeps the plan and its selections when the screen is left and returned to', async () => {
     // Reported from live use on 2026-09-07: browsing to another tab and back rebuilt the plan,
     // discarding every selection and typed preview edit. The session lives in the provider now,

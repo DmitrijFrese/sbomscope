@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 
 import dev.sbomscope.linkage.LinkageVerdict;
 import dev.sbomscope.linkage.MemberRef;
+import dev.sbomscope.probe.ArtifactAvailability;
 import dev.sbomscope.probe.EffectivePomCache;
 import dev.sbomscope.probe.LinkageClasspathResolver;
 import dev.sbomscope.probe.LinkageClasspathResolver.ResolvedClasspath;
@@ -89,6 +90,50 @@ class LinkageCheckServiceTest {
         assertThat(result.verdict()).isEqualTo(LinkageVerdict.UNCHECKED);
         assertThat(result.notes()).contains("Maven could not resolve library.");
         verify(classpaths, times(1)).resolve(anyList(), anyMap(), any());
+    }
+
+    /**
+     * The reason a classpath would not resolve is worth more than the fact that it would not.
+     * A fix version an advisory names can be published only to a commercial repository once its
+     * line goes end-of-life — spring-security-crypto 6.1.14 for CVE-2024-22228 is the case that
+     * prompted this — and "Maven could not resolve" sends the reader nowhere.
+     */
+    @Test
+    void namesASelectedVersionTheRepositoriesDoNotCarry(@TempDir Path workspace) throws IOException {
+        writePom(workspace, dependency("example", "library", "1.0.0", null));
+        LinkageClasspathResolver classpaths = mock(LinkageClasspathResolver.class);
+        when(classpaths.resolve(anyList(), anyMap(), any()))
+                .thenReturn(new ResolvedClasspath(List.of(), true, null))
+                .thenReturn(new ResolvedClasspath(List.of(), false, "Maven could not resolve the classpath."));
+        ArtifactAvailability availability = mock(ArtifactAvailability.class);
+        when(availability.check(any(), any(), any())).thenReturn(new ArtifactAvailability.Result(
+                ArtifactAvailability.Availability.UNAVAILABLE, "2.0.0 is not available in your repositories."));
+
+        LinkageCheck result = service(classpaths, availability)
+                .check(plan(workspace, mavenRow("site")), List.of(new BumpEdit("site", "2.0.0", false)));
+
+        assertThat(result.verdict()).isEqualTo(LinkageVerdict.UNCHECKED);
+        assertThat(result.notes()).anySatisfy(note -> assertThat(note)
+                .contains("example:library")
+                .contains("2.0.0 is not available in your repositories."));
+    }
+
+    @Test
+    void staysSilentAboutAVersionItCouldNotCheck(@TempDir Path workspace) throws IOException {
+        writePom(workspace, dependency("example", "library", "1.0.0", null));
+        LinkageClasspathResolver classpaths = mock(LinkageClasspathResolver.class);
+        when(classpaths.resolve(anyList(), anyMap(), any()))
+                .thenReturn(new ResolvedClasspath(List.of(), true, null))
+                .thenReturn(new ResolvedClasspath(List.of(), false, "Maven could not resolve the classpath."));
+        ArtifactAvailability availability = mock(ArtifactAvailability.class);
+        when(availability.check(any(), any(), any())).thenReturn(new ArtifactAvailability.Result(
+                ArtifactAvailability.Availability.UNKNOWN, "Could not tell."));
+
+        LinkageCheck result = service(classpaths, availability)
+                .check(plan(workspace, mavenRow("site")), List.of(new BumpEdit("site", "2.0.0", false)));
+
+        // A version that could not be checked is not a version to warn about.
+        assertThat(result.notes()).noneMatch(note -> note.contains("example:library"));
     }
 
     @Test
@@ -241,7 +286,20 @@ class LinkageCheckServiceTest {
         when(effectivePoms.forWorkspace(any(), any(), any(), any(), any(), any())).thenReturn(Optional.empty());
         SettingsService settings = mock(SettingsService.class);
         when(settings.mavenSettings()).thenReturn(new MavenToolSettings(true, "mvn", 20, 8, null, null, null));
-        return new LinkageCheckService(new PomWorkspace(), classpaths, effectivePoms, settings);
+        // Availability is only consulted when a classpath fails to resolve; a mock that answers
+        // UNKNOWN keeps every other test on the path it is actually about.
+        ArtifactAvailability availability = mock(ArtifactAvailability.class);
+        when(availability.check(any(), any(), any()))
+                .thenReturn(new ArtifactAvailability.Result(ArtifactAvailability.Availability.UNKNOWN, "not checked"));
+        return service(classpaths, availability);
+    }
+
+    private LinkageCheckService service(LinkageClasspathResolver classpaths, ArtifactAvailability availability) {
+        EffectivePomCache effectivePoms = mock(EffectivePomCache.class);
+        when(effectivePoms.forWorkspace(any(), any(), any(), any(), any(), any())).thenReturn(Optional.empty());
+        SettingsService settings = mock(SettingsService.class);
+        when(settings.mavenSettings()).thenReturn(new MavenToolSettings(true, "mvn", 20, 8, null, null, null));
+        return new LinkageCheckService(new PomWorkspace(), classpaths, effectivePoms, settings, availability);
     }
 
     private BumpPlan plan(Path workspace, BumpRow row) {
@@ -260,7 +318,7 @@ class LinkageCheckServiceTest {
         DeclarationSite site = new DeclarationSite(siteId, "pom.xml", "", SiteKind.DIRECT,
                 "example", ecosystem == Ecosystem.MAVEN ? "library" : "npm-library", "jar", "",
                 "1", null, List.of(), List.of(), null, null, ecosystem, "1", false);
-        return new BumpRow(site, "2", null, List.of(), "High", null, null, null, null);
+        return new BumpRow(site, "2", null, TargetAvailability.UNKNOWN, List.of(), "High", null, null, null, null);
     }
 
     private void writePom(Path directory, String body) throws IOException {

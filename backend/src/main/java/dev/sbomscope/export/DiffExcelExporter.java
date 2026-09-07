@@ -256,7 +256,7 @@ public class DiffExcelExporter {
         return switch (change) {
             case ADDED -> "Added";
             case REMOVED -> "Removed";
-            case VERSION_CHANGED -> "Version changed";
+            case VERSION_CHANGED -> "Changed";
             case UNCHANGED -> "Unchanged";
         };
     }

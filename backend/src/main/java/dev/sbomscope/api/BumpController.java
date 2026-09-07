@@ -30,6 +30,7 @@ import dev.sbomscope.bump.PomPatcher;
 import dev.sbomscope.bump.PomPatcher.PlannedEdit;
 import dev.sbomscope.bump.PreviewFile;
 import dev.sbomscope.bump.PreviewResult;
+import dev.sbomscope.bump.ReleaseDataService;
 import dev.sbomscope.sbom.SbomService;
 import dev.sbomscope.sbom.StoredSbom;
 
@@ -41,13 +42,35 @@ class BumpController {
     private final SbomService sboms;
     private final BumpApplyService applies;
     private final LinkageCheckService linkage;
+    private final ReleaseDataService releaseData;
 
     BumpController(BumpPlanService plans, SbomService sboms, BumpApplyService applies,
-            LinkageCheckService linkage) {
+            LinkageCheckService linkage, ReleaseDataService releaseData) {
         this.plans = plans;
         this.sboms = sboms;
         this.applies = applies;
         this.linkage = linkage;
+        this.releaseData = releaseData;
+    }
+
+    /**
+     * The three checks every bump endpoint makes before it can look at a workspace, in one place.
+     *
+     * <p>Added with the release-data endpoints rather than as a sweep: the older endpoints repeat
+     * these inline, and rewriting them here would mix a refactor into a feature.
+     */
+    private StoredSbom withWorkspace(UUID id) {
+        StoredSbom sbom = sboms.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM"));
+        if (sbom.workspacePath() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This SBOM has no workspace attached");
+        }
+        if (!hasManifest(sbom.workspacePath())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The workspace holds no pom.xml or package.json");
+        }
+        return sbom;
     }
 
     @GetMapping
@@ -137,6 +160,28 @@ class BumpController {
         }
         return linkage.check(plans.plan(sbom),
                 request.edits() == null ? List.of() : request.edits());
+    }
+
+    /**
+     * How many of the plan's artifacts have no release metadata on disk.
+     *
+     * <p>A directory listing, so the screen can say what an action would cost before offering it.
+     */
+    @GetMapping("/release-data")
+    ReleaseDataService.Coverage releaseDataCoverage(@PathVariable UUID id) {
+        return releaseData.coverage(plans.plan(withWorkspace(id)));
+    }
+
+    /**
+     * Fetches the missing release metadata, one Maven invocation per artifact.
+     *
+     * <p>Returns the fresh availability per {@code groupId:artifactId} rather than a new plan: the
+     * screen's session holds the plan and its undo history, and replacing it to carry one changed
+     * field would throw away work the reader has already done.
+     */
+    @PostMapping("/release-data")
+    ReleaseDataService.Result fetchReleaseData(@PathVariable UUID id) {
+        return releaseData.prime(plans.plan(withWorkspace(id)));
     }
 
     /**

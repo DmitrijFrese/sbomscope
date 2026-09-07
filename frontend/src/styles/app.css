@@ -4104,3 +4104,20 @@ body {
     justify-self: start;
   }
 }
+
+/*
+ * A fix version the release metadata on this machine does not list, while listing both older and
+ * newer ones. Emphasised like a major bump because the consequence is worse than a large upgrade:
+ * writing it stops the build resolving. Only ABSENT is ever drawn — UNKNOWN is not a claim.
+ */
+.bump-absent {
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--severity-critical);
+  background: var(--bg-subtle);
+  border: 1px solid var(--severity-critical);
+  border-radius: var(--radius-sm);
+}

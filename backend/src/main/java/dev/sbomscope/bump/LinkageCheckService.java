@@ -26,6 +26,7 @@ import dev.sbomscope.linkage.LinkageVerdict;
 import dev.sbomscope.linkage.MemberResolver;
 import dev.sbomscope.linkage.PlatformClasses;
 import dev.sbomscope.logging.ActivityLogger;
+import dev.sbomscope.probe.ArtifactAvailability;
 import dev.sbomscope.probe.EffectivePomCache;
 import dev.sbomscope.probe.EffectivePomFragments;
 import dev.sbomscope.probe.LinkageClasspathResolver;
@@ -46,19 +47,23 @@ public class LinkageCheckService {
     private final LinkageClasspathResolver classpaths;
     private final EffectivePomCache effectivePoms;
     private final SettingsService settings;
+    private final ArtifactAvailability availability;
 
     @Autowired
     LinkageCheckService(EffectivePomCache effectivePoms, SettingsService settings,
                         ActivityLogger activityLog) {
-        this(new PomWorkspace(), new LinkageClasspathResolver(activityLog), effectivePoms, settings);
+        this(new PomWorkspace(), new LinkageClasspathResolver(activityLog), effectivePoms, settings,
+                new ArtifactAvailability(activityLog));
     }
 
     public LinkageCheckService(PomWorkspace workspaces, LinkageClasspathResolver classpaths,
-                               EffectivePomCache effectivePoms, SettingsService settings) {
+                               EffectivePomCache effectivePoms, SettingsService settings,
+                               ArtifactAvailability availability) {
         this.workspaces = workspaces;
         this.classpaths = classpaths;
         this.effectivePoms = effectivePoms;
         this.settings = settings;
+        this.availability = availability;
     }
 
     /**
@@ -86,6 +91,11 @@ public class LinkageCheckService {
         LinkageClasspathResolver.ResolvedClasspath after = classpaths.resolve(current, overrides, context);
         if (!after.complete()) {
             notes.add(after.detail());
+            // Maven says the classpath would not resolve; it does not say which version caused it.
+            // Asking per selected version turns that into something a reader can act on, and the
+            // common cause is a fix version an advisory names that was published only to a
+            // commercial repository once its line went end-of-life.
+            notes.addAll(unobtainable(overrides, context));
             return unchecked(notes);
         }
 
@@ -122,6 +132,27 @@ public class LinkageCheckService {
                 ? LinkageVerdict.UNCHECKED
                 : LinkageVerdict.CLEAN;
         return new LinkageCheck(verdict, diff.newlyMissing(), diff.referencesChecked(), List.copyOf(notes));
+    }
+
+    /**
+     * Names the selected versions the user's own repositories do not carry.
+     *
+     * <p>Only on the failure path. When the classpath resolved, every version in it plainly exists,
+     * and asking again would spend a Maven run per row to learn nothing. An {@code UNKNOWN} answer
+     * is deliberately silent too: a version that could not be checked is not a version to warn
+     * about, and the reason it could not be checked is already in the note above this one.
+     */
+    private List<String> unobtainable(Map<MavenArtifact, String> overrides, ProbeContext context) {
+        List<String> found = new ArrayList<>();
+        for (Map.Entry<MavenArtifact, String> override : overrides.entrySet()) {
+            ArtifactAvailability.Result result =
+                    availability.check(override.getKey(), override.getValue(), context);
+            if (result.availability() == ArtifactAvailability.Availability.UNAVAILABLE) {
+                found.add(override.getKey().groupId() + ":" + override.getKey().artifactId()
+                        + " " + result.detail());
+            }
+        }
+        return found;
     }
 
     private Map<MavenArtifact, String> overrides(List<BumpRow> rows, List<BumpEdit> edits,

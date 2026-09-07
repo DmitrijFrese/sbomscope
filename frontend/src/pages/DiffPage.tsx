@@ -13,7 +13,7 @@ import { useSboms } from '../sboms/SbomProvider';
 const CHANGE_LABELS: Record<DiffChange, string> = {
   ADDED: 'Added',
   REMOVED: 'Removed',
-  VERSION_CHANGED: 'Version changed',
+  VERSION_CHANGED: 'Changed',
   UNCHANGED: 'Unchanged',
 };
 

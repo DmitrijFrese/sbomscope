@@ -1,4 +1,4 @@
-import type { BumpPlan, TextRange } from '../bump/model';
+import type { BumpPlan, TargetAvailability, TextRange } from '../bump/model';
 
 /**
  * Thin fetch wrapper. Kept deliberately small — there is no client-side data
@@ -1162,6 +1162,32 @@ export function checkLinkage(sbomId: string, edits: BumpEdit[]): Promise<Linkage
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ edits }),
   });
+}
+
+/**
+ * How many of the plan's artifacts have no release metadata cached yet.
+ *
+ * `canFetch` separates "nothing to do" from "no Maven configured", which are both `missing: 0`.
+ */
+export interface ReleaseDataCoverage {
+  missing: number;
+  canFetch: boolean;
+}
+
+/** Fresh availability per `groupId:artifactId`, plus a line for each artifact that failed. */
+export interface ReleaseDataResult {
+  primed: number;
+  failed: number;
+  availability: Record<string, TargetAvailability>;
+  notes: string[];
+}
+
+export function fetchReleaseDataCoverage(sbomId: string): Promise<ReleaseDataCoverage> {
+  return request<ReleaseDataCoverage>(`/sboms/${sbomId}/bump/release-data`);
+}
+
+export function fetchReleaseData(sbomId: string): Promise<ReleaseDataResult> {
+  return request<ReleaseDataResult>(`/sboms/${sbomId}/bump/release-data`, { method: 'POST' });
 }
 
 export interface BumpFileWrite {

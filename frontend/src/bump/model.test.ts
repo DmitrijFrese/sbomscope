@@ -46,6 +46,7 @@ function row(id: string, artifactId: string, kind: SiteKind = 'DIRECT'): BumpRow
     site: site(id, artifactId, kind),
     minimalTarget: '2.0.0',
     latestTarget: '3.0.0',
+    minimalTargetAvailability: 'KNOWN',
     advisories: [{ osvId: 'OSV-1', cveId: null, osvUrl: null, cveUrl: null }],
     highestSeverity: 'HIGH',
     artifactUrl: null,
