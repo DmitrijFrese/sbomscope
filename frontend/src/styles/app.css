@@ -153,10 +153,16 @@
 }
 
 /*
- * bump-distance--minor and bump-distance--patch carry no declarations of their own on purpose:
- * only a major bump is emphasised. The badge states distance, not risk, and a three-colour
- * scale would read as a severity ranking — which is exactly what this value is not.
+ * A minor bump is called out too, in the medium band — the maintainer asked for it on 2026-09-07
+ * after using the screen, reversing the note that stood here. The original reasoning was that a
+ * three-colour scale reads as a severity ranking; in use, two colours read as "major, and
+ * everything else", which under-sells the jump that most often needs a look. Patch stays neutral:
+ * a bump that changes only the last component is the one you can take without thinking.
  */
+.bump-distance--minor {
+  color: var(--severity-medium);
+  border-color: var(--severity-medium);
+}
 
 .bump-custom input {
   width: 11ch;

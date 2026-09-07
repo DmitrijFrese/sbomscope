@@ -78,6 +78,22 @@ export interface DiffRun {
   result: DiffResult;
 }
 
+/**
+ * One document's Dependency updates session, kept while this browser session lasts.
+ *
+ * <p>Typed loosely on purpose: the shapes belong to `bump/model` and `api/client`, and the
+ * provider is a place to keep them rather than a second definition of what they are. Widening
+ * this to import those types would make the provider depend on the page it serves.
+ */
+export interface BumpSessionState {
+  /** The `Session` from `bump/model` — plan, selections, edits and the command stack. */
+  session: unknown;
+  /** The last `PreviewResult`, so returning to the screen does not re-request it. */
+  preview: unknown;
+  /** The last linkage verdict, or null when the check has not been run for this plan. */
+  linkageCheck: unknown;
+}
+
 /** Shared so an SBOM with no tabs does not hand out a new object on every render. */
 const NO_TABS: InspectorTabs = { open: [], active: null, recent: [] };
 
@@ -169,6 +185,27 @@ interface SbomContextValue {
   diffRun: DiffRun | null;
   rememberDiffRun: (run: DiffRun) => void;
 
+  // --- Dependency updates (B26/B28/B30) ---------------------------------------------
+
+  /**
+   * The bump session per SBOM id — selections, typed preview edits, the undo stack and the
+   * last linkage verdict.
+   *
+   * <p>Here rather than in the page for the reason the Inspector's tabs are: leaving Dependency
+   * updates for another screen and coming back rebuilt the plan from scratch and discarded
+   * everything chosen, which is a long way to lose a plan somebody had spent minutes assembling.
+   * Reported from live use on 2026-09-07.
+   *
+   * <p>Deliberately not persisted. The plan carries per-file fingerprints and is only honest
+   * against the files as they were read; surviving a restart would mean offering to write edits
+   * derived from a workspace that has since moved. Navigation is a different thing from a
+   * restart, and only the first is worth keeping.
+   */
+  bumpSessions: Record<string, BumpSessionState>;
+  rememberBumpSession: (sbomId: string, state: BumpSessionState) => void;
+  /** Drops one document's session, so Reload genuinely starts over. */
+  forgetBumpSession: (sbomId: string) => void;
+
   // --- projects and folders (B19) --------------------------------------------------
 
   /** Every project and folder, flat — the sidebar assembles the tree itself. */
@@ -220,6 +257,10 @@ export function SbomProvider({ children }: { children: ReactNode }) {
   // precisely because this must not survive a restart.
   const [inspectorTabs, setInspectorTabs] = useState<Record<string, InspectorTabs>>({});
 
+  // Same reasoning as the Inspector tabs above: navigating away and back should not throw
+  // away a plan somebody assembled. Not persisted — see BumpSessionState.
+  const [bumpSessions, setBumpSessions] = useState<Record<string, BumpSessionState>>({});
+
   // The comparison pair is where somebody is in this session, like the Inspector's tabs,
   // rather than a preference. Keeping ids lets list reloads replace the SBOM objects without
   // losing the pair or making it point at stale response objects.
@@ -251,6 +292,19 @@ export function SbomProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const rememberDiffRun = useCallback((run: DiffRun) => setDiffRun(run), []);
+
+  const rememberBumpSession = useCallback((sbomId: string, state: BumpSessionState) => {
+    setBumpSessions((current) => ({ ...current, [sbomId]: state }));
+  }, []);
+
+  const forgetBumpSession = useCallback((sbomId: string) => {
+    setBumpSessions((current) => {
+      if (!(sbomId in current)) return current;
+      const next = { ...current };
+      delete next[sbomId];
+      return next;
+    });
+  }, []);
 
   const openInspectorTab = useCallback((sbomId: string, purl: string) => {
     setInspectorTabs((current) => {
@@ -536,6 +590,9 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       swapDiffSides,
       diffRun,
       rememberDiffRun,
+      bumpSessions,
+      rememberBumpSession,
+      forgetBumpSession,
       folders,
       createFolder,
       renameFolder,
@@ -563,6 +620,9 @@ export function SbomProvider({ children }: { children: ReactNode }) {
       swapDiffSides,
       diffRun,
       rememberDiffRun,
+      bumpSessions,
+      rememberBumpSession,
+      forgetBumpSession,
       folders,
       createFolder,
       renameFolder,

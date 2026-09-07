@@ -25,6 +25,7 @@ import dev.sbomscope.scanner.FindingQuery;
 import dev.sbomscope.scanner.InvalidFilterPatternException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
@@ -94,7 +95,7 @@ class DiffServiceTest {
     }
 
     @Test
-    void severalVersionsAreNeverGuessedIntoAVersionChange() throws Exception {
+    void severalVersionsCollapsingIntoOnePairIntoChanges() throws Exception {
         UUID left = seed("vuln-multi-module.cdx.json");
         UUID right = seed("vuln-multi-module.cdx.json");
         jdbc.update("DELETE FROM component WHERE sbom_id = ? AND group_name = ?"
@@ -103,12 +104,32 @@ class DiffServiceTest {
 
         List<DiffRow> keycloak = diffs.compare(left, right, "keycloak-core", false, false).rows();
 
+        // Two versions coexisting became one. Every consumer that had 4.8.3.Final has 9.0.3 now,
+        // so that is a change rather than a removal beside an unrelated arrival — which is how it
+        // read before 2026-09-07, and why a real upgrade was hard to find in the table.
         assertThat(keycloak).hasSize(2);
-        assertThat(keycloak).extracting(row -> row.left() != null
-                        ? row.left().version() : row.right().version())
-                .containsExactly("4.8.3.Final", "9.0.3");
+        assertThat(keycloak).extracting(row -> row.left().version(), row -> row.right().version(),
+                        DiffRow::change)
+                .containsExactly(
+                        tuple("4.8.3.Final", "9.0.3", Change.VERSION_CHANGED),
+                        tuple("9.0.3", "9.0.3", Change.UNCHANGED));
+    }
+
+    @Test
+    void severalVersionsOnBothSidesAreStillNeverGuessedIntoAPairing() throws Exception {
+        UUID left = seed("vuln-multi-module.cdx.json");
+        UUID right = seed("vuln-multi-module.cdx.json");
+        // Both sides now hold two versions, and nothing says which of the old became which of
+        // the new. This is the case the narrow rule was written for and it keeps that behaviour.
+        jdbc.update("UPDATE component SET version = '5.0.0' WHERE sbom_id = ? AND group_name = ?"
+                        + " AND name = ? AND version = ?",
+                right, "org.keycloak", "keycloak-core", "4.8.3.Final");
+
+        List<DiffRow> keycloak = diffs.compare(left, right, "keycloak-core", false, false).rows();
+
+        assertThat(keycloak).hasSize(3);
         assertThat(keycloak).extracting(DiffRow::change)
-                .containsExactly(Change.REMOVED, Change.UNCHANGED)
+                .containsExactlyInAnyOrder(Change.REMOVED, Change.ADDED, Change.UNCHANGED)
                 .doesNotContain(Change.VERSION_CHANGED);
     }
 

@@ -24,7 +24,18 @@ vi.mock('../api/client', async (importOriginal) => {
   };
 });
 
-vi.mock('../sboms/SbomProvider', () => ({ useSboms: () => ({ selected }) }));
+// The bump session lives in the provider so it survives navigation (2026-09-07). The store is
+// per test rather than module-wide: a session left behind by one test would be hydrated by the
+// next instead of its plan being fetched, and the failure reads as a component bug.
+let bumpSessions: Record<string, unknown>;
+vi.mock('../sboms/SbomProvider', () => ({
+  useSboms: () => ({
+    selected,
+    bumpSessions,
+    rememberBumpSession: (id: string, state: unknown) => { bumpSessions[id] = state; },
+    forgetBumpSession: (id: string) => { delete bumpSessions[id]; },
+  }),
+}));
 
 function sbom(workspacePath: string | undefined = 'C:/workspace'): Sbom {
   return {
@@ -110,6 +121,7 @@ function preview(patched = '<project>preview 2.0.0</project>') {
 }
 
 beforeEach(() => {
+  bumpSessions = {};
   vi.restoreAllMocks();
   selected = sbom();
   fetchBumpPlanMock.mockReset();
@@ -131,6 +143,23 @@ beforeEach(() => {
 });
 
 describe('BumpPage', () => {
+  it('keeps the plan and its selections when the screen is left and returned to', async () => {
+    // Reported from live use on 2026-09-07: browsing to another tab and back rebuilt the plan,
+    // discarding every selection and typed preview edit. The session lives in the provider now,
+    // so coming back must hydrate rather than refetch.
+    selected = sbom();
+    const first = render(<BumpPage />);
+    await screen.findByText('org.example:alpha');
+    fireEvent.click(screen.getAllByRole('checkbox')[0]!);
+    await waitFor(() => expect(Object.keys(bumpSessions)).toHaveLength(1));
+    first.unmount();
+
+    render(<BumpPage />);
+    await screen.findByText('org.example:alpha');
+
+    expect(fetchBumpPlanMock).toHaveBeenCalledTimes(1);
+  });
+
   it('shows the document-selection empty state without requesting a plan', () => {
     selected = null;
     render(<BumpPage />);

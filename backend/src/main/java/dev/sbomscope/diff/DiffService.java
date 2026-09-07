@@ -115,19 +115,37 @@ public class DiffService {
                     ? leftVersions.coordinates()
                     : rightVersions.coordinates();
 
-            if (leftSides.size() == 1 && rightSides.size() == 1) {
-                Side leftSide = leftSides.values().iterator().next();
-                Side rightSide = rightSides.values().iterator().next();
-                Change change = Objects.equals(leftSide.version(), rightSide.version())
-                        ? Change.UNCHANGED
-                        : Change.VERSION_CHANGED;
-                rows.add(new DiffRow(coordinates, identity.group(), identity.name(),
-                        leftSide, rightSide, change));
+            // Where one side holds a single version, every version on the other side has an
+            // unambiguous counterpart, so each one pairs into a change.
+            //
+            // **Widened 2026-09-07 from "one version on each side", after using the view.** The
+            // narrow rule was defended as refusing to guess, and for the case it was written for —
+            // several versions on *both* sides — it still is. But the common real shape is a
+            // consolidation: two versions coexisting become one, and the old rule reported that as
+            // two removals and an addition scattered through the table, which is where an upgrade
+            // becomes hard to see. Two rows both arriving at 1.5.34 is not a guess and not a double
+            // count: it is what happened to each version that was there, and everything that had
+            // 1.2.6 does now have 1.5.34. The same holds mirrored, for one version becoming several.
+            if (!leftSides.isEmpty() && !rightSides.isEmpty()
+                    && (leftSides.size() == 1 || rightSides.size() == 1)) {
+                boolean singleOnLeft = leftSides.size() == 1;
+                Side single = (singleOnLeft ? leftSides : rightSides).values().iterator().next();
+                for (Side counterpart : (singleOnLeft ? rightSides : leftSides).values()) {
+                    Side leftSide = singleOnLeft ? single : counterpart;
+                    Side rightSide = singleOnLeft ? counterpart : single;
+                    Change change = Objects.equals(leftSide.version(), rightSide.version())
+                            ? Change.UNCHANGED
+                            : Change.VERSION_CHANGED;
+                    rows.add(new DiffRow(coordinates, identity.group(), identity.name(),
+                            leftSide, rightSide, change));
+                }
                 continue;
             }
 
-            // More than one version makes a before/after pairing ambiguous. Keeping versions
-            // separate avoids inventing an upgrade between two components that merely coexist.
+            // Several versions on both sides genuinely is ambiguous — nothing says which of the
+            // old ones became which of the new — so each keeps its own row rather than being
+            // paired by guesswork. A side with no versions at all lands here too, as a whole
+            // library arriving or leaving.
             Set<String> versions = new HashSet<>(leftSides.keySet());
             versions.addAll(rightSides.keySet());
             for (String version : versions) {

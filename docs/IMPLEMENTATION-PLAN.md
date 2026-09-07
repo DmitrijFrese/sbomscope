@@ -3971,6 +3971,79 @@ libraries it does not ship.
 
 ---
 
+### From live use, 2026-09-07 — the second session of it
+
+Four things the maintainer found by using B29 and B30 rather than by reading them. Two are built,
+two are recorded as design answers.
+
+- [x] **A minor bump is called out in the medium band, reversing the note that stood beside it.**
+      The badge shipped with only `major` emphasised, and a *Settled* note here argued that a
+      three-colour scale would read as a severity ranking. In use it read as *"major, and everything
+      else"*, which under-sells the jump most often worth a look. `minor` is now
+      `--severity-medium`; `patch` stays neutral, because a bump that changes only the last
+      component is the one you take without thinking. **The original reasoning is not withdrawn —
+      it was outweighed by how the two-colour version actually read.**
+
+- [x] **The Dependency updates session survives navigation.** Leaving the screen and coming back
+      rebuilt the plan and discarded every selection and typed preview edit. The session now lives
+      in `SbomProvider` keyed by SBOM id, beside the Inspector's tabs and the diff result, for the
+      reason those are there: this is *where somebody is* in a session, above the router, and state
+      inside a page cannot survive its own unmount.
+
+      Deliberately **not persisted**. The plan carries per-file fingerprints and is only honest
+      against the files as they were read; surviving a restart would mean offering to write edits
+      derived from a workspace that has since moved. Navigation and a restart are different things
+      and only the first is worth keeping. Reload still discards the session outright, or it would
+      not be a reload.
+
+- [ ] **"How far" within a minor jump is not offered, and the reasoning is worth keeping.** The
+      observation was that `4.1 → 4.8` feels further than `4.1 → 4.2`, which is true and is not
+      measurable honestly here. The numeric gap is not the number of releases — `4.1.x` may have
+      had thirty patches and minors can be skipped — so the count that would justify the feeling
+      needs `maven-metadata.xml`, of which the probe repository holds **six**. A number that looks
+      precise and means nothing is the same failure as painting the badge with severity colours.
+      Both versions are already on the row, so a reader sees the gap; and **the honest answer to
+      "is this jump too far" is the linkage check**, which measures consequences instead of
+      inferring them from digits.
+
+- [ ] **Fix versions that are not obtainable — the open one, and the most serious.** Observed:
+      spring-security-crypto 6.1.9 → 6.1.14 offered for CVE-2024-22228. Once Spring's OSS support
+      for a line ends, its patches are published to a **commercial repository rather than Maven
+      Central**, so OSV names a fix version the user's build cannot resolve. That is worse than a
+      poor suggestion: applying it breaks the build.
+
+      **A free-versus-enterprise column is the wrong shape for it.** It would mean encoding each
+      vendor's support policy — judgment data with no source, which goes stale and which constraint
+      6 exists to keep out of this product.
+
+      **Unobtainability is a fact and is nearly built.** A target the user's own `mvn` cannot
+      resolve is measurable, ecosystem-neutral, and already surfaces:
+      `LinkageClasspathResolver.resolve` returns `complete=false` carrying Maven's own reason. What
+      is missing is the reading — today it presents as a tooling failure rather than *"this version
+      is not available to you"* — which is the same translation `Result.failureSummary()` now makes
+      for a TLS trust failure. Next step, not built.
+
+- [x] **The diff pairs several versions into one, where one side holds a single version —
+      reworking the B24 pairing rule at the maintainer's direction.** The narrow rule paired only
+      one-version-each-side and reported everything else as removals and additions, on the argument
+      that a pairing would be a guess. In use, the common shape is a *consolidation*: two versions
+      coexisting become one, and three scattered rows made a real upgrade hard to find.
+
+      The argument that carried it: two rows both arriving at 1.5.34 are not a guess and not a
+      double count — everything that had 1.2.6 does now have 1.5.34, and so does everything that
+      had 1.4.14. Each row states what became of a version that was there.
+
+      So: **where either side holds exactly one version, every version on the other side pairs
+      into a change** — consolidation and its mirror, one version becoming several. **Several on
+      *both* sides is still never paired**, because nothing says which of the old became which of
+      the new; that is the case the original rule was written for and it keeps its behaviour.
+
+      **The residual case, stated rather than hidden:** the diff pairs by coordinate and cannot see
+      modules, so where two versions coexisted because two modules disagreed and one of those
+      modules was *deleted*, the deleted one is now reported as an upgrade rather than a removal.
+      Reading it as a removal is not available either — the data does not carry the difference.
+
+
 ## Risks and design gaps
 
 Live list of things known to need resolution before or during the phase they affect.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError, applyBump, checkLinkage, fetchBumpPlan, previewBump } from '../api/client';
 import type { ApplyResult, LinkageCheck, PreviewFile, PreviewResult } from '../api/client';
@@ -280,7 +280,7 @@ function RowControls({ row, session, notes, onChange }: {
 }
 
 export function BumpPage() {
-  const { selected } = useSboms();
+  const { selected, bumpSessions, rememberBumpSession, forgetBumpSession } = useSboms();
   const [session, setSession] = useState<Session | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [openFile, setOpenFile] = useState<string | null>(null);
@@ -296,6 +296,11 @@ export function BumpPage() {
   const [overrideGate, setOverrideGate] = useState(false);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
   const [reloadGeneration, setReloadGeneration] = useState(0);
+  // Read through a ref, never as a dependency: this store is written on every selection change,
+  // so depending on it here would reload the plan in a loop. Same reason the drag handlers keep
+  // the dragged row in a ref — an effect needs the current value, not a re-run when it changes.
+  const storedSessions = useRef(bumpSessions);
+  storedSessions.current = bumpSessions;
   // Session state, like the Component Inspector's finder: a filter is where you are in a task,
   // not a preference, and a stored one would silently hide rows on a later visit.
   const [filter, setFilter] = useState('');
@@ -352,6 +357,20 @@ export function BumpPage() {
       return () => { cancelled = true; };
     }
 
+    const kept = storedSessions.current[selected.id];
+    if (kept?.session) {
+      // Returning to the screen, not arriving at it: the plan and every selection, typed edit
+      // and undo step are still the ones this reader assembled. Refetching would silently
+      // discard them, which is what live use reported on 2026-09-07.
+      const session = kept.session as Session;
+      setSession(session);
+      setPreview(kept.preview as PreviewResult | null);
+      setLinkageCheck(kept.linkageCheck as LinkageCheck | null);
+      setOpenFile(session.state.plan.files[0]?.path ?? null);
+      setLoading(false);
+      return () => { cancelled = true; };
+    }
+
     setLoading(true);
     fetchBumpPlan(selected.id)
       .then((plan) => {
@@ -372,6 +391,14 @@ export function BumpPage() {
       });
     return () => { cancelled = true; };
   }, [selected?.id, selected?.workspacePath, reloadGeneration]);
+
+  // Kept above the router so leaving for another tab and coming back does not rebuild the
+  // plan from scratch. Deliberately not persisted: the plan carries per-file fingerprints and
+  // is only honest against the files as they were read.
+  useEffect(() => {
+    if (!selected?.id || !session) return;
+    rememberBumpSession(selected.id, { session, preview, linkageCheck });
+  }, [selected?.id, session, preview, linkageCheck, rememberBumpSession]);
 
   useEffect(() => {
     if (!selected?.workspacePath || !session) return;
@@ -457,6 +484,7 @@ export function BumpPage() {
     setLinkageError(null);
     setError(null);
     setLoading(true);
+    if (selected?.id) forgetBumpSession(selected.id);
     setReloadGeneration((generation) => generation + 1);
   };
   const refusalVerdict = applyError ? applyVerdict(applyError) : 'retry';
