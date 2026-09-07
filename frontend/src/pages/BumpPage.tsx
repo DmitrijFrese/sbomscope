@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { ApiError, applyBump, fetchBumpPlan, previewBump } from '../api/client';
-import type { ApplyResult, PreviewFile, PreviewResult } from '../api/client';
+import { ApiError, applyBump, checkLinkage, fetchBumpPlan, previewBump } from '../api/client';
+import type { ApplyResult, LinkageCheck, PreviewFile, PreviewResult } from '../api/client';
 import {
   apply,
   compareSemver,
@@ -13,6 +13,7 @@ import {
   siteVersion,
   startSession,
   undo,
+  versionDistance,
 } from '../bump/model';
 import type { BumpPlan, BumpRow, Selection, Session, TextRange } from '../bump/model';
 import { SearchField } from '../components/SearchField';
@@ -131,6 +132,17 @@ function LinkedValue({ value, url }: { value: string; url: string | null }) {
   ) : <span className="mono">{value}</span>;
 }
 
+function DistanceBadge({ from, to, ecosystem }: {
+  from: string;
+  to: string;
+  ecosystem: BumpRow['site']['ecosystem'];
+}) {
+  const distance = versionDistance(from, to, ecosystem);
+  if (distance === 'none' || distance === 'unknown') return null;
+
+  return <span className={`bump-distance bump-distance--${distance}`}>{distance}</span>;
+}
+
 function RowControls({ row, session, notes, onChange }: {
   row: BumpRow;
   session: Session;
@@ -161,7 +173,7 @@ function RowControls({ row, session, notes, onChange }: {
   return (
     <tr data-row-key={key}>
       <td>
-        {unavailable ? <span className="text-muted">â€”</span> : (
+        {unavailable ? <span className="text-muted">—</span> : (
           <input
             type="checkbox"
             aria-label={`Select ${coordinate}`}
@@ -199,7 +211,7 @@ function RowControls({ row, session, notes, onChange }: {
         {rangeAdmitsFix && row.minimalTarget && (
           <span className="bump-npm-diagnosis" role="note">
             <span className="mono">{row.site.versionLiteral}</span> already allows {row.minimalTarget}
-            {' â€” '}your lockfile is pinned to an older version; run <span className="mono">npm install</span>
+            {' — '}your lockfile is pinned to an older version; run <span className="mono">npm install</span>
           </span>
         )}
         {unsupportedNote && <span className="bump-npm-diagnosis" role="note">{unsupportedNote}</span>}
@@ -219,6 +231,7 @@ function RowControls({ row, session, notes, onChange }: {
               onChange={() => choose(row.minimalTarget!, 'minimal')}
             />
             <LinkedValue value={row.minimalTarget} url={row.minimalTargetUrl} />
+            <DistanceBadge from={row.site.currentVersion} to={row.minimalTarget} ecosystem={row.site.ecosystem} />
           </label>
         ) : <span className="text-muted">No fix named</span>}
       </td>
@@ -233,6 +246,7 @@ function RowControls({ row, session, notes, onChange }: {
               onChange={() => choose(row.latestTarget!, 'latest')}
             />
             <LinkedValue value={row.latestTarget} url={row.latestTargetUrl} />
+            <DistanceBadge from={row.site.currentVersion} to={row.latestTarget} ecosystem={row.site.ecosystem} />
           </label>
         ) : <span className="text-muted">Not available</span>}
       </td>
@@ -276,6 +290,9 @@ export function BumpPage() {
   const [confirming, setConfirming] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [checkingLinkage, setCheckingLinkage] = useState(false);
+  const [linkageCheck, setLinkageCheck] = useState<LinkageCheck | null>(null);
+  const [linkageError, setLinkageError] = useState<string | null>(null);
   const [overrideGate, setOverrideGate] = useState(false);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
   const [reloadGeneration, setReloadGeneration] = useState(0);
@@ -292,16 +309,26 @@ export function BumpPage() {
     // Searchable by everything the row displays: a reader filtering for "tomcat" and one
     // filtering for "CVE-2026-65905" or "frontend/package.json" are all asking a reasonable
     // question of this table.
-    return rows.filter((row) => rowMatches(matcher, filterNegate, [
-      `${row.site.groupId}:${row.site.artifactId}`,
-      row.site.file,
-      row.site.module,
-      row.site.currentVersion,
-      row.site.versionLiteral,
-      row.minimalTarget,
-      row.latestTarget,
-      ...row.advisories.flatMap((advisory) => [advisory.osvId, advisory.cveId]),
-    ]));
+    return rows.filter((row) => {
+      const minimalDistance = row.minimalTarget === null ? null
+        : versionDistance(row.site.currentVersion, row.minimalTarget, row.site.ecosystem);
+      const latestDistance = row.latestTarget === null ? null
+        : versionDistance(row.site.currentVersion, row.latestTarget, row.site.ecosystem);
+      const displayedDistances = [minimalDistance, latestDistance]
+        .filter((distance) => distance !== null && distance !== 'none' && distance !== 'unknown');
+
+      return rowMatches(matcher, filterNegate, [
+        `${row.site.groupId}:${row.site.artifactId}`,
+        row.site.file,
+        row.site.module,
+        row.site.currentVersion,
+        row.site.versionLiteral,
+        row.minimalTarget,
+        row.latestTarget,
+        ...displayedDistances,
+        ...row.advisories.flatMap((advisory) => [advisory.osvId, advisory.cveId]),
+      ]);
+    });
   }, [session?.state.plan.rows, matcher, filterNegate, filter]);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
@@ -316,6 +343,8 @@ export function BumpPage() {
     setSession(null);
     setPreview(null);
     setOpenFile(null);
+    setLinkageCheck(null);
+    setLinkageError(null);
     setError(null);
     setWorkspaceMissing(false);
     if (!selected?.workspacePath) {
@@ -424,6 +453,8 @@ export function BumpPage() {
     setSession(null);
     setPreview(null);
     setOpenFile(null);
+    setLinkageCheck(null);
+    setLinkageError(null);
     setError(null);
     setLoading(true);
     setReloadGeneration((generation) => generation + 1);
@@ -460,6 +491,22 @@ export function BumpPage() {
             onClick={() => setSession((current) => current ? redo(current) : current)}>Redo</button>
           <button type="button" className="button" disabled={loading}
             onClick={() => reloadPlan()}>Reload</button>
+          <button
+            type="button"
+            className="button"
+            disabled={checkingLinkage || loading || previewEdits.length === 0}
+            onClick={() => {
+              setCheckingLinkage(true);
+              setLinkageCheck(null);
+              setLinkageError(null);
+              checkLinkage(selected.id, previewEdits)
+                .then(setLinkageCheck)
+                .catch((reason: unknown) => setLinkageError(`Linkage check failed: ${messageOf(reason)}`))
+                .finally(() => setCheckingLinkage(false));
+            }}
+          >
+            {checkingLinkage ? 'Checking…' : 'Check compatibility'}
+          </button>
           <button
             type="button"
             className="button button--primary"
@@ -594,6 +641,59 @@ export function BumpPage() {
                   : `${session.state.plan.rows.length} declarations`}
               </span>
             </div>
+            <p className="bump-rows__hidden-note">
+              Distance badges show how far a version moves, not how risky the change is.
+            </p>
+            {(linkageCheck || linkageError) && (
+              <section
+                className={`bump-linkage ${linkageCheck
+                  ? `bump-linkage--${linkageCheck.verdict.toLowerCase().replace('_found', '')}`
+                  : 'bump-linkage--unchecked'}`}
+                role="status"
+              >
+                {linkageError ? <p className="bump-linkage__error">{linkageError}</p> : (
+                  <>
+                    {linkageCheck!.verdict === 'CLEAN' && (
+                      <>
+                        <h3 className="bump-linkage__title">No new linkage errors found</h3>
+                        <p className="bump-linkage__count">
+                          {linkageCheck!.referencesChecked} references checked
+                        </p>
+                      </>
+                    )}
+                    {linkageCheck!.verdict === 'ERRORS_FOUND' && (
+                      <>
+                        <h3 className="bump-linkage__title">
+                          {linkageCheck!.newlyMissing.length} reference{linkageCheck!.newlyMissing.length === 1
+                            ? '' : 's'} would stop resolving
+                        </h3>
+                        <ul className="bump-linkage__findings">
+                          {linkageCheck!.newlyMissing.map((finding) => (
+                            <li className="bump-linkage__finding"
+                              key={`${finding.reference.owner}.${finding.reference.name}${finding.reference.descriptor}`}>
+                              <span>{finding.reference.owner.replaceAll('/', '.')}.{finding.reference.name} </span>
+                              <span className="mono">{finding.reference.descriptor}</span>
+                              <span className="bump-linkage__referenced-by">
+                                referenced by {finding.referencedBy.length} class{finding.referencedBy.length === 1
+                                  ? '' : 'es'}, e.g. {finding.referencedBy[0]?.replaceAll('/', '.')}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {linkageCheck!.verdict === 'UNCHECKED' && (
+                      <h3 className="bump-linkage__title">Could not check</h3>
+                    )}
+                    {linkageCheck!.notes.length > 0 && (
+                      <ul className="bump-linkage__notes">
+                        {linkageCheck!.notes.map((note) => <li key={note}>{note}</li>)}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </section>
+            )}
             <div className="table-scroll">
               <table className="data-table bump-table">
                 <thead><tr>

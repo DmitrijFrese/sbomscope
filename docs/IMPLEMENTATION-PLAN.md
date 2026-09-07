@@ -101,10 +101,20 @@ came out of using it. 381 backend tests and 84 frontend tests pass, and every it
 the running jar in a browser rather than only the suite. README, AGENTS.md and ARCHITECTURE were
 brought back in step with all of it on 2026-09-06, and the released version is **0.5.1**.
 
-**Next: B26**, the last item of Phase 14 and larger than the other six together — bumping
-declared versions in a Maven workspace, and the first feature that writes to files outside
-`~/.sbomscope`. It is designed and portioned into five briefs; four questions block the first
-dispatch. See *[How B26 is portioned](#how-b26-is-portioned--decided-2026-09-05-not-yet-started)*.
+**Phase 14 completed on 2026-09-06** with B26 and B28, and the tool was then used on this
+repository to fix its own dependencies — log4j-api, tomcat-embed-core and react-router. The
+released version is **0.6.1**.
+
+**[Phase 15](#phase-15--compatibility-of-a-proposed-upgrade) opened and its first item is done.**
+B29 labels how far each bump moves, so a major-version migration no longer renders identically to
+a patch bump — built and verified in the running application on 2026-09-07, less its sorting half,
+which is deferred because this table has no column sorting to extend.
+
+**Next: B30, the differential linkage check** — the larger item, designed and measured on
+2026-09-07 after a real okhttp/okio failure was reproduced end to end against this tool's own
+output. Phase 15 was raised ahead of both remaining phases for the same reason Phase 14 was: it
+came out of using the product rather than from the roadmap.
+
 **Phase 12 (container image scanning)** follows, design settled and measured with no
 implementation on disk — its migration is now V14 or later. Phase 11 (VEX) follows that, per the
 2026-08-06 reordering decision above.
@@ -130,6 +140,7 @@ implementation on disk — its migration is now V14 or later. Phase 11 (VEX) fol
 | 12 | Container image scanning | **Design gate passed 2026-08-06** — measured and decided, **no implementation on disk**; deferred behind Phase 14 on 2026-09-05. Its migration starts at V14 |
 | 13 | Projects, and a document's own settings | **Built and verified 2026-08-08** — B19 (with drag-and-drop, manual ordering and rollup modes), B20 |
 | 14 | From elevating a real project | **Complete 2026-09-06** — B21–B25 and B27, then B26 (bump versions in a Maven workspace, five portions) and B28 (the same for npm), all built and verified against the running application |
+| 15 | Compatibility of a proposed upgrade | **Complete 2026-09-07.** B29 (how far each bump moves), less its deferred sorting half; B30 (the differential linkage check) in five portions, verified against the okhttp/okio incident it was built for |
 
 Phases 6–9 are one screen, described under [The Component Inspector](#the-component-inspector).
 Nothing was dropped in that regrouping: the dependency tree, upgrade analysis and workspace
@@ -3584,6 +3595,382 @@ architecture. Both need an SBOM uploaded and a workspace attached before that ca
 
 ---
 
+## Phase 15 — Compatibility of a proposed upgrade
+
+Raised 2026-09-07 by the maintainer, from a failure at work that was then reproduced here in
+full. Phase 14 built the screen that writes new versions into a workspace. This phase asks the
+question that screen cannot currently answer: **do the versions it proposes actually work
+together?**
+
+### The motivating case, reproduced rather than recalled — 2026-09-07
+
+A throwaway two-artifact Maven project (built outside this repository, per the adversarial
+fixture rule in AGENTS.md) declaring `okhttp` and `okio` through properties, with `okio` pinned
+directly at 1.6.0 because a module uses okio 1.x itself. Dependency updates produced a plan that
+is correct row by row:
+
+| Row | Site | Current | Minimal target | Advisories |
+|---|---|---|---|---|
+| okhttp | `PROPERTY okhttp.version` | 3.0.1 | 4.9.2 | CVE-2021-0341 (High), CVE-2016-2402 |
+| okio | `PROPERTY okio.version` | 1.6.0 | 1.17.6 | CVE-2023-3635 (Medium) |
+
+Applied through our own apply path — gate refused, override, `pom.xml` written, `.orig` taken —
+`mvn clean package` then **exits 0** and the application dies at runtime with
+`NoSuchFieldError: Class okio.Options does not have member field 'okio.Options$Companion
+Companion'`, thrown from `okhttp3.internal.Util`'s static initialiser by way of
+`OkHttpClient`'s.
+
+okhttp 4.9.2 **declares okio 2.8.0**; the direct pin drags it back a major version and Maven
+emits no warning whatsoever. The reference is a `getstatic` in a static initialiser that nearly
+every okhttp entry point loads, so it is not an obscure path. okio 3.4.0 would have worked and
+was never offered.
+
+**Every row was right and the plan was wrong.** That gap is structural: a screen whose rows are
+declaration sites cannot see a property of the *set*.
+
+**The uncomfortable half of it.** Dependency updates exists to make people pin transitives to
+close CVEs, and pinning a transitive is precisely the act that steps outside the version set a
+platform BOM was tested against. Spring Boot publishes `tomcat.version` and friends for exactly
+this purpose, so the act is sanctioned and universal — but Boot is built and tested against its
+own BOM, and moves third-party libraries only at patch level within a patch release. The tool
+that pushes a user out of the tested set is the one that owes them the check.
+
+---
+
+### B29 — How far each bump moves — **built and verified 2026-09-07**
+
+`BumpRow` carries `minimalTarget`, `latestTarget`, advisories and severity. It carries **no
+notion of distance**, so a major-version migration and a patch bump render identically. Above,
+the "minimal fix" for okhttp was `3.0.1 → 4.9.2` — a major jump presented as the safe default,
+and the actual cause of the breakage.
+
+That axis is the one real remediation processes run on. A patch-line bump needs a smoke test; a
+major bump needs a testing cycle an organisation under CVE pressure often cannot buy. Where the
+two look the same on screen, the expensive case gets pushed through the cheap door.
+
+- [x] **Derive patch / minor / major** from current → target. Built as `versionDistance` in
+      `frontend/src/bump/model.ts`, returning `major | minor | patch | none | unknown`.
+      **The plan's original wording here was wrong and was corrected while briefing it**: a
+      comparator returns −1/0/1 and cannot say *which* component differed, so ordering decides
+      only whether the target is an upgrade at all and the classification is positional over
+      `parseVersion`'s release array. It lives in `model.ts` because `parseVersion` is
+      module-private there, and a second version parser is exactly the "one reading" defect
+- [x] **Show it on the row**, for both the minimal and the latest target — a badge inside each
+      `.bump-target`, absent entirely when the distance is `none` or `unknown` rather than
+      rendered as an empty box
+- [x] **Filterable**, by adding the displayed distance words to the existing `rowMatches` string
+      array, so the `SearchField` that was already there answers it. The filter derives its words
+      with the same `none`/`unknown` exclusion the badge uses, so what can be searched cannot
+      drift from what can be seen
+- [ ] **Sortable — deferred 2026-09-07, and it is the only part of B29 not built.** This table
+      has no column-sorting mechanism at all, so adding one is a feature rather than a badge and
+      did not belong in the same portion. *"Every CRITICAL I can close without leaving the patch
+      line"* is answerable today by filtering on `patch`; ordering by distance is not
+- [x] **Say plainly what the label does and does not mean.** The screen states *"Distance badges
+      show how far a version moves, not how risky the change is."* A patch release can break
+      binary compatibility (see B30's Spring Security finding) and a major release can be
+      harmless. A triage aid, not a verdict
+- [x] **npm is semver, Maven is not.** `versionDistance` takes the row's ecosystem and selects
+      `compareSemver` or `compareVersions` accordingly, pinned by a test built on the pair
+      `model.test.ts:152-155` already records as ordering differently in the two
+
+**Verified in the running application, 2026-09-07**, against the okhttp/okio reproduction
+workspace — the fixture from B30's motivating case, which happens to exercise every branch:
+okhttp `3.0.1 → 4.9.2` renders **MAJOR**, okio `1.6.0 → 1.17.6` renders **MINOR**, and both
+"Latest available" cells are null and render **no badge at all**. `getComputedStyle` resolves the
+major badge to `#fb923c` and the minor badge to `#a5aebc` — exactly `--severity-high` and
+`--text-secondary` in dark, and `#c2410c` / `#5a626d` in light — so the modifier rule is
+genuinely applying rather than merely being present as a class, which is the 2026-09-05 cascade
+defect this check exists for. Filtering on `major` gives *1 of 2 declarations*, on `minor` the
+other, and clearing restores both. 154 frontend tests and the full backend suite pass.
+
+**Only `major` is emphasised, and with `--severity-high` rather than `--severity-critical`.**
+A three-colour scale would read as a severity ranking, and this value states distance, not risk.
+
+**Why this is ahead of B30.** It needs no jars, no network, no cache and no probe history; it
+behaves identically on a fresh machine and a seasoned one; and it is a day's work against data
+already on the row. B30 is the more valuable feature and much the more expensive one.
+
+---
+
+### B30 — The differential linkage check
+
+Answers *"does applying this plan introduce linkage errors that are not there today?"* — not
+*"is this classpath sound?"*, which is a different and much worse question.
+
+#### The central decision: differential, never absolute — decided 2026-09-07
+
+An absolute check reports unresolved references on a perfectly healthy tree, because optional
+integrations are *meant* to be absent. Measured on a 37-jar Spring application: **712 of 1966
+references into `spring-security-config` were unresolved — 36% — with nothing wrong.** okhttp's
+android and bouncycastle branches do the same on a two-artifact project. A standalone linter
+reporting 36% findings on a working build is switched off within a week, which is the recorded
+fate of tools in this category.
+
+Comparing the post-plan state against the current state cancels all of it, because the noise is
+identical in both columns. Measured:
+
+| Classpath | Unresolved members | New vs. current |
+|---|---|---|
+| okhttp 3.0.1 + okio 1.6.0 (current) | 7 | — |
+| **okhttp 4.9.2 + okio 1.17.6 (the plan)** | 22 | **16** |
+| okhttp 4.9.2 + okio 2.8.0 | 6 | 0 |
+| okhttp 4.9.2 + okio 3.4.0 | 6 | 0 |
+| 37-jar Spring tree, `spring-security-config` 6.3.4 → 6.4.0 | 624 (from 712) | 0 |
+
+Fires on the broken plan, silent on both correct answers, silent across a real tree.
+
+**This is also why the check belongs here rather than in a standalone tool.** A differential
+needs a *before*, which exists only where something is proposing a change. The general version
+of this tool keeps failing as a product; the version that works is not general.
+
+#### Member level, not class level — measured, not assumed
+
+`jdeps` is JDK-native, needs no dependency and would satisfy constraints 5 and 9 outright. It is
+not sufficient: it resolves at class granularity and reports a removed method as present. A
+synthetic case where a library drops one method — `jdeps` prints `app.App -> lib.Api  v2`, and
+the JVM throws `NoSuchMethodError`.
+
+The real-world case has exactly that shape. Spring Security 6.4.0 moved `ObjectPostProcessor`
+from `...config.annotation` to `...config`, keeping the old class as a deprecated subtype — so
+the class is present and only the constructor *descriptor* changed:
+
+```
+6.3.4:  AuthenticationManagerBuilder(...config.annotation.ObjectPostProcessor)
+6.4.0:  AuthenticationManagerBuilder(...config.ObjectPostProcessor)
+```
+
+Code compiled against 6.3.x gets `NoSuchMethodError` after a clean compile, and it reaches users
+as a *Spring Boot patch bump*, because Boot's BOM moves them across the minor boundary. jdeps
+sees nothing. A member-level check names all three affected members, `HttpSecurity`'s
+constructor among them.
+
+Measured alongside it: across nine consecutive `spring-security-web` 6.4.x patch releases,
+**zero** public members were removed at any step. Across minor steps, removals are routine —
+140 in `spring-web` 6.1.0 → 6.2.0, 45 in `spring-core`, 42 in `spring-security-config`
+6.3.4 → 6.4.0. Patch lines are clean; minor lines are not; and Boot's BOM is what carries a
+project across the boundary without the version number in front of the user changing much.
+
+- [ ] **Read referenced members from the constant pool** — `CONSTANT_MethodRef`, `FieldRef`,
+      `InterfaceMethodRef` — and resolve each against the candidate classpath by name **and
+      descriptor**. **Through WALA's ShrikeCT, not a reader of our own — amended 2026-09-07,
+      reversing this bullet's original wording; see the decision log.**
+      `ConstantPoolParser.getCPRefClass/RefName/RefType` and `ClassReader.getField*/getMethod*`
+      are exactly this contract, and WALA is already a compile-scope backend dependency
+- [ ] **Resolve inheritance.** A member referenced on a subtype may be declared on a supertype, so
+      resolution walks the class, then superclasses, then superinterfaces transitively — the shape
+      of JVMS 5.4.3.2/5.4.3.3/5.4.3.4 without their full ceremony. **The simplification is
+      deliberate and was made explicit on 2026-09-07**: the *maximally-specific* superinterface
+      rules are **not** implemented, and neither is accessibility, overload resolution or
+      covariant-return reasoning. A plain transitive search can call a reference resolved that the
+      JVM would reject as ambiguous — an error in the permissive direction, which is the only safe
+      one here. Over-reporting is what makes a linkage checker unusable; under-reporting only makes
+      it quieter. **This, not parsing, is where the work is**
+- [ ] **Answer in three values, not two — `RESOLVED`, `MISSING`, `UNRESOLVABLE`, and only
+      `MISSING` may ever be reported.** `UNRESOLVABLE` is not a weaker `MISSING`: it is the honest
+      answer when the supplied classpath does not contain enough of the hierarchy to decide, and it
+      is what keeps an absent supertype from manufacturing a linkage error. The differential
+      cancels unresolved-supertype noise as well, but correctness must not depend on cancellation
+- [ ] **Index the platform, or the check reports nothing.** Every hierarchy ends at
+      `java/lang/Object`, which is in no jar, so without the JDK every answer degrades to
+      `UNRESOLVABLE`. Measured 2026-09-07: portion A's reader indexes the running image through the
+      `jrt:/` filesystem **unmodified** — 7,377 classes from `java.base` in 473 ms and 27,082 across
+      all modules in about 1.4 s, none skipped. With it, `okio/Options.Companion` against
+      okio 1.17.6 is `MISSING` and against okio 2.8.0 is `RESOLVED`, while `okio/Buffer.toString`
+      is `RESOLVED` through `java/lang/Object` — the motivating defect, decided correctly
+- [x] **Select the right variant from a multi-release jar.** Built in portion A. Measured 2026-09-07: **28 of the
+      114 jars on SBOMscope's own backend classpath are `Multi-Release: true`**, and several
+      carry more than one tree — `jackson-core` at 17/21/23, `spring-core` at 21/24, `byte-buddy`
+      at 9/24. Analysing the wrong tree examines bytecode the target JVM would never load, and
+      reading all of them sees the same class twice. The prototype ignored this entirely
+
+#### The consumer set includes the workspace's own classes, and this is not optional
+
+The 37-jar measurement returned **0 new** for a change that genuinely removes
+`AuthenticationManagerBuilder`'s constructor — because no *library* jar calls it. The caller is
+application code. Compiling the kind of class an application actually writes:
+
+```
+vs spring-security-config 6.3.4 : 0 unresolved   (what it compiled against)
+vs spring-security-config 6.4.0 : 1 unresolved   (the removed constructor)
+```
+
+Scan only the dependency jars and this check would be silent on exactly the defect that
+motivated it.
+
+- [ ] **Scan the workspace's compiled production classes alongside the dependency jars.** Phase
+      9's reachability worker already reads precisely those, so the machinery exists
+- [ ] **Inherit that phase's precondition and state it**: the project must have been built.
+      Absent build output is `unchecked` with a reason, never a quiet pass
+
+#### Availability, and why the trigger is always explicit
+
+The check needs the **jars** of the post-plan classpath. Measured against an empty local
+repository for a typical Spring Boot web plus security application: **37 jars, 23 MB** for the
+compile classpath. (A full `dependency:go-offline` pulls 238 jars and 83 MB, but the build
+plugins are not needed.) That is the same set Maven fetches the first time the project is built
+at the new versions.
+
+- [ ] **One explicit action, always — never automatic where the jars happen to be cached.** An
+      automatic-when-cached design makes the verdict depend on the machine, and the whole
+      argument for this check over the rejected alternative below is that its verdict does
+      **not** vary by machine. Cache history may change the latency; it must not change the answer
+- [ ] **Missing jars are fetched through the user's own `mvn`** — constraint 1 category 3,
+      activity-logged like the Maven probe. Never a registry client of ours
+- [ ] **Absent rather than guessed** where they cannot be obtained, the same posture as "Latest
+      available" and the imported-BOM remedy
+
+#### Verdicts
+
+- [ ] `clean` — **"no new linkage errors found"**, never "compatible". The Phase 9 discipline:
+      report what was measured, not a safety claim
+- [ ] `new linkage errors` — each naming the referencing class and the missing member, with the
+      pom-derived fact attached as *explanation* ("okhttp 4.9.2 declares okio 2.8.0"), so a
+      reader understands why those members vanished
+- [ ] `unchecked` — with its reason: jars unobtainable, or the workspace not built
+- [ ] **A finding warns; it does not block Apply.** The user may know better, exactly as
+      exclusion is a recommendation to verify rather than a security verdict
+
+#### The hard-range guard, which belongs beside this rather than inside it
+
+A transitive declaring a hard version range silently overrides the version we write. Measured: a
+dependency declaring `okio [1.6.0,2.0.0)` against a plan writing `3.4.0` resolved to
+**2.0.0-RC1** — `BUILD SUCCESS`, our edit ignored, the CVE unfixed, and the screen reporting the
+edit as applied.
+
+- [ ] **Detect it and say "this edit will not take effect"**, a stronger statement than a
+      compatibility warning. This is the "appears to work and silently does nothing" class that
+      gated npm `overrides` behind a lockfile
+- [ ] It is a **resolution** fact, invisible in bytecode, so no linkage check can find it
+
+#### What this cannot see, and must say so
+
+- [ ] **Behavioural changes.** Spring Security 6.4.4 fixed CVE-2025-22223 and CVE-2025-22228; a
+      security fix that tightens a default breaks callers with no bytecode signature at all
+- [ ] **Reflection, `ServiceLoader`, `Class.forName`.** Static analysis cannot follow them, and
+      the JVM links lazily, so a reference that never executes never fails
+- [ ] The check narrows what needs human testing. **It does not remove it**, and nothing in the
+      UI may imply otherwise
+
+#### Sanity assertions are mandatory — bought the hard way
+
+The prototype produced **two** confident and entirely wrong results from silent tool failures. A
+class list exceeding the Windows command-line limit made `javap` die with *"Argument list too
+long"*, yielding zero declared members and therefore a reported 1866 removed members from a
+release that removed none. And a constructor name derived from the wrong path segment produced a
+false positive at baseline. Both were invisible: no error, plausible numbers, `2>/dev/null`
+swallowing the evidence.
+
+The differential cancelled the second one, which is the design working and also a real hazard:
+**it hides tool bugs as effectively as it hides optional dependencies.**
+
+- [ ] A provider yielding **zero declared members**, or a consumer yielding **zero references**,
+      is a tooling failure and must be reported as `unchecked` — never as `clean`.
+
+      **Restated 2026-09-07 in terms of what is observable, after the specification pass showed the
+      original wording presumed an API that does not exist.** `MemberResolver` keeps its class map
+      private and exposes only per-reference resolution, so a differencing stage cannot count a
+      provider's declared members. The operational equivalent is **"no reference resolved on that
+      side"**: a classpath that loaded nothing makes every owner lookup fail, so every reference
+      comes back `UNRESOLVABLE`. That test is also strictly broader — it catches a classpath that
+      loaded successfully but is the wrong one.
+
+      **It must be applied to *both* sides, and the before side is the dangerous one.** A broken
+      *after* classpath merely produces a useless report. A broken *before* classpath produces a
+      confidently wrong one: with nothing resolving in the baseline, "not missing before" holds for
+      every reference, so every genuine after-miss is reported as *newly* missing and the screen
+      blames the plan for breakage it did not cause.
+
+#### How B30 is portioned — decided 2026-09-07
+
+Five portions. The split is by what each can be wrong about: A resolves nothing, B compares
+nothing, C touches no process, D touches no screen.
+
+| # | Portion | Owns | Route | Status |
+|---|---|---|---|---|
+| A | The class member index | `dev.sbomscope.linkage`: `MemberRef`, `ClassMembers`, `ClassMemberIndex`. Reads a jar or class directory through ShrikeCT into declared and referenced members, selecting the right multi-release variant. Resolves nothing | Terra, high | **Built 2026-09-07**, 456 backend tests green, verified by an adversarial probe against a real four-tree jar |
+| B | Hierarchy resolution | `Resolution`, `PlatformClasses`, `MemberResolver`: the class then superclasses then superinterfaces, answering `RESOLVED`/`MISSING`/`UNRESOLVABLE`, over a classpath that includes the platform image | Terra, high | **Built 2026-09-07**, 465 backend tests green, verified against the real okhttp/okio incident |
+| C | The differential | `LinkageVerdict`, `LinkageFinding`, `LinkageDiff`, `LinkageDiffer`: two states in, newly-missing out, with the sanity assertions and a per-side baseline | Terra, high | **Built 2026-09-07**, 475 backend tests green, verified end to end against the incident |
+| D | Classpath acquisition | `dev.sbomscope.probe.LinkageClasspathResolver`: both classpaths through the user's own `mvn`, in the isolated probe repository, activity-logged | **Me — not delegated** | **Built 2026-09-07**, 482 backend tests green, verified live end to end |
+| E1 | Plan to verdict | `LinkageCheck`, `LinkageCheckService`: assembles both dependency sets from the workspace poms, resolves both classpaths, returns one verdict | Terra, high | **Built 2026-09-07**, 493 backend tests green |
+| E2 | The endpoint and the verdicts on screen | `POST …/bump/linkage`, the button, the three verdicts, the notes | Terra, high | **Built and verified 2026-09-07** — 497 backend and 160 frontend tests, and the real verdict read off the running screen |
+
+**A deliberately resolves nothing**, which is what makes it cheap to prove: it can be wrong in
+exactly one way — misreading a class file or picking the wrong multi-release variant — and both
+are checkable against artifacts that already exist on disk.
+
+**What the acceptance check could not have caught, and how it was checked instead.** The brief's
+own tests build a *synthetic* multi-release jar, which proves the code does what the brief says
+and not that the brief was right about real jars. That is the failure mode B28 hit twice — a
+specification perfectly consistent and simply wrong about the shape of real projects. So A was
+additionally probed against `jackson-core:3.1.4`, which ships `FastDoubleSwar` in four trees:
+
+| target release | 8 | 11 | 16 | 17 | 20 | 21 | 22 | 23 | 25 | 99 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| selected class-file major | 52 | 52 | 52 | 61 | 61 | 65 | 65 | 67 | 67 | 67 |
+
+Every boundary correct, the class indexed exactly once at each level, no class indexed under a
+`META-INF/*` name, no duplicate internal names, 199 classes read and none skipped. The same reader
+was run over the same source compiled at releases 8, 11, 17, 21 and 25 — every one parsed, each
+referencing `java/lang/Object.<init>` with a non-empty declared set and nothing skipped.
+
+**Portion A is where the Java-version worry lived, and it is now measured rather than hoped for.**
+
+**Portion B was verified the same way, against the incident itself — 2026-09-07.** The real
+MemberResolver, over okhttp 4.9.2 plus okio and the platform image:
+
+| | okio 1.17.6 (what the plan recommended) | okio 2.8.0 (correct) |
+|---|---|---|
+| `okio/Options.Companion` | **MISSING** | RESOLVED |
+| `okio/ByteString.Companion` | **MISSING** | RESOLVED |
+| every reference okhttp makes | 3501 resolved, **9 missing**, 144 unresolvable | 3517 resolved, **0 missing**, 137 unresolvable |
+
+**Zero false positives on the correct pairing, and nine true ones on the broken pairing** — among
+them `Timeout.Companion` and several Kotlin `$default` bridges that exist only in okio 2.x.
+The unresolvable bucket is `kotlin/text/StringsKt` (24), `kotlin/collections/CollectionsKt` (19),
+`org/conscrypt/Conscrypt` (8) and similar: jars genuinely absent from that probe classpath, and
+optional integrations. **It shrinks as the classpath is completed, which is what portion D
+supplies** — and it is why the bucket exists rather than being folded into missing.
+
+Also pinned: with the platform index removed, the same references come back `UNRESOLVABLE` rather
+than `MISSING`. An incomplete hierarchy can never manufacture a linkage error.
+
+#### Rejected alternatives
+
+- **A declared-requirement check over poms** — "does the plan put a version below what something
+  else in the tree declares". Designed in detail, measured and rejected the same day; see the
+  decision log entry of 2026-09-07. It needed no jars and would have run off the probe
+  repository's 5,541 cached poms, which is what made it attractive. It is wrong in both
+  directions and its verdict depends on cache history. What survives is *explanation* attached
+  to a linkage finding, plus the hard-range guard above
+- **Google's Linkage Checker** (`cloud-opensource-java`). Not archived — last pushed June 2026 —
+  but what ships from that repository is a BOM: four `gcp-lts-bom-v*` releases and no
+  linkage-checker release tag at all, the checker riding along as a jar attached to a
+  `dependencies-v*` release. It was the instrument that produced a curated version set, not the
+  product, and its exclusion-list burden is the absolute-check noise problem above
+- **japicmp and Revapi.** Maintained, good, and aimed at a different reader: they compare two
+  versions of *one artifact* for a library author. Our input is an emergent classpath. Both also
+  miss real cases — a method moved to a supertype is reported binary-compatible and still throws
+  `NoSuchMethodError`
+- ~~**WALA.**~~ **No longer rejected — chosen, 2026-09-07.** The original entry said WALA was a
+  heavyweight worker built for a different question and that our own constant-pool reader was
+  cheaper. Half of that was wrong: `com.ibm.wala.core` is a **compile-scope dependency of the
+  backend**, on the main classpath rather than confined to the reachability worker, and
+  `com.ibm.wala.shrike` gives `ClassReader` and `ConstantPoolParser` — a class-file reader with
+  no analysis scope, no call graph and no worker process. See the decision log
+
+**Done when**: a plan that would break at runtime says so before Apply, naming the missing
+members; a plan that is fine says nothing; the answer is the same on a fresh machine as on a
+seasoned one; and the screen never claims a compatibility it did not measure.
+
+**The reproduction case is worth keeping.** The okhttp/okio project exercises properties, a
+direct pin overriding a transitive requirement, and a real runtime break, in three components.
+Only its `.cdx.json` may ever be committed, never the pom that produces it — the repository is
+public, and a manifest declaring old okhttp would raise Dependabot alerts against SBOMscope for
+libraries it does not ship.
+
+---
+
 ## Risks and design gaps
 
 Live list of things known to need resolution before or during the phase they affect.
@@ -6117,7 +6504,7 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   downgrade carries broader advisories. GHSA-qwww-vcr4-c8h2 is recorded as non-applicable to this
   static `BrowserRouter` SPA, which uses neither RSC nor router actions/data routes, and must be
   revisited when a compatible patched release exists.
-- 2026-08-03 â€” **Dependency routes are paged in hundreds and identify the declaration point.**
+- 2026-08-03 — **Dependency routes are paged in hundreds and identify the declaration point.**
   The former ten-route list was too small for graph inspection. Each module now starts with the
   100 shortest routes and can request the next 100 independently. The backend recomputes the
   exact traversal and retains only the ordered prefix needed for the requested page; it does not
@@ -6946,3 +7333,306 @@ Append new decisions here with date and reasoning. Reversals stay in the record.
   annoys more than it protects. It sits beside the existing "`.orig` files accumulate, nothing
   lists or cleans them" item, which the maintainer deferred on 2026-09-06 on the view that users
   will check their own workspace.
+- 2026-09-07 — **A declared-requirement check over poms was designed in detail, measured, and
+  rejected the same day. Recorded as a reversal so it is not re-proposed.** The proposal: for each
+  proposed edit, read the target version's pom and ask whether the plan puts some artifact *below*
+  what another artifact in the tree declares it needs — Maven's own resolution semantics, modelled
+  on the enforcer's `requireUpperBoundDeps`, needing no bytecode and no jars. It was attractive
+  for a concrete reason: the probe repository already holds **5,541 poms across 337 artifacts, up
+  to 215 versions of one artifact**, against 6 `maven-metadata.xml` files and 97 jars. Poms are
+  the one thing probing accumulates in bulk, so this looked like the cheap check that could ship
+  first.
+
+  Three findings killed it, in increasing order of severity.
+
+  **It is wrong in the loud direction.** okhttp 3.0.1 declares okio 1.6.0; a plan putting okio at
+  1.5.0, 1.4.0 and 1.3.0 produces the identical verdict — conflict — in all three cases, while a
+  member-level check reports 0, 0 and 5 new unresolved members respectively. **Two of four
+  verdicts on that series are false positives.** The maintainer's own scenario is exactly this
+  shape: bump A, whose new version declares a higher B, but choose a lower B on purpose because
+  B's newer minor line carries CVEs. The check would flag the security-correct choice — a check
+  that argues *for* the vulnerable version, on the screen whose job is to close CVEs. That is
+  worse than noise.
+
+  **It is wrong in the quiet direction.** A break between two versions that nothing declares — a
+  Spring artifact carried across a minor boundary by Boot's BOM — violates no declared
+  requirement at all, so the check reports *satisfied* and is confidently silent on the case that
+  motivated the whole phase.
+
+  **And its verdict depends on the machine.** With the pom cached it says conflict or satisfied;
+  without, it says `unchecked`, which is a third answer. The maintainer's requirement was
+  explicit: results must be equally good on a fresh PC with a near-empty repository and on a
+  seasoned one. A linkage check satisfies that and this does not — cache history changes a
+  linkage check's *latency*, never its verdict.
+
+  What survives: **pom-derived facts demote from verdict to explanation.** "okhttp 4.9.2 declares
+  okio 2.8.0" is the right sentence to put *underneath* a linkage finding so a reader understands
+  why sixteen members vanished; it is not a finding of its own. There is exactly one compatibility
+  verdict on the screen, not two that can disagree. The hard-range guard is kept separately and
+  for a different reason — see the next entry.
+
+- 2026-09-07 — **The linkage check is differential, member-level, explicitly triggered, and lives
+  inside Dependency updates rather than being a standalone tool.** Four decisions, each measured.
+
+  **Differential, never absolute.** An absolute check reports 712 unresolved references out of
+  1966 on a *healthy* 37-jar Spring tree — 36% — because optional integrations are meant to be
+  absent (okhttp's android and bouncycastle branches do the same on a two-artifact project).
+  Comparing post-plan against current cancels all of it: 16 new on the broken okhttp/okio plan,
+  **0** on both correct answers, **0** across the real Spring tree. A linter reporting a third of
+  a working build as findings is switched off within a week, and that is the recorded fate of
+  tools in this category.
+
+  **Which is also why it is not a standalone tool.** A differential needs a *before*, and a before
+  exists only where something is proposing a change. This may be why no good general JVM linkage
+  checker exists: the good version is not general. Google's own — `cloud-opensource-java`, not
+  archived, last pushed 2026-06 — ships four `gcp-lts-bom-v*` releases and **no linkage-checker
+  release tag at all**, the checker riding along as a jar on a `dependencies-v*` release. It was
+  the instrument that produced a curated version set, not the product.
+
+  **Member level, because class level misses the real cases.** `jdeps` is JDK-native and would
+  cost no dependency, but it resolves at class granularity and reports a removed method as
+  present. The real case proves it: Spring Security 6.4.0 moved `ObjectPostProcessor` between
+  packages while keeping the old class as a deprecated subtype, so only the constructor
+  *descriptor* changed and jdeps sees nothing — while code compiled against 6.3.x throws
+  `NoSuchMethodError` after a clean compile. Measured alongside: nine consecutive
+  `spring-security-web` 6.4.x patch releases removed **zero** public members, while minor steps
+  removed 140 (`spring-web` 6.1→6.2), 45 (`spring-core`) and 42 (`spring-security-config`
+  6.3.4→6.4.0). Patch lines are clean, minor lines are not, and a BOM is what carries a project
+  across the boundary without the number in front of the user moving much.
+
+  **The consumer set must include the workspace's own compiled classes.** The 37-jar measurement
+  returned 0 new for a change that genuinely removes `AuthenticationManagerBuilder`'s constructor,
+  because no library jar calls it — the caller is application code. Scanning only dependency jars
+  would leave the check silent on precisely the defect that motivated it. Phase 9's reachability
+  worker already reads those classes, and this inherits its precondition: the project must have
+  been built.
+
+  **Explicitly triggered, always — never automatic where the jars happen to be cached.** An
+  earlier draft had it run automatically from cached data and on request otherwise, which is what
+  constraint 2's fetch/analyse line would permit. Rejected: it makes behaviour depend on the
+  machine, which is the property this design exists to have. One action, same semantics
+  everywhere. Cost measured against an empty repository for a typical Spring Boot web plus
+  security application: **37 jars, 23 MB** for the compile classpath — the same set Maven fetches
+  the first time the project is built at the new versions.
+
+  **A separate guard for what bytecode cannot show.** A transitive declaring a hard range silently
+  overrides the version we write: a dependency declaring `okio [1.6.0,2.0.0)` against a plan
+  writing 3.4.0 resolved to **2.0.0-RC1**, `BUILD SUCCESS`, edit ignored, CVE unfixed, screen
+  reporting success. That is a resolution fact, invisible to any linkage check, and it belongs to
+  the "appears to work and silently does nothing" class that gated npm `overrides` behind a
+  lockfile. Its verdict is *"this edit will not take effect"*, which is stronger than a
+  compatibility warning.
+
+  **And the check may never say "compatible".** Behavioural changes carry no bytecode signature —
+  Spring Security 6.4.4 fixed CVE-2025-22223 and CVE-2025-22228, and a fix that tightens a default
+  breaks callers invisibly. Reflection and lazy linking finish the argument. The verdict is **"no
+  new linkage errors found"**, the same discipline as Phase 9's "not reached in the analyzed
+  graph". It narrows what needs human testing; it does not remove it.
+
+- 2026-09-07 — **B29 (how far each bump moves) goes ahead of B30 (the linkage check), on the
+  maintainer's operating constraint rather than on technical grounds.** The constraint, stated
+  plainly: CRITICAL and HIGH findings must be closed quickly, and a major-version migration of
+  something like Spring or Keycloak needs business testing capacity that is not available at that
+  cadence. So the decision an operator actually makes is *"which of these can I close without
+  triggering a migration"* — and `BumpRow` carries `minimalTarget` and `latestTarget` with **no
+  notion of distance**, so a major jump and a patch bump render identically. In the reproduced
+  case the "minimal fix" for okhttp was 3.0.1 → 4.9.2, a major jump presented as the safe default
+  and the actual cause of the breakage.
+
+  B29 needs no jars, no network, no cache and no probe history, behaves identically on any
+  machine, and is arithmetic over data the row already holds. B30 is the more valuable feature and
+  much the more expensive one. Ordering the cheap triage aid first is not a judgement that it
+  matters more; it is that it changes what can be decided immediately.
+
+  **The label states distance, not risk**, and must say so: a patch release can break binary
+  compatibility (the Spring Security case above did) and a major release can be harmless. Distance
+  is what a testing process is budgeted against, which is why it earns a column.
+
+- 2026-09-07 — **Any implementation of B30 must assert that its own analysis ran.** The prototype
+  produced two confident and entirely wrong results from silent tool failures: a class list past
+  the Windows command-line limit made `javap` exit with *"Argument list too long"*, yielding zero
+  declared members and therefore **1866 reported removals from a release that removed none**; and
+  a constructor name taken from the wrong path segment produced a false positive at baseline. Both
+  were invisible — no error surfaced, the numbers looked plausible, and a suppressed stderr hid
+  the cause.
+
+  The differential cancelled the second one, which is the design working as intended and also the
+  hazard: **it hides tool bugs exactly as well as it hides optional dependencies.** A provider
+  yielding zero declared members, or a consumer yielding zero references, is therefore a tooling
+  failure and must be reported as `unchecked`, never as `clean`. This is the same family as the
+  B25 lesson — a component that matched nothing came back *clean*, and the whole suite stayed
+  green.
+- 2026-09-07 — **B30 reads class files through WALA's ShrikeCT rather than a constant-pool reader
+  of our own. This reverses the bullet written into B30 the previous day, and the reversal stays
+  in the record because the original reasoning was wrong on a checkable fact.** The original said
+  a reader of our own was preferable because constraint 9 favours a bounded amount of our own code
+  over a library, and because WALA is "a heavyweight worker built for a different question".
+
+  The second half is false. `com.ibm.wala.core` is a **compile-scope dependency of the backend
+  module** (`backend/pom.xml`), on the main classpath — not confined to the reachability worker
+  JVM, which is what the original wording assumed. And the piece needed here is
+  `com.ibm.wala.shrike`: `ClassReader` exposes `getFieldCount/Name/Type` and
+  `getMethodCount/Name/Type` for declared members, and `ConstantPoolParser` exposes
+  `getItemType(i)` with `getCPRefClass/RefName/RefType(i)` for referenced ones. That is the whole
+  contract this phase needs, with no analysis scope, no class hierarchy construction, no call
+  graph and no worker process. Writing our own would duplicate a dependency SBOMscope already
+  ships and already lists in its own SBOM — which is the outcome constraint 9 exists to prevent,
+  not one it asks for.
+
+  **The Java-version question that motivated the phase was settled by measurement at the same
+  time, and it is not the problem it looked like.** ShrikeCT 1.8.0 was run over the same source
+  compiled at every release level from 8 to 25:
+
+  | Class-file major | Java | Content | Result |
+  |---|---|---|---|
+  | 52 | 8 | lambda, invokedynamic | parsed, refs=9 indy=1 |
+  | 55 | 11 | lambda, invokedynamic | parsed, refs=9 indy=2 |
+  | 61 | 17 | lambda, invokedynamic | parsed, refs=9 indy=2 |
+  | 65 | 21 | records, sealed types, pattern switch | parsed, refs=17 indy=4 |
+  | 69 | 25 | records, sealed types, pattern switch | parsed, refs=17 indy=4 |
+
+  Declared members, member references and descriptors came back correct at every level, including
+  from a library released before Java 25 existed. **The structural reason is worth recording,
+  because it is what makes the whole phase tractable:** the constant-pool tag set has been frozen
+  since Java 11, where `CONSTANT_Dynamic` was the last addition, and nothing in 12–25 adds a tag.
+  A tool that needs only the constant pool therefore has no version ceiling. The ceilings that
+  afflict linkage tooling — the maintainer's reason for abandoning Google's checker — come from
+  fully parsing or verifying bytecode, where every new opcode and attribute matters. This phase
+  needs neither.
+
+  **What the same investigation moved *up* the difficulty list, which is the more useful half.**
+  Parsing was never the hard part; two other things are.
+
+  First, **inheritance resolution**. A member referenced on a subtype is usually declared on a
+  supertype, so resolution has to follow JVMS 5.4.3.3/5.4.3.4. Skipping it produced the measured
+  36% noise floor — 712 unresolved references out of 1966 on a healthy 37-jar tree. The
+  differential cancels that noise, but a design that depends on cancellation for correctness is
+  one bug away from silence.
+
+  Second, and under-rated when the phase was written: **multi-release jars**. Measured on
+  SBOMscope's own backend classpath, **28 of 114 jars declare `Multi-Release: true`**, several
+  carrying more than one versioned tree — `jackson-core` at 17/21/23, `spring-core` at 21/24,
+  `byte-buddy` at 9/24. A check that reads the wrong tree analyses bytecode the target JVM will
+  never load; one that reads all of them sees the same class twice. For a feature whose stated
+  scope is "Java 8 through 25" this is a larger correctness problem than parsing ever was, and the
+  2026-09-06 prototype ignored it completely.
+- 2026-09-07 — **The linkage differential takes each side's own consumers, and the specification
+  that said otherwise was wrong. Found by running the real thing, not by review.** Portion C was
+  briefed with `between(consumers, before, after)` — one artifact list, resolved against two
+  classpaths. The delegate implemented that exactly, nine focused tests passed, two specification
+  passes had cleared the brief, and the result was wrong.
+
+  Run against the incident the phase exists for — okhttp 3.0.1 → 4.9.2 with okio pinned
+  1.6.0 → 1.17.6 — it reported **2 newly broken references. The correct answer is 9.**
+
+  The mask is simple once seen. Sharing one consumer list forces the baseline to be *tomorrow's
+  artifacts resolved against today's classpath*, and that asks a meaningless question: seven of the
+  nine references also failed to resolve against the old okio, so they counted as "already missing"
+  and were suppressed. **An old library cannot break on a call the old code never made.** The
+  baseline has to be today's artifacts against today's classpath, which measures as 0 missing —
+  the current state is sound, and every one of the nine is genuinely caused by the plan.
+
+  The signature is now `between(beforeConsumers, before, afterConsumers, after)`. No convenience
+  three-argument overload was kept: the conflated parameter *is* the defect, and a shorter form
+  that silently reinstates it would be a trap rather than a courtesy.
+
+  **What this says about the process is the part worth keeping.** The code matched the
+  specification exactly; the specification was wrong about the world. Two specification passes
+  could not have found it, because both were consistent — this is the same shape as B28's npm
+  discovery looking only for a root `package.json`, and it is the third instance in this repository
+  of a defect that only a run against real artifacts could reach. `LinkageDifferTest` now pins it
+  with a test that asserts both the correct result and the masked one, so the shortcut cannot be
+  reintroduced quietly.
+- 2026-09-07 — **B30's classpath acquisition is not delegated, lives in `dev.sbomscope.probe`, and
+  derives its Maven goal rather than adding a setting.** Three decisions taken together while
+  building portion D.
+
+  **Not delegated**, for the reason B26's apply path was not: it is the only part of the linkage
+  feature that starts a process on somebody's machine and the only one that can reach the network.
+  A delegate's characteristic failure is drift into an adjacent problem, and the adjacent problems
+  here are querying Central directly (constraint 1 category 3), writing into the user's real
+  `~/.m2`, or starting a process with no activity-log entry.
+
+  **In `dev.sbomscope.probe`, not `dev.sbomscope.linkage`.** `MavenInvocation` is package-private,
+  which settled it: the process machinery and its safeguards — the watchdog, the cancel hook, the
+  captured output, the isolated repository — already live there, and reaching them from elsewhere
+  would mean widening their visibility. `linkage` stays free of process and network entirely, which
+  is a boundary worth having rather than an accident. `MavenDependencyResolver.generatePom` became
+  package-private static so both resolvers generate the same synthetic project; two generators
+  would be two readings of what a probe's POM is, and the one that drifts is the one nobody reads.
+
+  **The goal is derived, not configured.** `build-classpath` and `tree` are goals of the same
+  plugin, so the version the user pinned for one is the version to use for the other — a second
+  Settings field for a choice nobody would make differently is worse than deriving it. The
+  derivation insists on the fully qualified `group:artifact:version:goal` form: the bare
+  `dependency:tree` prefix also ends in `:tree` and would pass a looser check, which is exactly the
+  case the pinning exists to prevent, since a prefix lets Maven choose the plugin version itself.
+
+  **Two defects found by running it, neither reachable from a unit test.**
+
+  *A classless jar is ordinary, not broken.* The sanity assertion warned per artifact when one
+  contained no classes. Resolving okhttp 4.9.2 pulls `kotlin-stdlib-common`, a Kotlin multiplatform
+  metadata artifact with **zero** class files, so a correct plan warned — and on an otherwise clean
+  result that would have forced `UNCHECKED` and made a working check look broken. The assertion is
+  now made about a **side as a whole**, which still catches the tooling failure it was written for.
+
+  *Splitting a classpath on `[;:]` tears Windows paths in half.* Caught while writing it rather
+  than after: `C:\repo\x.jar` splits at the drive letter into two entries that exist nowhere. It
+  splits on `File.pathSeparator`, which is correct because the Maven that wrote the file ran on
+  this machine.
+
+  **And one environment note worth having written down.** The child `mvn` inherits `MAVEN_OPTS`
+  from whatever launched SBOMscope. On a TLS-inspecting Windows machine without
+  `-Djavax.net.ssl.trustStoreType=Windows-ROOT` in it, resolution fails with a PKIX error naming
+  Maven Central — the same failure `AGENTS.md` already records for builds, now reachable from a
+  feature rather than only from a terminal. The failure path behaved correctly when it happened:
+  `complete=false`, a named reason, and no verdict drawn.
+
+  **Verified live**, not by mock: SBOMscope resolved both classpaths through the real `mvn` into an
+  isolated repository — 2 jars today, 5 for the plan, `kotlin-stdlib` pulled transitively because
+  real resolution finds it — and the chain returned `ERRORS_FOUND` with all **9** newly broken
+  references and no warnings, from 9,667 references checked.
+- 2026-09-07 — **A Maven TLS trust failure is translated rather than quoted, and the translation
+  lives on `MavenInvocation.Result` where both callers can reach it.** Found by running the linkage
+  check against a real workspace with the application launched from a shell that had no
+  `MAVEN_OPTS`: the screen said *"Maven exited with 1 while resolving the classpath"* while the
+  captured output said `PKIX path building failed`. A diagnosable failure presented undiagnosably.
+
+  Two things were wrong, and the smaller one is the more embarrassing. `Result.lastMeaningfulLine()`
+  **already existed**, written for the probe, and its own doc comment cites this exact PKIX case as
+  the reason it skips the four lines of advice Maven ends every failure with. Portion D had quoted
+  the exit code instead — a second, worse reading of "what went wrong", which is the convention this
+  repository has paid most to learn. It now calls the existing one.
+
+  The translation itself is `Result.failureSummary()`: the meaningful line, plus one sentence when
+  the output carries any of five TLS-trust markers. It says the cause is **not** the dependency
+  versions, names `MAVEN_OPTS` and the Windows truststore, and says the child `mvn` inherits that
+  variable from whatever launched SBOMscope — which is why a jar started from a shortcut can fail
+  where the same jar started from a configured shell succeeds. `AGENTS.md` already records this trap
+  for builds; it now has a second door, because three features spawn `mvn`.
+
+  **Deliberately left as-is: the Maven probe still uses `lastMeaningfulLine()`.** Changing the
+  probe's user-visible messages was not part of this work, and `failureSummary()` is one call away
+  when the maintainer wants it.
+
+  **What running it also established, and it is worth knowing before chasing this again:** the PKIX
+  failure only occurs when something must actually be *downloaded*. Once the probe repository holds
+  the artifacts, the same check succeeds with no `MAVEN_OPTS` at all, because no TLS handshake
+  happens. That is why it will look intermittent.
+
+- 2026-09-07 — **`DiffPage.test.tsx` owns its `localStorage` instead of borrowing the
+  environment's.** Reported failing on another machine with *"window.localStorage.clear is not a
+  function"*, in both of that file's describes — `FindingDeltaCell` and `DiffPage` — because both
+  share one `beforeEach`. One root cause, two symptoms.
+
+  The diagnosis is the useful part: **it is the only test in the repository that actually calls
+  `localStorage`**, and every production access is already defensive — `state/persisted.ts` and
+  `theme/ThemeProvider.tsx` each wrap every read and write in a try/catch, because blocked storage
+  is a real browser state rather than a hypothetical one. The test was the single place assuming
+  the environment supplies a working implementation. It now installs a deterministic in-memory
+  `Storage` per test, which removes the dependency rather than guarding against it.
+
+  **The cause on that machine was not established and is not claimed.** `jsdom` is pinned `^30.0.1`
+  and the lockfile holds 30.0.1, so a plain `npm install` — which applying an npm fix in this
+  repository *forces*, per the 0.6.1 note — can drift within 30.x. The fix is robust either way;
+  the explanation is not in hand.

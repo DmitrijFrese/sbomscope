@@ -11,6 +11,7 @@ import {
   siteVersion,
   startSession,
   undo,
+  versionDistance,
 } from './model';
 import type { BumpPlan, BumpRow, DeclarationSite, SiteKind } from './model';
 
@@ -224,6 +225,32 @@ describe('derived bump plan data', () => {
       'org.example:beta',
       'org.example:gamma',
     ]);
+  });
+});
+
+describe('versionDistance', () => {
+  it.each([
+    ['3.0.1', '4.9.2', 'MAVEN', 'major'],
+    ['1.6.0', '1.17.6', 'MAVEN', 'minor'],
+    ['2.25.0', '2.25.5', 'MAVEN', 'patch'],
+    ['1.2', '1.2.1', 'MAVEN', 'patch'],
+    ['5', '6', 'MAVEN', 'major'],
+    ['2.25.5', '2.25.5', 'MAVEN', 'none'],
+    ['4.9.2', '3.0.1', 'MAVEN', 'none'],
+    ['1.0.0-alpha', '1.0.0', 'MAVEN', 'patch'],
+    ['RELEASE', '1.0.0', 'MAVEN', 'unknown'],
+    ['1.0.0', 'v2.0.0', 'MAVEN', 'unknown'],
+    ['', '1.0.0', 'MAVEN', 'unknown'],
+    ['4.17.20', '4.17.21', 'NPM', 'patch'],
+    ['4.17.20', '5.0.0', 'NPM', 'major'],
+    ['1.0.0-alpha.2', '1.0.0-alpha.10', 'NPM', 'patch'],
+  ] as const)('from %s to %s in %s is %s', (from, to, ecosystem, expected) => {
+    expect(versionDistance(from, to, ecosystem)).toBe(expected);
+  });
+
+  it('uses the ecosystem comparator before classifying prerelease changes', () => {
+    expect(versionDistance('1.0.0-alpha.2', '1.0.0-alpha.10', 'NPM')).toBe('patch');
+    expect(versionDistance('1.0.0-alpha.2', '1.0.0-alpha.10', 'MAVEN')).toBe('none');
   });
 });
 

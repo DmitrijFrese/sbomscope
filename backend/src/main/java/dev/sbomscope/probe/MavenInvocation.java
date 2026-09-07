@@ -168,6 +168,48 @@ final class MavenInvocation {
             }
             return trimmed;
         }
+
+        /**
+         * Markers of a TLS trust failure, in the wording Java and Maven actually print.
+         *
+         * <p>Kept as substrings rather than one regex because the same failure surfaces through
+         * three layers — the JSSE handshake, Maven's transfer wrapper and the resolver — and each
+         * words it differently.
+         */
+        private static final List<String> TLS_TRUST_MARKERS = List.of(
+                "pkix path building failed",
+                "unable to find valid certification path",
+                "suncertpathbuilderexception",
+                "certificate_unknown",
+                "certification path to requested target");
+
+        /**
+         * The failure line, plus the one translation worth making rather than quoting.
+         *
+         * <p>A TLS trust failure is the single most misleading thing Maven can report here. It
+         * arrives naming Maven Central and an artifact, so it reads as a bad dependency version —
+         * {@code AGENTS.md} records exactly that trap for builds — when the actual cause is that
+         * the JVM running {@code mvn} does not trust the certificate this machine's security
+         * software presents. Nothing about the dependency set will fix it, so a message that only
+         * quotes Maven sends the reader to look in the wrong place.
+         *
+         * <p>The child {@code mvn} inherits {@code MAVEN_OPTS} from whatever launched SBOMscope,
+         * which is why a jar started from a shortcut can fail where the same jar started from a
+         * configured shell succeeds.
+         */
+        String failureSummary() {
+            String line = lastMeaningfulLine();
+            String haystack = ((output == null ? "" : output) + " " + (startError == null ? "" : startError))
+                    .toLowerCase(Locale.ROOT);
+            if (TLS_TRUST_MARKERS.stream().anyMatch(haystack::contains)) {
+                return line + " — this is a TLS trust failure, not a problem with the dependency "
+                        + "versions: the JVM running mvn does not trust the certificate presented for "
+                        + "the repository. On a machine whose security software inspects HTTPS, "
+                        + "MAVEN_OPTS needs -Djavax.net.ssl.trustStoreType=Windows-ROOT, and the child "
+                        + "mvn inherits it from whatever launched SBOMscope.";
+            }
+            return line;
+        }
     }
 
     /**

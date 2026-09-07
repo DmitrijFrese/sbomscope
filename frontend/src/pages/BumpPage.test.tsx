@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../api/client';
@@ -9,6 +9,7 @@ import { BumpPage } from './BumpPage';
 const fetchBumpPlanMock = vi.hoisted(() => vi.fn());
 const previewBumpMock = vi.hoisted(() => vi.fn());
 const applyBumpMock = vi.hoisted(() => vi.fn());
+const checkLinkageMock = vi.hoisted(() => vi.fn());
 const clipboardWriteMock = vi.hoisted(() => vi.fn());
 let selected: Sbom | null;
 
@@ -19,6 +20,7 @@ vi.mock('../api/client', async (importOriginal) => {
     fetchBumpPlan: fetchBumpPlanMock,
     previewBump: previewBumpMock,
     applyBump: applyBumpMock,
+    checkLinkage: checkLinkageMock,
   };
 });
 
@@ -113,6 +115,7 @@ beforeEach(() => {
   fetchBumpPlanMock.mockReset();
   previewBumpMock.mockReset();
   applyBumpMock.mockReset();
+  checkLinkageMock.mockReset();
   clipboardWriteMock.mockReset();
   clipboardWriteMock.mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', {
@@ -120,6 +123,9 @@ beforeEach(() => {
     value: { writeText: clipboardWriteMock },
   });
   applyBumpMock.mockResolvedValue({ written: ['module-a/pom.xml'], backups: ['module-a/pom.xml.orig'], skipped: [] });
+  checkLinkageMock.mockResolvedValue({
+    verdict: 'CLEAN', newlyMissing: [], referencesChecked: 8, notes: [],
+  });
   fetchBumpPlanMock.mockResolvedValue(plan());
   previewBumpMock.mockResolvedValue(preview());
 });
@@ -140,6 +146,95 @@ describe('BumpPage', () => {
     expect(screen.getByText(/Attach a workspace.*⋯ menu/)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(fetchBumpPlanMock).not.toHaveBeenCalled();
+  });
+
+  it('enables compatibility checking only when an edit is selected', async () => {
+    const satisfied = row();
+    satisfied.site.currentVersion = '2.0.0';
+    fetchBumpPlanMock.mockResolvedValue(plan([satisfied]));
+    render(<BumpPage />);
+
+    const selection = await screen.findByLabelText('Select org.example:alpha');
+    const check = screen.getByRole('button', { name: 'Check compatibility' });
+    expect(check.hasAttribute('disabled')).toBe(true);
+
+    fireEvent.click(selection);
+
+    expect(screen.getByRole('button', { name: 'Check compatibility' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('renders a clean compatibility result and its notes', async () => {
+    checkLinkageMock.mockResolvedValue({
+      verdict: 'CLEAN', newlyMissing: [], referencesChecked: 42, notes: ['One optional artifact was skipped.'],
+    });
+    render(<BumpPage />);
+    await screen.findByLabelText('Select org.example:alpha');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check compatibility' }));
+
+    const result = await screen.findByRole('status');
+    expect(result.textContent).toContain('No new linkage errors found');
+    expect(result.textContent).toContain('42 references checked');
+    expect(result.textContent).toContain('One optional artifact was skipped.');
+  });
+
+  it('renders missing members and the classes that reference them', async () => {
+    checkLinkageMock.mockResolvedValue({
+      verdict: 'ERRORS_FOUND', referencesChecked: 9, notes: [], newlyMissing: [{
+        reference: { owner: 'com/example/Widget', name: 'run', descriptor: '(I)V' },
+        referencedBy: ['com/example/Caller'],
+      }],
+    });
+    render(<BumpPage />);
+    await screen.findByLabelText('Select org.example:alpha');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check compatibility' }));
+
+    const result = await screen.findByRole('status');
+    expect(result.textContent).toContain('com.example.Widget.run');
+    expect(result.textContent).toContain('(I)V');
+    expect(result.textContent).toContain('com.example.Caller');
+  });
+
+  it('renders an unchecked compatibility result and its notes', async () => {
+    checkLinkageMock.mockResolvedValue({
+      verdict: 'UNCHECKED', newlyMissing: [], referencesChecked: 0, notes: ['Maven was unavailable.'],
+    });
+    render(<BumpPage />);
+    await screen.findByLabelText('Select org.example:alpha');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check compatibility' }));
+
+    const result = await screen.findByRole('status');
+    expect(result.textContent).toContain('Could not check');
+    expect(result.textContent).toContain('Maven was unavailable.');
+  });
+
+  it('reports a failed compatibility check without blanking the declarations table', async () => {
+    checkLinkageMock.mockRejectedValue(new Error('Maven timed out'));
+    render(<BumpPage />);
+    await screen.findByLabelText('Select org.example:alpha');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check compatibility' }));
+
+    expect((await screen.findByRole('status')).textContent).toContain('Linkage check failed: Maven timed out');
+    expect(screen.getByRole('table')).toBeTruthy();
+  });
+
+  it('does not check compatibility until the user requests it', async () => {
+    const satisfied = row();
+    satisfied.site.currentVersion = '2.0.0';
+    fetchBumpPlanMock.mockResolvedValue(plan([satisfied]));
+    render(<BumpPage />);
+    const selection = await screen.findByLabelText('Select org.example:alpha');
+
+    fireEvent.click(selection);
+
+    expect(checkLinkageMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Check compatibility' }));
+    await waitFor(() => expect(checkLinkageMock).toHaveBeenCalledWith('sbom-id', [
+      { siteId: 'module-a/pom.xml#0', newVersion: '2.0.0', structural: false },
+    ]));
   });
 
   it('preselects every available minimal target in one loaded plan', async () => {
@@ -563,6 +658,59 @@ describe('BumpPage', () => {
       { siteId: 'pom.xml#0', newVersion: '2.0.0', structural: false },
       { siteId: 'pom.xml#1', newVersion: '2.0.0', structural: false },
     ]));
+  });
+
+  it('shows a minor distance beside the minimal target', async () => {
+    const target = row();
+    target.minimalTarget = '1.1.0';
+    fetchBumpPlanMock.mockResolvedValue(plan([target]));
+    render(<BumpPage />);
+
+    const minimal = await screen.findByLabelText('Minimal 1.1.0 for org.example:alpha');
+    expect(within(minimal.parentElement!).getByText('minor')).toBeTruthy();
+  });
+
+  it('shows a patch distance beside the minimal target', async () => {
+    const target = row();
+    target.minimalTarget = '1.0.1';
+    fetchBumpPlanMock.mockResolvedValue(plan([target]));
+    render(<BumpPage />);
+
+    const minimal = await screen.findByLabelText('Minimal 1.0.1 for org.example:alpha');
+    expect(within(minimal.parentElement!).getByText('patch')).toBeTruthy();
+  });
+
+  it('shows major distances beside both targets', async () => {
+    render(<BumpPage />);
+    await screen.findByLabelText('Minimal 2.0.0 for org.example:alpha');
+
+    expect(screen.getAllByText('major')).toHaveLength(2);
+  });
+
+  it('omits the minimal distance when the target equals the current version', async () => {
+    const target = row();
+    target.minimalTarget = '1.0.0';
+    fetchBumpPlanMock.mockResolvedValue(plan([target]));
+    render(<BumpPage />);
+
+    const minimal = await screen.findByLabelText('Minimal 1.0.0 for org.example:alpha');
+    expect(within(minimal.parentElement!).queryByText(/major|minor|patch/)).toBeNull();
+  });
+
+  it('filters declarations by their displayed version distance', async () => {
+    const major = row('pom.xml#0', 'major');
+    const patch = row('pom.xml#1', 'patch');
+    patch.minimalTarget = '1.0.1';
+    patch.latestTarget = '1.0.2';
+    fetchBumpPlanMock.mockResolvedValue(plan([major, patch]));
+    render(<BumpPage />);
+    await screen.findByLabelText('Select org.example:major');
+
+    fireEvent.change(screen.getByLabelText('Filter vulnerable declarations'),
+      { target: { value: 'major' } });
+
+    expect(screen.getByLabelText('Select org.example:major')).toBeTruthy();
+    expect(screen.queryByLabelText('Select org.example:patch')).toBeNull();
   });
 
   it('shows nothing rather than everything for a pattern that will not compile', async () => {

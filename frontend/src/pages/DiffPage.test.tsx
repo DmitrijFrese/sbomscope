@@ -130,8 +130,34 @@ function renderPage() {
   );
 }
 
+/**
+ * A deterministic in-memory storage, installed fresh for every test in this file.
+ *
+ * This file is the only test that actually calls `window.localStorage`, and it was the only one
+ * assuming the environment supplies a working one: on a machine whose jsdom resolved differently,
+ * `window.localStorage.clear` was not a function, so this hook threw and **every** test in both
+ * describes failed before it ran. The production code never made that assumption — `persisted.ts`
+ * and `ThemeProvider` both wrap each access in a try/catch because blocked storage is a real
+ * browser state — so the test was the odd one out. Owning the implementation removes the
+ * dependency rather than guarding against it.
+ */
+function installMemoryStorage(): void {
+  const entries = new Map<string, string>();
+  const storage: Storage = {
+    get length() { return entries.size; },
+    clear: () => entries.clear(),
+    getItem: (key: string) => (entries.has(key) ? entries.get(key)! : null),
+    key: (index: number) => [...entries.keys()][index] ?? null,
+    removeItem: (key: string) => { entries.delete(key); },
+    setItem: (key: string, value: string) => { entries.set(key, String(value)); },
+  };
+  Object.defineProperty(window, 'localStorage', {
+    value: storage, configurable: true, writable: true,
+  });
+}
+
 beforeEach(() => {
-  window.localStorage.clear();
+  installMemoryStorage();
   fetchDiffMock.mockReset();
   selectForDiffMock.mockReset();
   swapDiffSidesMock.mockReset();

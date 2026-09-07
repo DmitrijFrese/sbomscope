@@ -1124,12 +1124,40 @@ export interface PreviewFile {
   editCount: number;
 }
 
+export type LinkageVerdict = 'CLEAN' | 'ERRORS_FOUND' | 'UNCHECKED';
+
+export interface LinkageMemberRef {
+  owner: string;
+  name: string;
+  descriptor: string;
+}
+
+export interface LinkageFinding {
+  reference: LinkageMemberRef;
+  referencedBy: string[];
+}
+
+export interface LinkageCheck {
+  verdict: LinkageVerdict;
+  newlyMissing: LinkageFinding[];
+  referencesChecked: number;
+  notes: string[];
+}
+
 export function fetchBumpPlan(sbomId: string): Promise<BumpPlan> {
   return request<BumpPlan>(`/sboms/${sbomId}/bump`);
 }
 
 export function previewBump(sbomId: string, edits: BumpEdit[]): Promise<PreviewResult> {
   return request<PreviewResult>(`/sboms/${sbomId}/bump/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ edits }),
+  });
+}
+
+export function checkLinkage(sbomId: string, edits: BumpEdit[]): Promise<LinkageCheck> {
+  return request<LinkageCheck>(`/sboms/${sbomId}/bump/linkage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ edits }),

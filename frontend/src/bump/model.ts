@@ -168,6 +168,8 @@ function parseVersion(version: string): { release: bigint[]; preRelease: string 
   };
 }
 
+export type VersionDistance = 'major' | 'minor' | 'patch' | 'none' | 'unknown';
+
 /**
  * Mirrors the intentionally small VersionOrder comparator used by the backend.
  *
@@ -233,6 +235,42 @@ export function compareSemver(left: string, right: string): number {
     }
   }
   return 0;
+}
+
+/**
+ * How far a target moves the version, which is the axis a testing process is budgeted against —
+ * a patch bump needs a smoke test where a major one needs a migration.
+ *
+ * Ordering decides only whether this is an upgrade at all, and uses the row's own ecosystem
+ * comparator; the classification itself is positional, because a comparator cannot say *which*
+ * component differed. States distance, never risk: a patch release can break binary
+ * compatibility and a major one can be harmless.
+ */
+export function versionDistance(
+  from: string,
+  to: string,
+  ecosystem: Ecosystem,
+): VersionDistance {
+  const hasUsableVersionNumber = (version: string) => {
+    const value = version.trim();
+    const separator = value.search(/[-+]/);
+    const numeric = separator >= 0 ? value.slice(0, separator) : value;
+    return /^\d/.test(numeric.split('.', 1)[0] ?? '');
+  };
+
+  if (!hasUsableVersionNumber(from) || !hasUsableVersionNumber(to)) return 'unknown';
+
+  const compare = ecosystem === 'NPM' ? compareSemver : compareVersions;
+  if (compare(to, from) <= 0) return 'none';
+
+  const current = parseVersion(from);
+  const target = parseVersion(to);
+  const releases = Math.max(current.release.length, target.release.length);
+  for (let index = 0; index < releases; index++) {
+    if ((current.release[index] ?? 0n) === (target.release[index] ?? 0n)) continue;
+    return index === 0 ? 'major' : index === 1 ? 'minor' : 'patch';
+  }
+  return 'patch';
 }
 
 export function siteVersion(state: BumpState, siteId: string): string | null {

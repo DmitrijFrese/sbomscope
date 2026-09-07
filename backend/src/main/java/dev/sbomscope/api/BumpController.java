@@ -23,6 +23,8 @@ import dev.sbomscope.bump.BumpPlan;
 import dev.sbomscope.bump.BumpPlanService;
 import dev.sbomscope.bump.BumpEdit;
 import dev.sbomscope.bump.DeclarationSite;
+import dev.sbomscope.bump.LinkageCheck;
+import dev.sbomscope.bump.LinkageCheckService;
 import dev.sbomscope.bump.PomFile;
 import dev.sbomscope.bump.PomPatcher;
 import dev.sbomscope.bump.PomPatcher.PlannedEdit;
@@ -38,11 +40,14 @@ class BumpController {
     private final BumpPlanService plans;
     private final SbomService sboms;
     private final BumpApplyService applies;
+    private final LinkageCheckService linkage;
 
-    BumpController(BumpPlanService plans, SbomService sboms, BumpApplyService applies) {
+    BumpController(BumpPlanService plans, SbomService sboms, BumpApplyService applies,
+            LinkageCheckService linkage) {
         this.plans = plans;
         this.sboms = sboms;
         this.applies = applies;
+        this.linkage = linkage;
     }
 
     @GetMapping
@@ -118,6 +123,22 @@ class BumpController {
         return new PreviewResult(List.copyOf(preview), List.copyOf(warnings));
     }
 
+    @PostMapping("/linkage")
+    LinkageCheck linkage(@PathVariable UUID id, @RequestBody LinkageRequest request) {
+        StoredSbom sbom = sboms.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such SBOM"));
+        if (sbom.workspacePath() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This SBOM has no workspace attached");
+        }
+        if (!hasManifest(sbom.workspacePath())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The workspace holds no pom.xml or package.json");
+        }
+        return linkage.check(plans.plan(sbom),
+                request.edits() == null ? List.of() : request.edits());
+    }
+
     /**
      * Writes to the user's own source files — the only endpoint in SBOMscope that does.
      *
@@ -157,6 +178,8 @@ class BumpController {
     }
 
     private record PreviewRequest(List<BumpEdit> edits) {}
+
+    private record LinkageRequest(List<BumpEdit> edits) {}
 
     private record ApplyRequest(List<BumpApplyService.FileWrite> files, boolean overrideGitGate) {}
 }

@@ -342,7 +342,12 @@ public class MavenDependencyResolver implements DependencyResolver {
      * rest exist only so Maven's own nearest-wins resolution has the same competing
      * declarations the real build has; nothing about them is being asked.
      */
-    private String generatePom(List<ModuleDependency> moduleDependencies, Map<MavenArtifact, String> overrides,
+    /**
+     * Package-private and static because {@link LinkageClasspathResolver} generates the same POM
+     * for a different goal. Two generators would be two readings of what a probe's synthetic
+     * project is, and the one that drifts is the one nobody is looking at.
+     */
+    static String generatePom(List<ModuleDependency> moduleDependencies, Map<MavenArtifact, String> overrides,
                                 ProbeContext context) {
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
